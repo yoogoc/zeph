@@ -7,7 +7,7 @@ use gpui_component::{
     resizable::{resizable_panel, v_resizable},
     select::{Select, SelectState},
     tab::{Tab, TabBar},
-    v_flex, IconName, IndexPath, Sizable,
+    v_flex, Disableable, IconName, IndexPath, Sizable,
 };
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -42,6 +42,140 @@ struct PageState {
     response_body: String,
     response_headers: Vec<(String, String)>,
     response_status: Option<u16>,
+    is_loading: bool,
+}
+
+impl PageState {
+    fn send_request(&mut self, cx: &mut Context<Self>) {
+        let url = self.url_state.read(cx).text().to_string();
+        if url.is_empty() {
+            return;
+        }
+
+        let method_idx = self.method_state.read(cx).selected_index(cx);
+        let method = match method_idx.map(|i| i.row) {
+            Some(0) => "GET",
+            Some(1) => "POST",
+            Some(2) => "PUT",
+            Some(3) => "DELETE",
+            Some(4) => "PATCH",
+            Some(5) => "HEAD",
+            Some(6) => "OPTIONS",
+            _ => "GET",
+        };
+
+        let params: Vec<(String, String)> = self
+            .params
+            .iter()
+            .filter(|kv| kv.enabled)
+            .map(|kv| {
+                (
+                    kv.key.read(cx).text().to_string(),
+                    kv.value.read(cx).text().to_string(),
+                )
+            })
+            .filter(|(k, _)| !k.is_empty())
+            .collect();
+
+        let headers: Vec<(String, String)> = self
+            .headers
+            .iter()
+            .filter(|kv| kv.enabled)
+            .map(|kv| {
+                (
+                    kv.key.read(cx).text().to_string(),
+                    kv.value.read(cx).text().to_string(),
+                )
+            })
+            .filter(|(k, _)| !k.is_empty())
+            .collect();
+
+        let body = self.body_state.read(cx).text().to_string();
+
+        self.is_loading = true;
+        self.response_body.clear();
+        self.response_headers.clear();
+        self.response_status = None;
+
+        let method = method.to_string();
+        cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
+            let result = std::thread::spawn(move || {
+                send_http_request(&method, &url, params, headers, body)
+            })
+            .join()
+            .unwrap_or_else(|_| Err("Thread panicked".to_string()));
+
+            let _ = cx.update(|cx| {
+                let _ = this.update(cx, |state, _| match result {
+                    Ok((status, resp_headers, resp_body)) => {
+                        state.response_status = Some(status);
+                        state.response_headers = resp_headers;
+                        state.response_body = resp_body;
+                        state.is_loading = false;
+                    }
+                    Err(e) => {
+                        state.response_body = format!("Error: {}", e);
+                        state.is_loading = false;
+                    }
+                });
+            });
+        })
+        .detach();
+    }
+}
+
+fn send_http_request(
+    method: &str,
+    url: &str,
+    params: Vec<(String, String)>,
+    headers: Vec<(String, String)>,
+    body: String,
+) -> Result<(u16, Vec<(String, String)>, String), String> {
+    let client = reqwest::blocking::Client::new();
+
+    let url = if params.is_empty() {
+        url.to_string()
+    } else {
+        let query = params
+            .iter()
+            .map(|(k, v)| format!("{}={}", k, v))
+            .collect::<Vec<_>>()
+            .join("&");
+        if url.contains('?') {
+            format!("{}&{}", url, query)
+        } else {
+            format!("{}?{}", url, query)
+        }
+    };
+
+    let mut req = match method {
+        "GET" => client.get(&url),
+        "POST" => client.post(&url),
+        "PUT" => client.put(&url),
+        "DELETE" => client.delete(&url),
+        "PATCH" => client.patch(&url),
+        "HEAD" => client.head(&url),
+        _ => client.get(&url),
+    };
+
+    for (k, v) in headers {
+        req = req.header(&k, &v);
+    }
+
+    if !body.is_empty() && matches!(method, "POST" | "PUT" | "PATCH") {
+        req = req.body(body);
+    }
+
+    let resp = req.send().map_err(|e| e.to_string())?;
+    let status = resp.status().as_u16();
+    let resp_headers: Vec<(String, String)> = resp
+        .headers()
+        .iter()
+        .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
+        .collect();
+    let body = resp.text().map_err(|e| e.to_string())?;
+
+    Ok((status, resp_headers, body))
 }
 
 impl Render for PageState {
@@ -96,10 +230,11 @@ impl RenderOnce for Page {
                 response_body: String::new(),
                 response_headers: vec![],
                 response_status: None,
+                is_loading: false,
             }
         });
 
-        let page_state = state.read(cx);
+        let ps = state.read(cx);
 
         v_flex()
             .id("http-page")
@@ -110,14 +245,17 @@ impl RenderOnce for Page {
                 h_flex()
                     .w_full()
                     .gap_2()
-                    .child(Select::new(&page_state.method_state).w(px(110.)).small())
-                    .child(Input::new(&page_state.url_state).w_full().small().cleanable(true))
+                    .child(Select::new(&ps.method_state).w(px(110.)).small())
+                    .child(Input::new(&ps.url_state).w_full().small().cleanable(true))
                     .child(
                         Button::new("send")
                             .primary()
                             .small()
-                            .label("Send")
-                            .on_click(|_, _, _| println!("Send request")),
+                            .label(if ps.is_loading { "Loading..." } else { "Send" })
+                            .disabled(ps.is_loading)
+                            .on_click(window.listener_for(&state, |s, _, _, cx| {
+                                s.send_request(cx);
+                            })),
                     ),
             )
             .child(
@@ -282,7 +420,9 @@ fn render_response_panel(window: &mut Window, cx: &mut App, state: &Entity<PageS
                 .overflow_y_hidden()
                 .child(match tab {
                     ResponseTab::Body => {
-                        if ps.response_body.is_empty() {
+                        if ps.is_loading {
+                            "Loading...".into_any_element()
+                        } else if ps.response_body.is_empty() {
                             "Response will appear here".into_any_element()
                         } else {
                             ps.response_body.clone().into_any_element()
