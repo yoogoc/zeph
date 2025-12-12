@@ -1,3 +1,4 @@
+mod http;
 
 #[derive(Debug, Default)]
 #[allow(unused)]
