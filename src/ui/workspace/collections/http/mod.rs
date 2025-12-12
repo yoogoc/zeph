@@ -5,6 +5,7 @@ use gpui_component::{
     h_flex,
     input::{Input, InputState},
     resizable::{resizable_panel, v_resizable},
+    scroll::ScrollableElement,
     select::{Select, SelectState},
     tab::{Tab, TabBar},
     v_flex, Disableable, IconName, IndexPath, Sizable,
@@ -212,6 +213,8 @@ impl RenderOnce for Page {
             let url_state = cx.new(|cx| {
                 let mut s = InputState::new(window, cx);
                 s.set_placeholder("Enter URL...", window, cx);
+                s.set_value("https://dashboard-ai-summit.dev.janusdi.com/api/v2/openapi.json", window, cx);
+
                 s
             });
             let body_state = cx.new(|cx| {
@@ -417,7 +420,7 @@ fn render_response_panel(window: &mut Window, cx: &mut App, state: &Entity<PageS
             div()
                 .size_full()
                 .p_2()
-                .overflow_y_hidden()
+                .overflow_y_scrollbar()
                 .child(match tab {
                     ResponseTab::Body => {
                         if ps.is_loading {
