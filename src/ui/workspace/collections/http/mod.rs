@@ -99,11 +99,11 @@ impl PageState {
 
         let method = method.to_string();
         cx.spawn(async move |this: WeakEntity<Self>, cx: &mut AsyncApp| {
-            let result = std::thread::spawn(move || {
-                send_http_request(&method, &url, params, headers, body)
+            let result = tokio::spawn(async move {
+                send_http_request(&method, &url, params, headers, body).await
             })
-            .join()
-            .unwrap_or_else(|_| Err("Thread panicked".to_string()));
+            .await
+            .unwrap_or_else(|e| Err(e.to_string()));
 
             let _ = cx.update(|cx| {
                 let _ = this.update(cx, |state, _| match result {
@@ -124,14 +124,14 @@ impl PageState {
     }
 }
 
-fn send_http_request(
+async fn send_http_request(
     method: &str,
     url: &str,
     params: Vec<(String, String)>,
     headers: Vec<(String, String)>,
     body: String,
 ) -> Result<(u16, Vec<(String, String)>, String), String> {
-    let client = reqwest::blocking::Client::new();
+    let client = reqwest::Client::new();
 
     let url = if params.is_empty() {
         url.to_string()
@@ -166,14 +166,14 @@ fn send_http_request(
         req = req.body(body);
     }
 
-    let resp = req.send().map_err(|e| e.to_string())?;
+    let resp = req.send().await.map_err(|e| e.to_string())?;
     let status = resp.status().as_u16();
     let resp_headers: Vec<(String, String)> = resp
         .headers()
         .iter()
         .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("").to_string()))
         .collect();
-    let body = resp.text().map_err(|e| e.to_string())?;
+    let body = resp.text().await.map_err(|e| e.to_string())?;
 
     Ok((status, resp_headers, body))
 }

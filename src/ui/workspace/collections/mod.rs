@@ -7,7 +7,7 @@ mod websocket;
 use crate::model::{GRPC, Http, WebSocket};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::button::{Button};
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use list::List;
 use std::rc::Rc;
@@ -95,13 +95,13 @@ impl RenderOnce for Collections {
                             match tab {
                                 None => base.child(Button::new("empty").label("empty")),
                                 Some(tab) => match tab {
-                                    TabBar::HTTP(tab) => {
+                                    TabBar::HTTP(_tab) => {
                                         base.child(http::Page::new().into_any_element())
                                     }
-                                    TabBar::GRPC(tab) => {
+                                    TabBar::GRPC(_tab) => {
                                         base.child(grpc::Page::new().into_any_element())
                                     }
-                                    TabBar::WS(tab) => {
+                                    TabBar::WS(_tab) => {
                                         base.child(websocket::Page::new().into_any_element())
                                     }
                                 },

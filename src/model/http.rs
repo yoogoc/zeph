@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 
@@ -6,6 +5,7 @@ use serde::{Deserialize, Serialize};
 // pub struct MagicValue<T>(T);
 
 #[derive(Serialize, Deserialize, Debug)]
+#[allow(unused)]
 pub struct Request {
     host: String,
     path: String,
@@ -18,6 +18,7 @@ pub struct Request {
 }
 
 #[derive(Serialize, Deserialize, Debug)]
+#[allow(unused)]
 pub struct Header {
     key: String,
     typ: String,

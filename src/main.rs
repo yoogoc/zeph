@@ -1,12 +1,13 @@
-mod ui;
 mod model;
+mod ui;
 
 use gpui::*;
 use gpui_component::{Root as GRoot, TitleBar};
 
 use ui::Root;
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let app = Application::new().with_assets(gpui_component_assets::Assets);
 
     app.run(move |cx| {
