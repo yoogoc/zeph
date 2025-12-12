@@ -27,25 +27,25 @@ impl RenderOnce for List {
             .child(
                 Button::new("collection")
                     .ghost()
-                    .label("collection")
+                    .label("http1")
                     .on_click(|_, _, _| println!("Clicked!")),
             )
             .child(
                 Button::new("history")
                     .ghost()
-                    .label("history")
+                    .label("http2")
                     .on_click(|_, _, _| println!("Clicked!")),
             )
             .child(
                 Button::new("doc")
                     .ghost()
-                    .label("doc")
+                    .label("http3")
                     .on_click(|_, _, _| println!("Clicked!")),
             )
             .child(
                 Button::new("settings")
                     .ghost()
-                    .label("settings")
+                    .label("http4")
                     .on_click(|_, _, _| println!("Clicked!")),
             )
             .refine_style(&self.style)
