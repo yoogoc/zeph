@@ -3,11 +3,13 @@ use gpui::prelude::FluentBuilder;
 use gpui_component::{button::{Button, ButtonVariants}, *};
 use models::{Collection, Service, ServiceType};
 use uuid::Uuid;
+use crate::HttpService;
 
 pub struct CollectionsView {
     workspace_id: Option<Uuid>,
     collection_id: Option<Uuid>,
     search_query: String,
+    http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
 }
 
 impl CollectionsView {
@@ -16,6 +18,7 @@ impl CollectionsView {
             workspace_id,
             collection_id,
             search_query: String::new(),
+            http_services: std::collections::HashMap::new(),
         }
     }
     
@@ -192,51 +195,18 @@ impl CollectionsView {
             )
     }
     
-    fn render_service_content(&self, collection: &Collection) -> impl IntoElement {
+    fn render_service_content(&mut self, collection: &Collection, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(active_service_id) = collection.active_service {
             if let Some(service) = collection.services.iter().find(|s| s.id == active_service_id) {
                 match &service.service_type {
                     ServiceType::Http(config) => {
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .p_4()
-                            .v_flex()
-                            .gap_4()
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_bold()
-                                    .child(format!("{} {}", 
-                                        match config.method {
-                                            models::HttpMethod::Get => "GET",
-                                            models::HttpMethod::Post => "POST",
-                                            models::HttpMethod::Put => "PUT",
-                                            models::HttpMethod::Delete => "DELETE",
-                                            _ => "HTTP",
-                                        },
-                                        service.name
-                                    ))
-                            )
-                            .child(
-                                div()
-                                    .p_4()
-                                    .bg(gpui::rgb(0xf8f9fa))
-                                    .border_1()
-                                    .border_color(gpui::rgb(0xe0e0e0))
-                                    .rounded_lg()
-                                    .child(format!("URL: {}", config.url))
-                            )
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .p_4()
-                                    .bg(gpui::rgb(0xfafafa))
-                                    .border_1()
-                                    .border_color(gpui::rgb(0xe0e0e0))
-                                    .rounded_lg()
-                                    .child("HTTP request configuration will be displayed here")
-                            )
+                        // Get or create HttpService entity for this service
+                        if !self.http_services.contains_key(&service.id) {
+                            let http_service = cx.new(|_| HttpService::new(config.clone()));
+                            self.http_services.insert(service.id, http_service);
+                        }
+                        
+                        self.http_services.get(&service.id).unwrap().clone().into_any_element()
                     }
                     ServiceType::Grpc(_) => {
                         div()
@@ -244,6 +214,7 @@ impl CollectionsView {
                             .h_full()
                             .p_4()
                             .child("gRPC service configuration will be displayed here")
+                            .into_any_element()
                     }
                     ServiceType::WebSocket(_) => {
                         div()
@@ -251,6 +222,7 @@ impl CollectionsView {
                             .h_full()
                             .p_4()
                             .child("WebSocket service configuration will be displayed here")
+                            .into_any_element()
                     }
                 }
             } else {
@@ -259,6 +231,7 @@ impl CollectionsView {
                     .h_full()
                     .p_4()
                     .child("Service not found")
+                    .into_any_element()
             }
         } else {
             div()
@@ -268,6 +241,7 @@ impl CollectionsView {
                 .items_center()
                 .justify_center()
                 .child("Select a service to view its configuration")
+                .into_any_element()
         }
     }
     
@@ -303,7 +277,7 @@ impl CollectionsView {
                                 .h_full()
                                 .v_flex()
                                 .child(self.render_service_tabs(collection, cx))
-                                .child(self.render_service_content(collection))
+                                .child(self.render_service_content(collection, cx))
                         )
                 } else {
                     div().p_4().child("Collection not found")
