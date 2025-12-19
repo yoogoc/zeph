@@ -10,7 +10,7 @@ pub struct WorkspaceArea {
 }
 
 impl WorkspaceArea {
-    pub fn new() -> Self {
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self { 
             workspace: None,
             collections_view: None,
@@ -212,12 +212,6 @@ impl WorkspaceArea {
                             .child("Workspace settings will be displayed here")
                     )
             )
-    }
-}
-
-impl Default for WorkspaceArea {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -1,5 +1,6 @@
 use gpui::*;
 use gpui_component::{button::{Button, ButtonVariants}, *};
+use gpui_component::input::{Input, InputState};
 use models::ApplicationView;
 
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<Application> {
@@ -10,13 +11,17 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Application> {
 pub struct Application {
     title_bar: Entity<ui::TitleBar>,
     workspace_area: Entity<ui::WorkspaceArea>,
+    input: Entity<InputState>,
 }
 
 impl Application {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let input = cx.new(|cx| InputState::new(window, cx));
+
         Self {
-            title_bar: cx.new(|_| ui::TitleBar::new()),
-            workspace_area: cx.new(|_| ui::WorkspaceArea::new()),
+            input,
+            title_bar: cx.new(|cx| ui::TitleBar::new(window, cx)),
+            workspace_area: cx.new(|cx| ui::WorkspaceArea::new(window, cx)),
         }
     }
     
@@ -24,7 +29,7 @@ impl Application {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         workspace_registry.update(cx, |registry, cx| {
             let workspace_name = format!("Workspace {}", registry.get_state().workspaces.len() + 1);
-            registry.create_workspace(workspace_name, cx);
+            registry.create_workspace(workspace_name.into(), cx);
             
             // Switch to the newly created workspace
             if let Some(new_workspace) = registry.get_state().workspaces.last() {
@@ -50,6 +55,7 @@ impl Application {
                             .child("Welcome to Zeph")
                     )
                     .child("Your API testing companion")
+                    .child(Input::new(&self.input))
                     .child(
                         Button::new("create_workspace")
                             .primary()

@@ -11,3 +11,4 @@ collections = { path = "../collections" }
 gpui.workspace = true
 gpui-component.workspace = true
 uuid.workspace = true
+smallvec.workspace = true

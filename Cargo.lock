@@ -3480,6 +3480,7 @@ name = "models"
 version = "0.0.1"
 dependencies = [
  "chrono",
+ "gpui",
  "serde",
  "uuid",
 ]
@@ -6313,6 +6314,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "models",
+ "smallvec",
  "uuid",
  "workspace",
 ]

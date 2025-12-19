@@ -195,14 +195,14 @@ impl CollectionsView {
             )
     }
     
-    fn render_service_content(&mut self, collection: &Collection, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_service_content(&mut self, collection: &Collection, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(active_service_id) = collection.active_service {
             if let Some(service) = collection.services.iter().find(|s| s.id == active_service_id) {
                 match &service.service_type {
                     ServiceType::Http(config) => {
                         // Get or create HttpService entity for this service
                         if !self.http_services.contains_key(&service.id) {
-                            let http_service = cx.new(|_| HttpService::new(config.clone()));
+                            let http_service = cx.new(|cx| HttpService::new(config.clone(), window, cx));
                             self.http_services.insert(service.id, http_service);
                         }
                         
@@ -245,7 +245,7 @@ impl CollectionsView {
         }
     }
     
-    fn render_content(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(workspace_id) = self.workspace_id {
             let registry = collections::CollectionRegistry::global(cx);
             
@@ -277,7 +277,7 @@ impl CollectionsView {
                                 .h_full()
                                 .v_flex()
                                 .child(self.render_service_tabs(collection, cx))
-                                .child(self.render_service_content(collection, cx))
+                                .child(self.render_service_content(collection, window, cx))
                         )
                 } else {
                     div().p_4().child("Collection not found")
@@ -298,13 +298,13 @@ impl Default for CollectionsView {
 }
 
 impl Render for CollectionsView {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Subscribe to registry updates to ensure UI refreshes when services are opened/closed
         if let (Some(workspace_id), Some(collection_id)) = (self.workspace_id, self.collection_id) {
             let registry = collections::CollectionRegistry::global(cx);
             let _collection = registry.read(cx).get_collection(workspace_id, collection_id);
         }
         
-        self.render_content(cx)
+        self.render_content(window, cx)
     }
 }

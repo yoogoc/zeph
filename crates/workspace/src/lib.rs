@@ -1,4 +1,4 @@
-use gpui::{App, AppContext, Context, Entity, Global};
+use gpui::{App, AppContext, Context, Entity, Global, SharedString};
 use models::{ApplicationState, Workspace};
 use uuid::Uuid;
 
@@ -26,7 +26,7 @@ impl WorkspaceRegistry {
         let mut app_state = ApplicationState::default();
         
         // Create a default workspace
-        let mut default_workspace = Workspace::new("My Workspace".to_string());
+        let mut default_workspace = Workspace::new("My Workspace".into());
         default_workspace.current_view = models::WorkspaceView::Collections; // Default to Collections
         app_state.active_workspace_id = Some(default_workspace.id);
         app_state.current_view = models::ApplicationView::Workspace(default_workspace.id);
@@ -44,7 +44,7 @@ impl WorkspaceRegistry {
             .and_then(|id| self.app_state.workspaces.iter().find(|w| w.id == id))
     }
     
-    pub fn create_workspace(&mut self, name: String, cx: &mut Context<Self>) {
+    pub fn create_workspace(&mut self, name: SharedString, cx: &mut Context<Self>) {
         let mut workspace = Workspace::new(name);
         workspace.current_view = models::WorkspaceView::Collections; // Default to Collections
         self.app_state.workspaces.push(workspace);

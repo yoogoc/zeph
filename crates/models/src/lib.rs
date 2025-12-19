@@ -1,3 +1,4 @@
+use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -27,14 +28,14 @@ pub enum ApplicationView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: Uuid,
-    pub name: String,
+    pub name: SharedString,
     pub collections: Vec<Collection>,
     pub current_view: WorkspaceView,
     pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Workspace {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: SharedString) -> Self {
         Self {
             id: Uuid::new_v4(),
             name,
@@ -56,7 +57,7 @@ pub enum WorkspaceView {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collection {
     pub id: Uuid,
-    pub name: String,
+    pub name: SharedString,
     pub services: Vec<Service>,
     pub folders: Vec<Folder>,
     pub opened_services: Vec<Uuid>, // Track opened services for tabs
@@ -64,7 +65,7 @@ pub struct Collection {
 }
 
 impl Collection {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: SharedString) -> Self {
         Self {
             id: Uuid::new_v4(),
             name,
@@ -79,14 +80,14 @@ impl Collection {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
     pub id: Uuid,
-    pub name: String,
+    pub name: SharedString,
     pub parent_id: Option<Uuid>, // None for root folders
     pub service_ids: Vec<Uuid>,
     pub is_expanded: bool,
 }
 
 impl Folder {
-    pub fn new(name: String, parent_id: Option<Uuid>) -> Self {
+    pub fn new(name: SharedString, parent_id: Option<Uuid>) -> Self {
         Self {
             id: Uuid::new_v4(),
             name,
@@ -100,13 +101,13 @@ impl Folder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
     pub id: Uuid,
-    pub name: String,
+    pub name: SharedString,
     pub service_type: ServiceType,
     pub folder_id: Option<Uuid>, // None for root level services
 }
 
 impl Service {
-    pub fn new(name: String, service_type: ServiceType) -> Self {
+    pub fn new(name: SharedString, service_type: ServiceType) -> Self {
         Self {
             id: Uuid::new_v4(),
             name,
@@ -126,9 +127,9 @@ pub enum ServiceType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpConfig {
     pub method: HttpMethod,
-    pub url: String,
+    pub url: SharedString,
     pub headers: Vec<Header>,
-    pub body: Option<String>,
+    pub body: Option<SharedString>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,19 +145,19 @@ pub enum HttpMethod {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header {
-    pub key: String,
-    pub value: String,
+    pub key: SharedString,
+    pub value: SharedString,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrpcConfig {
-    pub service_url: String,
-    pub method: String,
+    pub service_url: SharedString,
+    pub method: SharedString,
     pub metadata: Vec<Header>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct WebSocketConfig {
-    pub url: String,
-    pub protocols: Vec<String>,
+    pub url: SharedString,
+    pub protocols: Vec<SharedString>,
 }

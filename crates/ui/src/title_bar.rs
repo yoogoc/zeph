@@ -9,7 +9,7 @@ use models::ApplicationView;
 pub struct TitleBar {}
 
 impl TitleBar {
-    pub fn new() -> Self {
+    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
         Self {}
     }
 
@@ -25,12 +25,6 @@ impl TitleBar {
         workspace_registry.update(cx, |registry, cx| {
             registry.set_active_workspace(workspace_id, cx);
         });
-    }
-}
-
-impl Default for TitleBar {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

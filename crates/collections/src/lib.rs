@@ -44,26 +44,26 @@ impl CollectionRegistry {
     pub fn ensure_workspace_collections(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
         if !self.workspace_collections.contains_key(&workspace_id) {
             // Create sample collection for new workspace
-            let mut sample_collection = Collection::new("Sample API".to_string());
+            let mut sample_collection = Collection::new("Sample API".into());
             
             // Add sample services
             let get_users = Service::new(
-                "Get Users".to_string(),
+                "Get Users".into(),
                 ServiceType::Http(HttpConfig {
                     method: HttpMethod::Get,
-                    url: "https://api.example.com/users".to_string(),
+                    url: "https://api.example.com/users".into(),
                     headers: vec![],
                     body: None,
                 })
             );
             
             let create_user = Service::new(
-                "Create User".to_string(),
+                "Create User".into(),
                 ServiceType::Http(HttpConfig {
                     method: HttpMethod::Post,
-                    url: "https://api.example.com/users".to_string(),
+                    url: "https://api.example.com/users".into(),
                     headers: vec![],
-                    body: Some("{}".to_string()),
+                    body: Some("{}".into()),
                 })
             );
             
