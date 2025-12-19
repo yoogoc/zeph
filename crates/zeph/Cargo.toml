@@ -12,3 +12,5 @@ gpui-component.workspace = true
 gpui-component-assets.workspace = true
 anyhow.workspace = true
 tracing-subscriber.workspace = true
+
+ui = { path = "../ui" }

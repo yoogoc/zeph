@@ -1,3 +1,5 @@
+mod application;
+
 use gpui::*;
 use gpui_component::{button::*, *};
 use std::sync::Arc;
