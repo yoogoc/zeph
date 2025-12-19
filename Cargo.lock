@@ -3466,6 +3466,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "models"
+version = "0.0.1"
+dependencies = [
+ "chrono",
+ "serde",
+ "uuid",
+]
+
+[[package]]
 name = "moxcms"
 version = "0.7.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6291,6 +6300,9 @@ name = "ui"
 version = "0.0.1"
 dependencies = [
  "gpui",
+ "gpui-component",
+ "models",
+ "workspace",
 ]
 
 [[package]]
@@ -7457,6 +7469,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f17a85883d4e6d00e8a97c586de764dabcc06133f7f1d55dce5cdc070ad7fe59"
 
 [[package]]
+name = "workspace"
+version = "0.0.1"
+dependencies = [
+ "gpui",
+ "models",
+ "uuid",
+]
+
+[[package]]
 name = "workspace-hack"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7827,9 +7848,11 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_tokio",
+ "models",
  "reqwest_client",
  "tracing-subscriber",
  "ui",
+ "workspace",
 ]
 
 [[package]]

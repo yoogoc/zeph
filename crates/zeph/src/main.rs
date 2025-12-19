@@ -1,28 +1,8 @@
 mod application;
 
 use gpui::*;
-use gpui_component::{button::*, *};
+use gpui_component::*;
 use std::sync::Arc;
-
-pub struct HelloWorld;
-
-impl Render for HelloWorld {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .v_flex()
-            .gap_2()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .child("Hello, World!")
-            .child(
-                Button::new("ok")
-                    .primary()
-                    .label("Let's Go!")
-                    .on_click(|_, _, _| println!("Clicked!")),
-            )
-    }
-}
 
 fn main() {
     // Initialize logging
@@ -33,25 +13,26 @@ fn main() {
         .with_http_client(Arc::new(reqwest_client::ReqwestClient::new()));
 
     app.run(move |cx| {
-        // This must be called before using any GPUI Component features.
-        init(cx);
+        // Initialize gpui-component
+        gpui_component::init(cx);
+        
+        // Initialize data models and registries
+        workspace::init(cx);
 
-        let bounds = Bounds::centered(None, size(px(920.0), px(700.0)), cx);
+        let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
         let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::Maximized(bounds)),
+            window_bounds: Some(WindowBounds::Windowed(bounds)),
             titlebar: Some(TitleBar::title_bar_options()),
             ..Default::default()
         };
 
         cx.open_window(window_options, |window, cx| {
             cx.activate(true);
-
             gpui_tokio::init(cx);
 
-            let view = cx.new(|_| HelloWorld);
-            // This first level on the window, should be a Root.
-            cx.new(|cx| Root::new(view, window, cx))
+            let app_view = application::init(window, cx);
+            cx.new(|cx| Root::new(app_view, window, cx))
         })
         .expect("Failed to open window. Please restart the application.");
     });
