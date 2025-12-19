@@ -20,7 +20,20 @@ impl Application {
         }
     }
     
-    fn render_home(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn create_workspace(&mut self, cx: &mut Context<Self>) {
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        workspace_registry.update(cx, |registry, cx| {
+            let workspace_name = format!("Workspace {}", registry.get_state().workspaces.len() + 1);
+            registry.create_workspace(workspace_name, cx);
+            
+            // Switch to the newly created workspace
+            if let Some(new_workspace) = registry.get_state().workspaces.last() {
+                registry.set_active_workspace(new_workspace.id, cx);
+            }
+        });
+    }
+    
+    fn render_home(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .size_full()
             .items_center()
@@ -41,13 +54,22 @@ impl Application {
                         Button::new("create_workspace")
                             .primary()
                             .label("Create Workspace")
-                            .on_click(|_, _, _| println!("Create workspace clicked"))
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.create_workspace(cx);
+                            }))
                     )
             )
     }
     
-    fn render_workspace(&self, _cx: &mut Context<Self>) -> Entity<ui::WorkspaceArea> {
-        // Get workspace from registry and update workspace_area
+    fn render_workspace(&self, cx: &mut Context<Self>) -> Entity<ui::WorkspaceArea> {
+        // Update workspace_area with current workspace data
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        let workspace = workspace_registry.read(cx).get_active_workspace().cloned();
+        
+        self.workspace_area.update(cx, |area, _| {
+            area.set_workspace(workspace);
+        });
+        
         self.workspace_area.clone()
     }
 }

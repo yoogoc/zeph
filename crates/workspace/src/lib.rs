@@ -28,6 +28,7 @@ impl WorkspaceRegistry {
         // Create a default workspace
         let default_workspace = Workspace::new("My Workspace".to_string());
         app_state.active_workspace_id = Some(default_workspace.id);
+        app_state.current_view = models::ApplicationView::Workspace(default_workspace.id);
         app_state.workspaces.push(default_workspace);
         
         Self { app_state }
@@ -51,6 +52,12 @@ impl WorkspaceRegistry {
     pub fn set_active_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
         self.app_state.active_workspace_id = Some(workspace_id);
         self.app_state.current_view = models::ApplicationView::Workspace(workspace_id);
+        cx.notify();
+    }
+    
+    pub fn go_to_home(&mut self, cx: &mut Context<Self>) {
+        self.app_state.current_view = models::ApplicationView::Home;
+        self.app_state.active_workspace_id = None;
         cx.notify();
     }
 }

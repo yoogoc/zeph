@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::{button::Button, *};
+use gpui_component::{button::{Button, ButtonVariants}, *};
 use models::Workspace;
 
 pub struct WorkspaceArea {
@@ -15,7 +15,14 @@ impl WorkspaceArea {
         self.workspace = workspace;
     }
     
-    fn render_sidebar(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn go_back_to_home(&mut self, cx: &mut Context<Self>) {
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        workspace_registry.update(cx, |registry, cx| {
+            registry.go_to_home(cx);
+        });
+    }
+    
+    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .w(px(250.0))
             .h_full()
@@ -27,6 +34,15 @@ impl WorkspaceArea {
                 div()
                     .v_flex()
                     .gap_2()
+                    .child(
+                        Button::new("back_home")
+                            .w_full()
+                            .label("← Back to Home")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.go_back_to_home(cx);
+                            }))
+                    )
+                    .child(div().h_px().bg(gpui::rgb(0xe0e0e0)).my_2()) // Divider
                     .child(
                         Button::new("collections")
                             .w_full()
@@ -65,11 +81,26 @@ impl WorkspaceArea {
                         .gap_4()
                         .child(
                             div()
-                                .text_xl()
-                                .font_semibold()
+                                .text_2xl()
+                                .font_bold()
                                 .child(format!("Workspace: {}", workspace.name))
                         )
-                        .child("Content area - Collections, Docs, History, Settings will be displayed here")
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(gpui::rgb(0x666666))
+                                .child(format!("Created: {}", workspace.created_at.format("%Y-%m-%d %H:%M")))
+                        )
+                        .child(
+                            div()
+                                .mt_8()
+                                .p_6()
+                                .bg(gpui::rgb(0xfafafa))
+                                .border_1()
+                                .border_color(gpui::rgb(0xe0e0e0))
+                                .rounded_lg()
+                                .child("Content area - Collections, Docs, History, Settings will be displayed here")
+                        )
                 } else {
                     div().child("No workspace selected")
                 }
