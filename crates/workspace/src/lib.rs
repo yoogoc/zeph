@@ -26,7 +26,8 @@ impl WorkspaceRegistry {
         let mut app_state = ApplicationState::default();
         
         // Create a default workspace
-        let default_workspace = Workspace::new("My Workspace".to_string());
+        let mut default_workspace = Workspace::new("My Workspace".to_string());
+        default_workspace.current_view = models::WorkspaceView::Collections; // Default to Collections
         app_state.active_workspace_id = Some(default_workspace.id);
         app_state.current_view = models::ApplicationView::Workspace(default_workspace.id);
         app_state.workspaces.push(default_workspace);
@@ -44,7 +45,8 @@ impl WorkspaceRegistry {
     }
     
     pub fn create_workspace(&mut self, name: String, cx: &mut Context<Self>) {
-        let workspace = Workspace::new(name);
+        let mut workspace = Workspace::new(name);
+        workspace.current_view = models::WorkspaceView::Collections; // Default to Collections
         self.app_state.workspaces.push(workspace);
         cx.notify();
     }
@@ -53,6 +55,13 @@ impl WorkspaceRegistry {
         self.app_state.active_workspace_id = Some(workspace_id);
         self.app_state.current_view = models::ApplicationView::Workspace(workspace_id);
         cx.notify();
+    }
+    
+    pub fn set_workspace_view(&mut self, workspace_id: uuid::Uuid, view: models::WorkspaceView, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.app_state.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            workspace.current_view = view;
+            cx.notify();
+        }
     }
     
     pub fn go_to_home(&mut self, cx: &mut Context<Self>) {
