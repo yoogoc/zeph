@@ -2,18 +2,25 @@ use gpui::*;
 use gpui::prelude::FluentBuilder;
 use gpui_component::{button::{Button, ButtonVariants}, *};
 use models::{Workspace, WorkspaceView};
+use crate::CollectionsView;
 
 pub struct WorkspaceArea {
     workspace: Option<Workspace>,
+    collections_view: Option<Entity<CollectionsView>>,
 }
 
 impl WorkspaceArea {
     pub fn new() -> Self {
-        Self { workspace: None }
+        Self { 
+            workspace: None,
+            collections_view: None,
+        }
     }
     
     pub fn set_workspace(&mut self, workspace: Option<Workspace>) {
         self.workspace = workspace;
+        // Reset collections view when workspace changes
+        self.collections_view = None;
     }
     
     fn switch_workspace_view(&mut self, view: WorkspaceView, cx: &mut Context<Self>) {
@@ -103,10 +110,10 @@ impl WorkspaceArea {
             )
     }
     
-    fn render_content(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_content(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(workspace) = &self.workspace {
             match workspace.current_view {
-                WorkspaceView::Collections => self.render_collections().into_any_element(),
+                WorkspaceView::Collections => self.render_collections(cx).into_any_element(),
                 WorkspaceView::Docs => self.render_docs().into_any_element(),
                 WorkspaceView::History => self.render_history().into_any_element(),
                 WorkspaceView::Settings => self.render_settings().into_any_element(),
@@ -116,30 +123,17 @@ impl WorkspaceArea {
         }
     }
     
-    fn render_collections(&self) -> impl IntoElement {
-        div()
-            .flex_1()
-            .p_6()
-            .child(
-                div()
-                    .v_flex()
-                    .gap_4()
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_bold()
-                            .child("Collections")
-                    )
-                    .child(
-                        div()
-                            .p_6()
-                            .bg(gpui::rgb(0xfafafa))
-                            .border_1()
-                            .border_color(gpui::rgb(0xe0e0e0))
-                            .rounded_lg()
-                            .child("Your API collections will be displayed here")
-                    )
-            )
+    fn render_collections(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+        let workspace_id = self.workspace.as_ref().map(|w| w.id);
+        
+        // Always recreate collections view when workspace changes or doesn't exist
+        if self.collections_view.is_none() || 
+           (workspace_id.is_some() && self.collections_view.is_some()) {
+            
+            self.collections_view = Some(cx.new(|_| CollectionsView::new(workspace_id, None)));
+        }
+        
+        self.collections_view.as_ref().unwrap().clone()
     }
     
     fn render_docs(&self) -> impl IntoElement {

@@ -58,6 +58,9 @@ pub struct Collection {
     pub id: Uuid,
     pub name: String,
     pub services: Vec<Service>,
+    pub folders: Vec<Folder>,
+    pub opened_services: Vec<Uuid>, // Track opened services for tabs
+    pub active_service: Option<Uuid>, // Currently active service
 }
 
 impl Collection {
@@ -66,6 +69,30 @@ impl Collection {
             id: Uuid::new_v4(),
             name,
             services: vec![],
+            folders: vec![],
+            opened_services: vec![],
+            active_service: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Folder {
+    pub id: Uuid,
+    pub name: String,
+    pub parent_id: Option<Uuid>, // None for root folders
+    pub service_ids: Vec<Uuid>,
+    pub is_expanded: bool,
+}
+
+impl Folder {
+    pub fn new(name: String, parent_id: Option<Uuid>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            name,
+            parent_id,
+            service_ids: vec![],
+            is_expanded: true,
         }
     }
 }
@@ -75,6 +102,7 @@ pub struct Service {
     pub id: Uuid,
     pub name: String,
     pub service_type: ServiceType,
+    pub folder_id: Option<Uuid>, // None for root level services
 }
 
 impl Service {
@@ -83,6 +111,7 @@ impl Service {
             id: Uuid::new_v4(),
             name,
             service_type,
+            folder_id: None,
         }
     }
 }

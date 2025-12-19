@@ -16,3 +16,4 @@ tracing-subscriber.workspace = true
 ui = { path = "../ui" }
 models = { path = "../models" }
 workspace = { path = "../workspace" }
+collections = { path = "../collections" }

@@ -18,6 +18,7 @@ fn main() {
         
         // Initialize data models and registries
         workspace::init(cx);
+        collections::init(cx);
 
         let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
