@@ -5,3 +5,10 @@ edition.workspace = true
 publish.workspace = true
 
 [dependencies]
+gpui.workspace = true
+gpui_tokio.workspace = true
+reqwest_client.workspace = true
+gpui-component.workspace = true
+gpui-component-assets.workspace = true
+anyhow.workspace = true
+tracing-subscriber.workspace = true
