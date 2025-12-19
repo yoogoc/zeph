@@ -9,3 +9,4 @@ models = { path = "../models" }
 workspace = { path = "../workspace" }
 gpui.workspace = true
 gpui-component.workspace = true
+uuid.workspace = true

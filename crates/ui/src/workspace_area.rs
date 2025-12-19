@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::{button::{Button, ButtonVariants}, *};
+use gpui_component::{button::Button, *};
 use models::Workspace;
 
 pub struct WorkspaceArea {
@@ -15,14 +15,7 @@ impl WorkspaceArea {
         self.workspace = workspace;
     }
     
-    fn go_back_to_home(&mut self, cx: &mut Context<Self>) {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        workspace_registry.update(cx, |registry, cx| {
-            registry.go_to_home(cx);
-        });
-    }
-    
-    fn render_sidebar(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_sidebar(&mut self, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .w(px(250.0))
             .h_full()
@@ -34,15 +27,6 @@ impl WorkspaceArea {
                 div()
                     .v_flex()
                     .gap_2()
-                    .child(
-                        Button::new("back_home")
-                            .w_full()
-                            .label("← Back to Home")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.go_back_to_home(cx);
-                            }))
-                    )
-                    .child(div().h_px().bg(gpui::rgb(0xe0e0e0)).my_2()) // Divider
                     .child(
                         Button::new("collections")
                             .w_full()
