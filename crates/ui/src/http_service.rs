@@ -59,8 +59,10 @@ impl HttpService {
         }
     }
 
-    fn send_request(&mut self, _cx: &mut Context<Self>) {
+    fn send_request(&mut self, cx: &mut Context<Self>) {
         self.is_loading = true;
+        cx.notify();
+        let url = self.url.read(cx).value();
         println!(
             "Sending {} request to {}",
             match self.config.method {
@@ -70,8 +72,10 @@ impl HttpService {
                 HttpMethod::Delete => "DELETE",
                 _ => "HTTP",
             },
-            self.config.url
+            url
         );
+        self.is_loading = false;
+        cx.notify();
     }
 
     fn render_method_selector(&self, _cx: &mut Context<Self>) -> impl IntoElement {

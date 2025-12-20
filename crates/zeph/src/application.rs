@@ -72,8 +72,8 @@ impl Application {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let workspace = workspace_registry.read(cx).get_active_workspace().cloned();
         
-        self.workspace_area.update(cx, |area, _| {
-            area.set_workspace(workspace);
+        self.workspace_area.update(cx, |area, cx| {
+            area.set_workspace(workspace, cx);
         });
         
         self.workspace_area.clone()
