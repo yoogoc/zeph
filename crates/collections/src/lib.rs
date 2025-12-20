@@ -66,10 +66,53 @@ impl CollectionRegistry {
                     body: Some("{}".into()),
                 })
             );
+
+            let lakekeeper = Service::new(
+                "lakekeeper openapi".into(),
+                ServiceType::Http(HttpConfig {
+                    method: HttpMethod::Get,
+                    url: "https://docs.lakekeeper.io/docs/nightly/api/management-open-api.yaml".into(),
+                    headers: vec![],
+                    body: Some("{}".into()),
+                })
+            );
+            let json = Service::new(
+                "httpbin json".into(),
+                ServiceType::Http(HttpConfig {
+                    method: HttpMethod::Get,
+                    url: "https://httpbin.org/json".into(),
+                    headers: vec![],
+                    body: Some("{}".into()),
+                })
+            );
+
+            let stream_byte = Service::new(
+                "httpbin stream byte".into(),
+                ServiceType::Http(HttpConfig {
+                    method: HttpMethod::Get,
+                    url: "https://httpbin.org/stream-bytes/5".into(),
+                    headers: vec![],
+                    body: Some("{}".into()),
+                })
+            );
+            let stream_json = Service::new(
+                "httpbin stream json".into(),
+                ServiceType::Http(HttpConfig {
+                    method: HttpMethod::Get,
+                    url: "https://httpbin.org/stream/5".into(),
+                    headers: vec![],
+                    body: Some("{}".into()),
+                })
+            );
+
             
             sample_collection.services.push(get_users);
             sample_collection.services.push(create_user);
-            
+            sample_collection.services.push(lakekeeper);
+            sample_collection.services.push(json);
+            sample_collection.services.push(stream_byte);
+            sample_collection.services.push(stream_json);
+
             self.workspace_collections.insert(workspace_id, vec![sample_collection]);
             cx.notify();
         }

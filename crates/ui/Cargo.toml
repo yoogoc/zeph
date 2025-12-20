@@ -10,5 +10,8 @@ workspace = { path = "../workspace" }
 collections = { path = "../collections" }
 gpui.workspace = true
 gpui-component.workspace = true
+gpui_tokio.workspace = true
 uuid.workspace = true
 smallvec.workspace = true
+reqwest.workspace = true
+futures.workspace = true
