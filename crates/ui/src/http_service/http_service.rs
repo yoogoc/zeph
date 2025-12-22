@@ -1,3 +1,4 @@
+use super::request_body::BodyType;
 use super::request_panel::{RequestPanel, RequestPanelEvent};
 use super::response_panel::ResponsePanel;
 use futures::StreamExt;
@@ -47,7 +48,8 @@ impl HttpService {
         let response_panel = cx.new(|_cx| {
             ResponsePanel::new(response.clone(), response_headers.clone(), request_info.clone())
         });
-        let request_panel = cx.new(|cx| RequestPanel::new(config.method.clone(), url.clone(), cx));
+        let request_panel =
+            cx.new(|cx| RequestPanel::new(config.method.clone(), url.clone(), window, cx));
 
         let subscription = cx.subscribe_in(&request_panel, window, |this, _, event, window, cx| {
             match event {
@@ -59,6 +61,9 @@ impl HttpService {
                 }
                 RequestPanelEvent::RemoveHeader(index) => {
                     this.remove_header(*index, cx);
+                }
+                RequestPanelEvent::BodyTypeChanged(body_type) => {
+                    this.update_content_type_header(*body_type, cx);
                 }
             }
         });
@@ -78,8 +83,8 @@ impl HttpService {
 
     fn add_header(&mut self, cx: &mut Context<Self>) {
         self.config.headers.push(Header {
-            key: "Content-Type".into(),
-            value: "application/json".into(),
+            key: "".into(),
+            value: "".into(),
         });
         cx.notify();
     }
@@ -89,6 +94,22 @@ impl HttpService {
             self.config.headers.remove(index);
             cx.notify();
         }
+    }
+
+    fn update_content_type_header(&mut self, body_type: BodyType, cx: &mut Context<Self>) {
+        // Remove existing Content-Type header
+        self.config
+            .headers
+            .retain(|h| h.key.to_lowercase() != "content-type");
+
+        // Add new Content-Type header if body type is not None
+        if let Some(content_type) = body_type.content_type() {
+            self.config.headers.push(Header {
+                key: "Content-Type".into(),
+                value: content_type.into(),
+            });
+        }
+        cx.notify();
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -101,7 +122,7 @@ impl HttpService {
         let url = self.url.read(cx).value().to_string();
         let method = self.config.method.clone();
         let headers = self.config.headers.clone();
-        let body = self.config.body.clone();
+        let body = self.request_panel.read(cx).body(cx);
 
         // Build request info
         let mut request_info_text = format!("{:?} {}\n\n", method, url);
@@ -137,7 +158,7 @@ impl HttpService {
             }
 
             if let Some(b) = body {
-                req = req.body(b.to_string());
+                req = req.body(b);
             }
 
             req.send().await
@@ -226,7 +247,6 @@ impl Render for HttpService {
         // Update request_panel state
         self.request_panel.update(cx, |panel, cx| {
             panel.set_headers(self.config.headers.clone(), cx);
-            panel.set_body(self.config.body.clone(), cx);
             panel.set_loading(self.is_loading);
             cx.notify();
         });

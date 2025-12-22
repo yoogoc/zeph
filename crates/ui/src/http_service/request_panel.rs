@@ -1,4 +1,4 @@
-use super::request_body::RequestBody;
+use super::request_body::{BodyType, RequestBody, RequestBodyEvent};
 use super::request_headers::{RequestHeaders, RequestHeadersEvent};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -19,13 +19,13 @@ pub enum RequestPanelEvent {
     Send,
     AddHeader,
     RemoveHeader(usize),
+    BodyTypeChanged(BodyType),
 }
 
 pub struct RequestPanel {
     method: HttpMethod,
     url: Entity<InputState>,
     headers: Vec<Header>,
-    body: Option<SharedString>,
     body_panel: Entity<RequestBody>,
     headers_panel: Entity<RequestHeaders>,
     active_tab: RequestTab,
@@ -36,11 +36,23 @@ pub struct RequestPanel {
 impl EventEmitter<RequestPanelEvent> for RequestPanel {}
 
 impl RequestPanel {
-    pub fn new(method: HttpMethod, url: Entity<InputState>, cx: &mut Context<Self>) -> Self {
-        let body_panel = cx.new(|_cx| RequestBody::new(None));
+    pub fn new(
+        method: HttpMethod,
+        url: Entity<InputState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let body_panel = cx.new(|cx| RequestBody::new(window, cx));
         let headers_panel = cx.new(|_cx| RequestHeaders::new(Vec::new()));
 
-        let subscription = cx.subscribe(&headers_panel, |_this, _, event, cx| match event {
+        let body_sub = cx.subscribe(&body_panel, |_this, _, event, cx| match event {
+            RequestBodyEvent::BodyTypeChanged(body_type) => {
+                cx.emit(RequestPanelEvent::BodyTypeChanged(*body_type));
+            }
+            RequestBodyEvent::BodyChanged(_) => {}
+        });
+
+        let headers_sub = cx.subscribe(&headers_panel, |_this, _, event, cx| match event {
             RequestHeadersEvent::Remove(index) => {
                 cx.emit(RequestPanelEvent::RemoveHeader(*index));
             }
@@ -50,12 +62,11 @@ impl RequestPanel {
             method,
             url,
             headers: Vec::new(),
-            body: None,
             body_panel,
             headers_panel,
             active_tab: RequestTab::default(),
             is_loading: false,
-            _subscriptions: vec![subscription],
+            _subscriptions: vec![body_sub, headers_sub],
         }
     }
 
@@ -67,16 +78,22 @@ impl RequestPanel {
         });
     }
 
-    pub fn set_body(&mut self, body: Option<SharedString>, cx: &mut Context<Self>) {
-        self.body = body.clone();
-        self.body_panel.update(cx, |panel, cx| {
-            *panel = RequestBody::new(body);
-            cx.notify();
-        });
-    }
-
     pub fn set_loading(&mut self, is_loading: bool) {
         self.is_loading = is_loading;
+    }
+
+    pub fn body(&self, cx: &App) -> Option<String> {
+        let body_panel = self.body_panel.read(cx);
+        if body_panel.body_type() == BodyType::None {
+            None
+        } else {
+            Some(body_panel.body(cx))
+        }
+    }
+
+    #[allow(unused)]
+    pub fn body_type(&self, cx: &App) -> BodyType {
+        self.body_panel.read(cx).body_type()
     }
 
     fn render_method_selector(&self) -> impl IntoElement {
