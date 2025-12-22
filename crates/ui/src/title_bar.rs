@@ -1,16 +1,29 @@
-use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::{
-    button::{Button, ButtonVariants},
-    TitleBar as GTitleBar, *,
-};
+use gpui_component::button::Button;
+use gpui_component::tab::{Tab, TabBar};
+use gpui_component::{Sizable, TitleBar as GTitleBar};
 use models::ApplicationView;
 
-pub struct TitleBar {}
+pub struct TitleBar {
+    selected_index: usize,
+}
 
 impl TitleBar {
-    pub fn new(_window: &mut Window, _cx: &mut Context<Self>) -> Self {
-        Self {}
+    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        let app_state = workspace_registry.read(cx).get_state();
+        let current_view = app_state.current_view.clone();
+        let workspaces = app_state.workspaces.clone();
+        let selected_index = match current_view {
+            ApplicationView::Home => 0,
+            ApplicationView::Workspace(id) => workspaces
+                .iter()
+                .position(|workspace| workspace.id == id)
+                .map(|index| index + 1)
+                .unwrap_or(0),
+        };
+
+        Self { selected_index }
     }
 
     fn switch_to_home(&mut self, cx: &mut Context<Self>) {
@@ -32,41 +45,62 @@ impl Render for TitleBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let app_state = workspace_registry.read(cx).get_state();
-        let current_view = app_state.current_view.clone();
         let workspaces = app_state.workspaces.clone();
 
+        let workspace_ids = workspaces
+            .iter()
+            .map(|workspace| workspace.id)
+            .collect::<Vec<_>>();
+
         GTitleBar::new().child(
-            div()
-                .h_flex()
+            TabBar::new("workspace_tabs")
+                .selected_index(self.selected_index)
+                .on_click(cx.listener(move |this, index, _, cx| {
+                    if this.selected_index.ne(index) {
+                        if *index == 0 {
+                            this.switch_to_home(cx);
+                        } else {
+                            let workspace_id = workspace_ids.get(*index - 1);
+                            if let Some(&workspace_id) = workspace_id {
+                                this.switch_to_workspace(workspace_id, cx);
+                            }
+                        }
+                    }
+                    this.selected_index = *index;
+
+                    cx.notify();
+                }))
                 .items_center()
                 .gap_2()
                 .py_2()
                 .child(
-                    Button::new("tab_home")
+                    Tab::new()
                         .label("Home")
-                        .when(
-                            matches!(current_view, ApplicationView::Home),
-                            |btn: Button| btn.primary(),
-                        )
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.switch_to_home(cx);
                         })),
                 )
-                .children(workspaces.iter().map(|workspace| {
-                    let is_active = matches!(
-                        current_view,
-                        ApplicationView::Workspace(id) if id == workspace.id
-                    );
+                .children(app_state.workspaces.clone().iter().map(|workspace| {
                     let workspace_id = workspace.id;
                     let workspace_name = workspace.name.clone();
 
-                    Button::new(format!("tab_{}", workspace.id))
+                    Tab::new()
                         .label(workspace_name)
-                        .when(is_active, |btn: Button| btn.primary())
                         .on_click(cx.listener(move |this, _, _, cx| {
                             this.switch_to_workspace(workspace_id, cx);
+                            cx.notify();
                         }))
-                })),
+                        .px_1()
+                        .suffix(
+                            Button::new(format!("close_{}", workspace_id))
+                                .small()
+                                .label("×")
+                                .on_click(cx.listener(move |_this, _, _, _cx| {
+                                    println!("close {workspace_id}")
+                                })),
+                        )
+                }))
+                .h_full(),
         )
     }
 }
