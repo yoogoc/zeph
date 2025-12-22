@@ -132,7 +132,7 @@ pub struct HttpConfig {
     pub body: Option<SharedString>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum HttpMethod {
     Get,
     Post,
@@ -141,6 +141,20 @@ pub enum HttpMethod {
     Patch,
     Head,
     Options,
+}
+
+impl HttpMethod {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Get => "GET",
+            Self::Post => "POST",
+            Self::Put => "PUT",
+            Self::Delete => "DELETE",
+            Self::Patch => "PATCH",
+            Self::Head => "HEAD",
+            Self::Options => "OPTIONS",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

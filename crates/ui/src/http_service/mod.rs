@@ -1,4 +1,5 @@
 mod http_service;
+mod method_selector;
 mod request_body;
 mod request_headers;
 mod request_panel;

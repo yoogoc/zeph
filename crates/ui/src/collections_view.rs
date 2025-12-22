@@ -38,6 +38,7 @@ impl CollectionsView {
             registry.update(cx, |registry, cx| {
                 registry.close_service(workspace_id, collection_id, service_id, cx);
             });
+            self.http_services.remove(&service_id);
             cx.notify();
         }
     }

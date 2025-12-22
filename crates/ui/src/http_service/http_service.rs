@@ -62,6 +62,9 @@ impl HttpService {
                 RequestPanelEvent::BodyTypeChanged(body_type) => {
                     this.update_content_type_header(*body_type, window, cx);
                 }
+                RequestPanelEvent::MethodChanged(_) => {
+                    // Method is managed by MethodSelector, no action needed here
+                }
             }
         });
 
@@ -112,7 +115,7 @@ impl HttpService {
             .update(cx, |state, cx| state.set_value("", window, cx));
 
         let url = self.url.read(cx).value().to_string();
-        let method = HttpMethod::Get; // TODO: get from config
+        let method = self.request_panel.read(cx).method(cx);
         let headers = self.request_panel.read(cx).headers(cx);
         let body = self.request_panel.read(cx).body(cx);
 

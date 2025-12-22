@@ -1,5 +1,6 @@
+use super::method_selector::{MethodSelector, MethodSelectorEvent};
 use super::request_body::{BodyType, RequestBody, RequestBodyEvent};
-use super::request_headers::{RequestHeaders};
+use super::request_headers::RequestHeaders;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -15,15 +16,17 @@ enum RequestTab {
     Headers,
 }
 
+#[allow(unused)]
 pub enum RequestPanelEvent {
     Send,
     AddHeader,
     BodyTypeChanged(BodyType),
+    MethodChanged(HttpMethod),
 }
 
 pub struct RequestPanel {
-    method: HttpMethod,
     url: Entity<InputState>,
+    method_selector: Entity<MethodSelector>,
     body_panel: Entity<RequestBody>,
     pub headers_panel: Entity<RequestHeaders>,
     active_tab: RequestTab,
@@ -40,8 +43,15 @@ impl RequestPanel {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
+        let method_selector = cx.new(|cx| MethodSelector::new(method, window, cx));
         let body_panel = cx.new(|cx| RequestBody::new(window, cx));
         let headers_panel = cx.new(|cx| RequestHeaders::new(Vec::new(), window, cx));
+
+        let method_sub = cx.subscribe(&method_selector, |_this, _, event, cx| match event {
+            MethodSelectorEvent::Changed(method) => {
+                cx.emit(RequestPanelEvent::MethodChanged(method.clone()));
+            }
+        });
 
         let body_sub = cx.subscribe(&body_panel, |_this, _, event, cx| match event {
             RequestBodyEvent::BodyTypeChanged(body_type) => {
@@ -50,18 +60,16 @@ impl RequestPanel {
             RequestBodyEvent::BodyChanged(_) => {}
         });
 
-        let headers_sub = cx.subscribe(&headers_panel, |_this, _, _event, _cx| {
-            // Headers are managed internally now
-        });
+        let headers_sub = cx.subscribe(&headers_panel, |_this, _, _event, _cx| {});
 
         Self {
-            method,
             url,
+            method_selector,
             body_panel,
             headers_panel,
             active_tab: RequestTab::default(),
             is_loading: false,
-            _subscriptions: vec![body_sub, headers_sub],
+            _subscriptions: vec![method_sub, body_sub, headers_sub],
         }
     }
 
@@ -87,25 +95,8 @@ impl RequestPanel {
         }
     }
 
-    fn render_method_selector(&self) -> impl IntoElement {
-        let (color, label) = match self.method {
-            HttpMethod::Get => (0x28a745, "GET"),
-            HttpMethod::Post => (0x007bff, "POST"),
-            HttpMethod::Put => (0xffc107, "PUT"),
-            HttpMethod::Delete => (0xdc3545, "DELETE"),
-            HttpMethod::Patch => (0x17a2b8, "PATCH"),
-            HttpMethod::Head => (0x6c757d, "HEAD"),
-            HttpMethod::Options => (0x6c757d, "OPTIONS"),
-        };
-        div()
-            .px_3()
-            .py_1()
-            .bg(gpui::rgb(color))
-            .text_color(gpui::rgb(0xffffff))
-            .rounded_md()
-            .text_sm()
-            .font_semibold()
-            .child(label)
+    pub fn method(&self, cx: &App) -> HttpMethod {
+        self.method_selector.read(cx).method(cx)
     }
 }
 
@@ -132,7 +123,7 @@ impl Render for RequestPanel {
                             .border_color(gpui::rgb(0xdee2e6))
                             .rounded_md()
                             .text_sm()
-                            .child(self.render_method_selector())
+                            .child(self.method_selector.clone())
                             .child(Input::new(&self.url)),
                     )
                     .child(
