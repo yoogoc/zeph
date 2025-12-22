@@ -1,27 +1,44 @@
-use gpui::*;
+use crate::{HttpService, ServiceTabs, ServiceTabsEvent};
 use gpui::prelude::FluentBuilder;
-use gpui_component::{button::{Button, ButtonVariants}, *};
+use gpui::*;
+use gpui_component::{
+    button::{Button, ButtonVariants},
+    *,
+};
 use models::{Collection, Service, ServiceType};
 use uuid::Uuid;
-use crate::HttpService;
 
 pub struct CollectionsView {
     workspace_id: Option<Uuid>,
     collection_id: Option<Uuid>,
     search_query: String,
     http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
+    service_tabs: Entity<ServiceTabs>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl CollectionsView {
-    pub fn new(workspace_id: Option<Uuid>, collection_id: Option<Uuid>) -> Self {
+    pub fn new(workspace_id: Option<Uuid>, collection_id: Option<Uuid>, cx: &mut Context<Self>) -> Self {
+        let service_tabs = cx.new(|_| ServiceTabs::new());
+
+        let tabs_sub = cx.subscribe(&service_tabs, |this, _, event, cx| match event {
+            ServiceTabsEvent::Select(id) => this.set_active_service(*id, cx),
+            ServiceTabsEvent::Close(id) => this.close_service(*id, cx),
+        });
+
+        let registry = collections::CollectionRegistry::global(cx);
+        let registry_sub = cx.observe(&registry, |_, _, cx| cx.notify());
+
         Self {
             workspace_id,
             collection_id,
             search_query: String::new(),
             http_services: std::collections::HashMap::new(),
+            service_tabs,
+            _subscriptions: vec![tabs_sub, registry_sub],
         }
     }
-    
+
     fn open_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
         if let (Some(workspace_id), Some(collection_id)) = (self.workspace_id, self.collection_id) {
             let registry = collections::CollectionRegistry::global(cx);
@@ -31,7 +48,7 @@ impl CollectionsView {
             cx.notify();
         }
     }
-    
+
     fn close_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
         if let (Some(workspace_id), Some(collection_id)) = (self.workspace_id, self.collection_id) {
             let registry = collections::CollectionRegistry::global(cx);
@@ -42,7 +59,7 @@ impl CollectionsView {
             cx.notify();
         }
     }
-    
+
     fn set_active_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
         if let (Some(workspace_id), Some(collection_id)) = (self.workspace_id, self.collection_id) {
             let registry = collections::CollectionRegistry::global(cx);
@@ -52,8 +69,13 @@ impl CollectionsView {
             cx.notify();
         }
     }
-    
-    fn render_service_item(&mut self, service: &Service, collection: &Collection, cx: &mut Context<Self>) -> impl IntoElement {
+
+    fn render_service_item(
+        &mut self,
+        service: &Service,
+        collection: &Collection,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let service_id = service.id;
         let is_active = collection.active_service == Some(service_id);
         let method_color = match &service.service_type {
@@ -66,7 +88,7 @@ impl CollectionsView {
             },
             _ => gpui::rgb(0x6c757d),
         };
-        
+
         Button::new(format!("service_{}", service_id))
             .w_full()
             .justify_start()
@@ -76,32 +98,31 @@ impl CollectionsView {
                     .h_flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .w(px(8.0))
-                            .h(px(8.0))
-                            .bg(method_color)
-                            .rounded_full()
-                    )
-                    .child(
-                        div()
-                            .text_sm()
-                            .child(service.name.clone())
-                    )
+                    .child(div().w(px(8.0)).h(px(8.0)).bg(method_color).rounded_full())
+                    .child(div().text_sm().child(service.name.clone())),
             )
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.open_service(service_id, cx);
             }))
     }
-    
-    fn render_sidebar(&mut self, collection: &Collection, cx: &mut Context<Self>) -> impl IntoElement {
-        let filtered_services: Vec<&Service> = collection.services.iter()
+
+    fn render_sidebar(
+        &mut self,
+        collection: &Collection,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let filtered_services: Vec<&Service> = collection
+            .services
+            .iter()
             .filter(|service| {
-                self.search_query.is_empty() || 
-                service.name.to_lowercase().contains(&self.search_query.to_lowercase())
+                self.search_query.is_empty()
+                    || service
+                        .name
+                        .to_lowercase()
+                        .contains(&self.search_query.to_lowercase())
             })
             .collect();
-            
+
         div()
             .w(px(300.0))
             .h_full()
@@ -125,106 +146,63 @@ impl CollectionsView {
                                     .border_1()
                                     .border_color(gpui::rgb(0xdee2e6))
                                     .rounded_md()
-                                    .child("Search services...")
+                                    .child("Search services..."),
                             )
                             .child(
                                 Button::new("add_service")
                                     .primary()
                                     .label("+ New")
-                                    .on_click(|_, _, _| println!("Add service clicked"))
-                            )
+                                    .on_click(|_, _, _| println!("Add service clicked")),
+                            ),
                     )
                     .child(
-                        div()
-                            .v_flex()
-                            .gap_1()
-                            .children(
-                                filtered_services.into_iter().map(|service| {
-                                    self.render_service_item(service, collection, cx)
-                                })
-                            )
-                    )
+                        div().v_flex().gap_1().children(
+                            filtered_services
+                                .into_iter()
+                                .map(|service| self.render_service_item(service, collection, cx)),
+                        ),
+                    ),
             )
     }
-    
-    fn render_service_tabs(&mut self, collection: &Collection, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .w_full()
-            .h_flex()
-            .items_center()
-            .gap_2()
-            .px_4()
-            .py_2()
-            .bg(gpui::rgb(0xf8f9fa))
-            .border_b_1()
-            .border_color(gpui::rgb(0xe0e0e0))
-            .children(
-                collection.opened_services.iter().filter_map(|&service_id| {
-                    collection.services.iter().find(|s| s.id == service_id).map(|service| {
-                        let is_active = collection.active_service == Some(service_id);
-                        
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_1()
-                            .max_w(px(200.0)) // Limit maximum width
-                            .child(
-                                Button::new(format!("tab_{}", service_id))
-                                    .px_3()
-                                    .py_2()
-                                    .flex_shrink()
-                                    .min_w(px(80.0))
-                                    .max_w(px(160.0))
-                                    .label(service.name.clone())
-                                    .when(is_active, |btn: Button| btn.primary())
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.set_active_service(service_id, cx);
-                                    }))
-                            )
-                            .child(
-                                Button::new(format!("close_{}", service_id))
-                                    .w(px(24.0))
-                                    .h(px(24.0))
-                                    .flex_shrink_0()
-                                    .label("×")
-                                    .on_click(cx.listener(move |this, _, _, cx| {
-                                        this.close_service(service_id, cx);
-                                    }))
-                            )
-                    })
-                })
-            )
-    }
-    
-    fn render_service_content(&mut self, collection: &Collection, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+
+    fn render_service_content(
+        &mut self,
+        collection: &Collection,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         if let Some(active_service_id) = collection.active_service {
-            if let Some(service) = collection.services.iter().find(|s| s.id == active_service_id) {
+            if let Some(service) = collection
+                .services
+                .iter()
+                .find(|s| s.id == active_service_id)
+            {
                 match &service.service_type {
                     ServiceType::Http(config) => {
-                        // Get or create HttpService entity for this service
                         if !self.http_services.contains_key(&service.id) {
-                            let http_service = cx.new(|cx| HttpService::new(config.clone(), window, cx));
+                            let http_service =
+                                cx.new(|cx| HttpService::new(config.clone(), window, cx));
                             self.http_services.insert(service.id, http_service);
                         }
-                        
-                        self.http_services.get(&service.id).unwrap().clone().into_any_element()
-                    }
-                    ServiceType::Grpc(_) => {
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .p_4()
-                            .child("gRPC service configuration will be displayed here")
+
+                        self.http_services
+                            .get(&service.id)
+                            .unwrap()
+                            .clone()
                             .into_any_element()
                     }
-                    ServiceType::WebSocket(_) => {
-                        div()
-                            .flex_1()
-                            .h_full()
-                            .p_4()
-                            .child("WebSocket service configuration will be displayed here")
-                            .into_any_element()
-                    }
+                    ServiceType::Grpc(_) => div()
+                        .flex_1()
+                        .h_full()
+                        .p_4()
+                        .child("gRPC service configuration will be displayed here")
+                        .into_any_element(),
+                    ServiceType::WebSocket(_) => div()
+                        .flex_1()
+                        .h_full()
+                        .p_4()
+                        .child("WebSocket service configuration will be displayed here")
+                        .into_any_element(),
                 }
             } else {
                 div()
@@ -245,41 +223,46 @@ impl CollectionsView {
                 .into_any_element()
         }
     }
-    
+
     fn render_content(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         if let Some(workspace_id) = self.workspace_id {
             let registry = collections::CollectionRegistry::global(cx);
-            
+
             // Ensure workspace has collections
             registry.update(cx, |registry, cx| {
                 registry.ensure_workspace_collections(workspace_id, cx);
             });
-            
+
             // Get collections for this workspace
             let collections = registry.read(cx).get_collections(workspace_id);
-            
+
             // If no collection is selected, use the first one
-            let collection_id = self.collection_id.or_else(|| collections.first().map(|c| c.id));
-            
+            let collection_id = self
+                .collection_id
+                .or_else(|| collections.first().map(|c| c.id));
+
             if let Some(collection_id) = collection_id {
                 // Update our collection_id if it was None
                 if self.collection_id.is_none() {
                     self.collection_id = Some(collection_id);
                 }
-                
+
                 if let Some(collection) = collections.iter().find(|c| c.id == collection_id) {
                     div()
                         .h_flex()
                         .size_full()
                         .child(self.render_sidebar(collection, cx))
-                        .child(
+                        .child({
+                            self.service_tabs.update(cx, |tabs, _| {
+                                tabs.set_collection(collection.clone());
+                            });
                             div()
                                 .flex_1()
                                 .h_full()
                                 .v_flex()
-                                .child(self.render_service_tabs(collection, cx))
+                                .child(self.service_tabs.clone())
                                 .child(self.render_service_content(collection, window, cx))
-                        )
+                        })
                 } else {
                     div().p_4().child("Collection not found")
                 }
@@ -292,20 +275,8 @@ impl CollectionsView {
     }
 }
 
-impl Default for CollectionsView {
-    fn default() -> Self {
-        Self::new(None, None)
-    }
-}
-
 impl Render for CollectionsView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Subscribe to registry updates to ensure UI refreshes when services are opened/closed
-        if let (Some(workspace_id), Some(collection_id)) = (self.workspace_id, self.collection_id) {
-            let registry = collections::CollectionRegistry::global(cx);
-            let _collection = registry.read(cx).get_collection(workspace_id, collection_id);
-        }
-        
         self.render_content(window, cx)
     }
 }

@@ -26,7 +26,7 @@ impl WorkspaceContent {
 
     fn render_collections(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         if self.collections_view.is_none() {
-            self.collections_view = Some(cx.new(|_| CollectionsView::new(self.workspace_id, None)));
+            self.collections_view = Some(cx.new(|cx| CollectionsView::new(self.workspace_id, None, cx)));
         }
         self.collections_view.as_ref().unwrap().clone()
     }
