@@ -1,6 +1,9 @@
-use gpui::{App, AppContext, Context, Entity, Global, SharedString};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use models::{ApplicationState, Workspace};
 use uuid::Uuid;
+
+#[derive(Clone, Debug)]
+pub struct WorkspaceEvent;
 
 pub fn init(cx: &mut App) {
     WorkspaceRegistry::set_global(cx.new(WorkspaceRegistry::new), cx);
@@ -12,6 +15,8 @@ impl Global for GlobalWorkspaceRegistry {}
 pub struct WorkspaceRegistry {
     app_state: ApplicationState,
 }
+
+impl EventEmitter<WorkspaceEvent> for WorkspaceRegistry {}
 
 impl WorkspaceRegistry {
     pub fn global(cx: &App) -> Entity<Self> {
@@ -48,25 +53,46 @@ impl WorkspaceRegistry {
         let mut workspace = Workspace::new(name);
         workspace.current_view = models::WorkspaceView::Collections; // Default to Collections
         self.app_state.workspaces.push(workspace);
-        cx.notify();
+        cx.emit(WorkspaceEvent);
     }
     
     pub fn set_active_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
         self.app_state.active_workspace_id = Some(workspace_id);
         self.app_state.current_view = models::ApplicationView::Workspace(workspace_id);
-        cx.notify();
+        cx.emit(WorkspaceEvent);
     }
     
     pub fn set_workspace_view(&mut self, workspace_id: uuid::Uuid, view: models::WorkspaceView, cx: &mut Context<Self>) {
         if let Some(workspace) = self.app_state.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             workspace.current_view = view;
-            cx.notify();
+            cx.emit(WorkspaceEvent);
         }
     }
     
     pub fn go_to_home(&mut self, cx: &mut Context<Self>) {
         self.app_state.current_view = models::ApplicationView::Home;
         self.app_state.active_workspace_id = None;
-        cx.notify();
+        cx.emit(WorkspaceEvent);
+    }
+    
+    pub fn remove_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
+        // Don't allow removing the last workspace
+        if self.app_state.workspaces.len() <= 1 {
+            return;
+        }
+        
+        // Remove the workspace
+        self.app_state.workspaces.retain(|w| w.id != workspace_id);
+        
+        // If the removed workspace was active, switch to another one or home
+        if self.app_state.active_workspace_id == Some(workspace_id) {
+            if let Some(first_workspace) = self.app_state.workspaces.first() {
+                self.set_active_workspace(first_workspace.id, cx);
+            } else {
+                self.go_to_home(cx);
+            }
+        } else {
+            cx.emit(WorkspaceEvent);
+        }
     }
 }

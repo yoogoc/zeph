@@ -23,6 +23,11 @@ impl TitleBar {
                 .unwrap_or(0),
         };
 
+        // Subscribe to workspace registry changes to update tabs
+        cx.subscribe(&workspace_registry, |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
+            cx.notify();
+        }).detach();
+
         Self { selected_index }
     }
 
@@ -39,6 +44,13 @@ impl TitleBar {
             registry.set_active_workspace(workspace_id, cx);
         });
     }
+    
+    fn close_workspace(&mut self, workspace_id: uuid::Uuid, cx: &mut Context<Self>) {
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        workspace_registry.update(cx, |registry, cx| {
+            registry.remove_workspace(workspace_id, cx);
+        });
+    }
 }
 
 impl Render for TitleBar {
@@ -46,6 +58,17 @@ impl Render for TitleBar {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let app_state = workspace_registry.read(cx).get_state();
         let workspaces = app_state.workspaces.clone();
+        
+        // Update selected_index based on current application state
+        let current_view = app_state.current_view.clone();
+        self.selected_index = match current_view {
+            ApplicationView::Home => 0,
+            ApplicationView::Workspace(id) => workspaces
+                .iter()
+                .position(|workspace| workspace.id == id)
+                .map(|index| index + 1)
+                .unwrap_or(0),
+        };
 
         let workspace_ids = workspaces
             .iter()
@@ -76,7 +99,7 @@ impl Render for TitleBar {
                 .py_2()
                 .child(Tab::new().label("Home").on_mouse_down(
                     MouseButton::Left,
-                    move |_, window, cx| {
+                    move |_, window, _cx| {
                         window.prevent_default();
                     },
                 ))
@@ -91,8 +114,8 @@ impl Render for TitleBar {
                             Button::new(format!("close_{}", workspace_id))
                                 .small()
                                 .label("×")
-                                .on_click(cx.listener(move |_this, _, _, _cx| {
-                                    println!("close {workspace_id}")
+                                .on_click(cx.listener(move |this, _, _, cx| {
+                                    this.close_workspace(workspace_id, cx);
                                 })),
                         )
                         .on_mouse_down(MouseButton::Left, move |_, window, _cx| {

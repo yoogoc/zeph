@@ -18,6 +18,12 @@ impl Application {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let input = cx.new(|cx| InputState::new(window, cx));
 
+        // Subscribe to workspace registry changes
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        cx.subscribe(&workspace_registry, |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
+            cx.notify();
+        }).detach();
+
         Self {
             input,
             title_bar: cx.new(|cx| ui::TitleBar::new(window, cx)),
@@ -36,6 +42,14 @@ impl Application {
                 registry.set_active_workspace(new_workspace.id, cx);
             }
         });
+        
+        // Ensure collections are initialized for the new workspace
+        let collections_registry = collections::CollectionRegistry::global(cx);
+        if let Some(workspace_id) = workspace_registry.read(cx).get_active_workspace().map(|w| w.id) {
+            collections_registry.update(cx, |registry, cx| {
+                registry.ensure_workspace_collections(workspace_id, cx);
+            });
+        }
     }
     
     fn render_home(&mut self, cx: &mut Context<Self>) -> impl IntoElement {

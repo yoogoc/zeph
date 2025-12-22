@@ -10,6 +10,13 @@ pub struct WorkspaceArea {
 
 impl WorkspaceArea {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+        // Subscribe to workspace registry changes
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        cx.subscribe(&workspace_registry, |this, registry, _event: &workspace::WorkspaceEvent, cx| {
+            let workspace = registry.read(cx).get_active_workspace().cloned();
+            this.set_workspace(workspace, cx);
+        }).detach();
+
         Self {
             sidebar: cx.new(|_| Sidebar::new(None, WorkspaceView::Collections)),
             content: cx.new(|_| WorkspaceContent::new(None, WorkspaceView::Collections)),
