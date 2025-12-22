@@ -54,6 +54,7 @@ impl Render for TitleBar {
 
         GTitleBar::new().child(
             TabBar::new("workspace_tabs")
+                .menu(true)
                 .selected_index(self.selected_index)
                 .on_click(cx.listener(move |this, index, _, cx| {
                     if this.selected_index.ne(index) {
@@ -94,7 +95,7 @@ impl Render for TitleBar {
                                     println!("close {workspace_id}")
                                 })),
                         )
-                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                        .on_mouse_down(MouseButton::Left, move |_, window, _cx| {
                             window.prevent_default();
                         })
                 }))
