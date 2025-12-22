@@ -23,7 +23,7 @@ fn main() {
         let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
         let window_options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
+            window_bounds: Some(WindowBounds::Maximized(bounds)),
             titlebar: Some(TitleBar::title_bar_options()),
             ..Default::default()
         };
