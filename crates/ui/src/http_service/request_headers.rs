@@ -1,22 +1,56 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
+use gpui_component::input::{Input, InputState};
 use gpui_component::StyledExt;
 use models::Header;
 
+#[allow(unused)]
 pub enum RequestHeadersEvent {
     Remove(usize),
+    Changed(Vec<Header>),
+}
+
+struct HeaderRow {
+    key: Entity<InputState>,
+    value: Entity<InputState>,
 }
 
 pub struct RequestHeaders {
-    headers: Vec<Header>,
+    rows: Vec<HeaderRow>,
 }
 
 impl EventEmitter<RequestHeadersEvent> for RequestHeaders {}
 
 impl RequestHeaders {
-    pub fn new(headers: Vec<Header>) -> Self {
-        Self { headers }
+    pub fn new(headers: Vec<Header>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let rows = headers
+            .into_iter()
+            .map(|h| HeaderRow {
+                key: cx.new(|cx| InputState::new(window, cx).default_value(&h.key).placeholder("Key")),
+                value: cx.new(|cx| InputState::new(window, cx).default_value(&h.value).placeholder("Value")),
+            })
+            .collect();
+
+        Self { rows }
+    }
+
+    pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.rows.push(HeaderRow {
+            key: cx.new(|cx| InputState::new(window, cx).placeholder("Key")),
+            value: cx.new(|cx| InputState::new(window, cx).placeholder("Value")),
+        });
+        cx.notify();
+    }
+
+    pub fn headers(&self, cx: &App) -> Vec<Header> {
+        self.rows
+            .iter()
+            .map(|row| Header {
+                key: row.key.read(cx).value().to_string().into(),
+                value: row.value.read(cx).value().to_string().into(),
+            })
+            .collect()
     }
 }
 
@@ -25,44 +59,26 @@ impl Render for RequestHeaders {
         div()
             .v_flex()
             .gap_1()
-            .children(self.headers.iter().enumerate().map(|(i, header)| {
+            .children(self.rows.iter().enumerate().map(|(i, row)| {
                 div()
                     .h_flex()
                     .gap_2()
                     .items_center()
-                    .child(
-                        div()
-                            .flex_1()
-                            .p_2()
-                            .bg(gpui::rgb(0xf8f9fa))
-                            .border_1()
-                            .border_color(gpui::rgb(0xdee2e6))
-                            .rounded_md()
-                            .text_sm()
-                            .child(header.key.clone()),
-                    )
-                    .child(
-                        div()
-                            .flex_1()
-                            .p_2()
-                            .bg(gpui::rgb(0xf8f9fa))
-                            .border_1()
-                            .border_color(gpui::rgb(0xdee2e6))
-                            .rounded_md()
-                            .text_sm()
-                            .child(header.value.clone()),
-                    )
+                    .child(div().flex_1().child(Input::new(&row.key)))
+                    .child(div().flex_1().child(Input::new(&row.value)))
                     .child(
                         Button::new(format!("remove_header_{}", i))
                             .label("×")
                             .w(px(24.0))
                             .h(px(24.0))
-                            .on_click(cx.listener(move |_, _, _, cx| {
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.rows.remove(i);
                                 cx.emit(RequestHeadersEvent::Remove(i));
+                                cx.notify();
                             })),
                     )
             }))
-            .when(self.headers.is_empty(), |el| {
+            .when(self.rows.is_empty(), |el| {
                 el.child(
                     div()
                         .p_4()

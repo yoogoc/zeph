@@ -6,11 +6,10 @@ use gpui::*;
 use gpui_component::input::{InputState, TabSize};
 use gpui_component::StyledExt;
 use gpui_tokio::Tokio;
-use models::{Header, HttpConfig, HttpMethod};
+use models::{HttpConfig, HttpMethod};
 use smallvec::{smallvec, SmallVec};
 
 pub struct HttpService {
-    config: HttpConfig,
     url: Entity<InputState>,
     response: Entity<InputState>,
     response_headers: Entity<InputState>,
@@ -57,19 +56,16 @@ impl HttpService {
                     this.send_request(window, cx);
                 }
                 RequestPanelEvent::AddHeader => {
-                    this.add_header(cx);
-                }
-                RequestPanelEvent::RemoveHeader(index) => {
-                    this.remove_header(*index, cx);
+                    this.request_panel
+                        .update(cx, |panel, cx| panel.add_header(window, cx));
                 }
                 RequestPanelEvent::BodyTypeChanged(body_type) => {
-                    this.update_content_type_header(*body_type, cx);
+                    this.update_content_type_header(*body_type, window, cx);
                 }
             }
         });
 
         Self {
-            config,
             url,
             response,
             response_headers,
@@ -81,35 +77,31 @@ impl HttpService {
         }
     }
 
-    fn add_header(&mut self, cx: &mut Context<Self>) {
-        self.config.headers.push(Header {
-            key: "".into(),
-            value: "".into(),
-        });
-        cx.notify();
-    }
+    fn update_content_type_header(
+        &mut self,
+        body_type: BodyType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.request_panel.update(cx, |panel, cx| {
+            // Get current headers, filter out Content-Type, add new one if needed
+            let mut headers = panel.headers(cx);
+            headers.retain(|h| h.key.to_lowercase() != "content-type");
 
-    fn remove_header(&mut self, index: usize, cx: &mut Context<Self>) {
-        if index < self.config.headers.len() {
-            self.config.headers.remove(index);
-            cx.notify();
-        }
-    }
+            if let Some(content_type) = body_type.content_type() {
+                headers.push(models::Header {
+                    key: "Content-Type".into(),
+                    value: content_type.into(),
+                });
+            }
 
-    fn update_content_type_header(&mut self, body_type: BodyType, cx: &mut Context<Self>) {
-        // Remove existing Content-Type header
-        self.config
-            .headers
-            .retain(|h| h.key.to_lowercase() != "content-type");
-
-        // Add new Content-Type header if body type is not None
-        if let Some(content_type) = body_type.content_type() {
-            self.config.headers.push(Header {
-                key: "Content-Type".into(),
-                value: content_type.into(),
+            // Recreate headers panel with updated headers
+            let headers_panel = cx.new(|cx| {
+                super::request_headers::RequestHeaders::new(headers, window, cx)
             });
-        }
-        cx.notify();
+            panel.headers_panel = headers_panel;
+            cx.notify();
+        });
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -120,8 +112,8 @@ impl HttpService {
             .update(cx, |state, cx| state.set_value("", window, cx));
 
         let url = self.url.read(cx).value().to_string();
-        let method = self.config.method.clone();
-        let headers = self.config.headers.clone();
+        let method = HttpMethod::Get; // TODO: get from config
+        let headers = self.request_panel.read(cx).headers(cx);
         let body = self.request_panel.read(cx).body(cx);
 
         // Build request info
@@ -244,9 +236,7 @@ impl HttpService {
 
 impl Render for HttpService {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Update request_panel state
         self.request_panel.update(cx, |panel, cx| {
-            panel.set_headers(self.config.headers.clone(), cx);
             panel.set_loading(self.is_loading);
             cx.notify();
         });

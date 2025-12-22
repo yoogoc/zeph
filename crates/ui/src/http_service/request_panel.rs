@@ -1,5 +1,5 @@
 use super::request_body::{BodyType, RequestBody, RequestBodyEvent};
-use super::request_headers::{RequestHeaders, RequestHeadersEvent};
+use super::request_headers::{RequestHeaders};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -18,16 +18,14 @@ enum RequestTab {
 pub enum RequestPanelEvent {
     Send,
     AddHeader,
-    RemoveHeader(usize),
     BodyTypeChanged(BodyType),
 }
 
 pub struct RequestPanel {
     method: HttpMethod,
     url: Entity<InputState>,
-    headers: Vec<Header>,
     body_panel: Entity<RequestBody>,
-    headers_panel: Entity<RequestHeaders>,
+    pub headers_panel: Entity<RequestHeaders>,
     active_tab: RequestTab,
     is_loading: bool,
     _subscriptions: Vec<Subscription>,
@@ -43,7 +41,7 @@ impl RequestPanel {
         cx: &mut Context<Self>,
     ) -> Self {
         let body_panel = cx.new(|cx| RequestBody::new(window, cx));
-        let headers_panel = cx.new(|_cx| RequestHeaders::new(Vec::new()));
+        let headers_panel = cx.new(|cx| RequestHeaders::new(Vec::new(), window, cx));
 
         let body_sub = cx.subscribe(&body_panel, |_this, _, event, cx| match event {
             RequestBodyEvent::BodyTypeChanged(body_type) => {
@@ -52,16 +50,13 @@ impl RequestPanel {
             RequestBodyEvent::BodyChanged(_) => {}
         });
 
-        let headers_sub = cx.subscribe(&headers_panel, |_this, _, event, cx| match event {
-            RequestHeadersEvent::Remove(index) => {
-                cx.emit(RequestPanelEvent::RemoveHeader(*index));
-            }
+        let headers_sub = cx.subscribe(&headers_panel, |_this, _, _event, _cx| {
+            // Headers are managed internally now
         });
 
         Self {
             method,
             url,
-            headers: Vec::new(),
             body_panel,
             headers_panel,
             active_tab: RequestTab::default(),
@@ -70,16 +65,17 @@ impl RequestPanel {
         }
     }
 
-    pub fn set_headers(&mut self, headers: Vec<Header>, cx: &mut Context<Self>) {
-        self.headers = headers.clone();
-        self.headers_panel.update(cx, |panel, cx| {
-            *panel = RequestHeaders::new(headers);
-            cx.notify();
-        });
-    }
-
     pub fn set_loading(&mut self, is_loading: bool) {
         self.is_loading = is_loading;
+    }
+
+    pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.headers_panel
+            .update(cx, |panel, cx| panel.add_header(window, cx));
+    }
+
+    pub fn headers(&self, cx: &App) -> Vec<Header> {
+        self.headers_panel.read(cx).headers(cx)
     }
 
     pub fn body(&self, cx: &App) -> Option<String> {
@@ -89,11 +85,6 @@ impl RequestPanel {
         } else {
             Some(body_panel.body(cx))
         }
-    }
-
-    #[allow(unused)]
-    pub fn body_type(&self, cx: &App) -> BodyType {
-        self.body_panel.read(cx).body_type()
     }
 
     fn render_method_selector(&self) -> impl IntoElement {
