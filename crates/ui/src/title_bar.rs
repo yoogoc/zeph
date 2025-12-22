@@ -73,23 +73,18 @@ impl Render for TitleBar {
                 .items_center()
                 .gap_2()
                 .py_2()
-                .child(
-                    Tab::new()
-                        .label("Home")
-                        .on_click(cx.listener(|this, _, _, cx| {
-                            this.switch_to_home(cx);
-                        })),
-                )
+                .child(Tab::new().label("Home").on_mouse_down(
+                    MouseButton::Left,
+                    move |_, window, cx| {
+                        window.prevent_default();
+                    },
+                ))
                 .children(app_state.workspaces.clone().iter().map(|workspace| {
                     let workspace_id = workspace.id;
                     let workspace_name = workspace.name.clone();
 
                     Tab::new()
                         .label(workspace_name)
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.switch_to_workspace(workspace_id, cx);
-                            cx.notify();
-                        }))
                         .px_1()
                         .suffix(
                             Button::new(format!("close_{}", workspace_id))
@@ -99,6 +94,9 @@ impl Render for TitleBar {
                                     println!("close {workspace_id}")
                                 })),
                         )
+                        .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+                            window.prevent_default();
+                        })
                 }))
                 .h_full(),
         )
