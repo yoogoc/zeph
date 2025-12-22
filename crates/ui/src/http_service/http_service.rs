@@ -1,4 +1,4 @@
-use crate::response_panel::ResponsePanel;
+use super::response_panel::ResponsePanel;
 use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
