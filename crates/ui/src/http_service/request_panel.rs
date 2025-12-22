@@ -1,3 +1,5 @@
+use super::request_body::RequestBody;
+use super::request_headers::{RequestHeaders, RequestHeadersEvent};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -24,30 +26,53 @@ pub struct RequestPanel {
     url: Entity<InputState>,
     headers: Vec<Header>,
     body: Option<SharedString>,
+    body_panel: Entity<RequestBody>,
+    headers_panel: Entity<RequestHeaders>,
     active_tab: RequestTab,
     is_loading: bool,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl EventEmitter<RequestPanelEvent> for RequestPanel {}
 
 impl RequestPanel {
-    pub fn new(method: HttpMethod, url: Entity<InputState>) -> Self {
+    pub fn new(method: HttpMethod, url: Entity<InputState>, cx: &mut Context<Self>) -> Self {
+        let body_panel = cx.new(|_cx| RequestBody::new(None));
+        let headers_panel = cx.new(|_cx| RequestHeaders::new(Vec::new()));
+
+        let subscription = cx.subscribe(&headers_panel, |_this, _, event, cx| match event {
+            RequestHeadersEvent::Remove(index) => {
+                cx.emit(RequestPanelEvent::RemoveHeader(*index));
+            }
+        });
+
         Self {
             method,
             url,
             headers: Vec::new(),
             body: None,
+            body_panel,
+            headers_panel,
             active_tab: RequestTab::default(),
             is_loading: false,
+            _subscriptions: vec![subscription],
         }
     }
 
-    pub fn set_headers(&mut self, headers: Vec<Header>) {
-        self.headers = headers;
+    pub fn set_headers(&mut self, headers: Vec<Header>, cx: &mut Context<Self>) {
+        self.headers = headers.clone();
+        self.headers_panel.update(cx, |panel, cx| {
+            *panel = RequestHeaders::new(headers);
+            cx.notify();
+        });
     }
 
-    pub fn set_body(&mut self, body: Option<SharedString>) {
-        self.body = body;
+    pub fn set_body(&mut self, body: Option<SharedString>, cx: &mut Context<Self>) {
+        self.body = body.clone();
+        self.body_panel.update(cx, |panel, cx| {
+            *panel = RequestBody::new(body);
+            cx.notify();
+        });
     }
 
     pub fn set_loading(&mut self, is_loading: bool) {
@@ -138,71 +163,10 @@ impl Render for RequestPanel {
                             ),
                     )
                     .when(active_tab == RequestTab::Body, |el| {
-                        el.child(
-                            div()
-                                .min_h(px(120.0))
-                                .p_3()
-                                .bg(gpui::rgb(0xffffff))
-                                .border_1()
-                                .border_color(gpui::rgb(0xdee2e6))
-                                .rounded_md()
-                                .text_sm()
-                                .when_some(self.body.clone(), |this, body| this.child(body)),
-                        )
+                        el.child(self.body_panel.clone())
                     })
                     .when(active_tab == RequestTab::Headers, |el| {
-                        el.child(
-                            div()
-                                .v_flex()
-                                .gap_1()
-                                .children(self.headers.iter().enumerate().map(|(i, header)| {
-                                    div()
-                                        .h_flex()
-                                        .gap_2()
-                                        .items_center()
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .p_2()
-                                                .bg(gpui::rgb(0xf8f9fa))
-                                                .border_1()
-                                                .border_color(gpui::rgb(0xdee2e6))
-                                                .rounded_md()
-                                                .text_sm()
-                                                .child(header.key.clone()),
-                                        )
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .p_2()
-                                                .bg(gpui::rgb(0xf8f9fa))
-                                                .border_1()
-                                                .border_color(gpui::rgb(0xdee2e6))
-                                                .rounded_md()
-                                                .text_sm()
-                                                .child(header.value.clone()),
-                                        )
-                                        .child(
-                                            Button::new(format!("remove_header_{}", i))
-                                                .label("×")
-                                                .w(px(24.0))
-                                                .h(px(24.0))
-                                                .on_click(cx.listener(move |_, _, _, cx| {
-                                                    cx.emit(RequestPanelEvent::RemoveHeader(i));
-                                                })),
-                                        )
-                                }))
-                                .when(self.headers.is_empty(), |el| {
-                                    el.child(
-                                        div()
-                                            .p_4()
-                                            .text_center()
-                                            .text_color(gpui::rgb(0x6c757d))
-                                            .text_sm()
-                                            .child("No headers added"),
-                                    )
-                                }),
-                        )
+                        el.child(self.headers_panel.clone())
                     }),
             )
     }

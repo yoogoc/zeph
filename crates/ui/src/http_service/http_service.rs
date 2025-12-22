@@ -47,7 +47,7 @@ impl HttpService {
         let response_panel = cx.new(|_cx| {
             ResponsePanel::new(response.clone(), response_headers.clone(), request_info.clone())
         });
-        let request_panel = cx.new(|_cx| RequestPanel::new(config.method.clone(), url.clone()));
+        let request_panel = cx.new(|cx| RequestPanel::new(config.method.clone(), url.clone(), cx));
 
         let subscription = cx.subscribe_in(&request_panel, window, |this, _, event, window, cx| {
             match event {
@@ -225,8 +225,8 @@ impl Render for HttpService {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // Update request_panel state
         self.request_panel.update(cx, |panel, cx| {
-            panel.set_headers(self.config.headers.clone());
-            panel.set_body(self.config.body.clone());
+            panel.set_headers(self.config.headers.clone(), cx);
+            panel.set_body(self.config.body.clone(), cx);
             panel.set_loading(self.is_loading);
             cx.notify();
         });
