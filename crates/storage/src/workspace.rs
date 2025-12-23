@@ -100,7 +100,10 @@ fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
             source: str_to_source(&source),
             deleted,
         },
-        collections: vec![],
+        folders: vec![],
+        services: vec![],
+        opened_services: vec![],
+        active_service: None,
         current_view: Default::default(),
     })
 }

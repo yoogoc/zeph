@@ -21,7 +21,7 @@ pub enum DataSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationState {
     pub workspaces: Vec<Workspace>,
-    pub opened_workspaces: Vec<Uuid>,  // Workspaces shown in titlebar tabs
+    pub opened_workspaces: Vec<Uuid>,
     pub active_workspace_id: Option<Uuid>,
     pub current_view: ApplicationView,
 }
@@ -53,10 +53,18 @@ pub struct Workspace {
     pub updated_at: i64,
     #[serde(default)]
     pub sync: SyncMeta,
-    
-    // Runtime only
+
+    // Content
     #[serde(skip)]
-    pub collections: Vec<Collection>,
+    pub folders: Vec<Folder>,
+    #[serde(skip)]
+    pub services: Vec<Service>,
+
+    // Runtime state
+    #[serde(skip)]
+    pub opened_services: Vec<Uuid>,
+    #[serde(skip)]
+    pub active_service: Option<Uuid>,
     #[serde(skip)]
     pub current_view: WorkspaceView,
 }
@@ -71,8 +79,11 @@ impl Workspace {
             created_at: now,
             updated_at: now,
             sync: SyncMeta::default(),
-            collections: vec![],
-            current_view: WorkspaceView::Collections,
+            folders: vec![],
+            services: vec![],
+            opened_services: vec![],
+            active_service: None,
+            current_view: WorkspaceView::default(),
         }
     }
 }
@@ -80,105 +91,17 @@ impl Workspace {
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum WorkspaceView {
     #[default]
-    Collections,
+    Services,
     Docs,
     History,
     Settings,
-}
-
-// === Collection ===
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Collection {
-    pub id: Uuid,
-    pub workspace_id: Uuid,
-    pub name: SharedString,
-    pub description: Option<String>,
-    pub version: Option<String>,
-    pub openapi_version: Option<String>,
-    pub created_at: i64,
-    pub updated_at: i64,
-    #[serde(default)]
-    pub sync: SyncMeta,
-    
-    // Runtime only
-    #[serde(skip)]
-    pub environments: Vec<Environment>,
-    #[serde(skip)]
-    pub folders: Vec<Folder>,
-    #[serde(skip)]
-    pub services: Vec<Service>,
-    #[serde(skip)]
-    pub opened_services: Vec<Uuid>,
-    #[serde(skip)]
-    pub active_service: Option<Uuid>,
-    #[serde(skip)]
-    pub active_environment: Option<Uuid>,
-}
-
-impl Collection {
-    pub fn new(workspace_id: Uuid, name: impl Into<SharedString>) -> Self {
-        let now = chrono::Utc::now().timestamp();
-        Self {
-            id: Uuid::new_v4(),
-            workspace_id,
-            name: name.into(),
-            description: None,
-            version: None,
-            openapi_version: None,
-            created_at: now,
-            updated_at: now,
-            sync: SyncMeta::default(),
-            environments: vec![],
-            folders: vec![],
-            services: vec![],
-            opened_services: vec![],
-            active_service: None,
-            active_environment: None,
-        }
-    }
-}
-
-// === Environment ===
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Environment {
-    pub id: Uuid,
-    pub collection_id: Uuid,
-    pub name: SharedString,
-    pub url: String,
-    pub description: Option<String>,
-    pub variables: Vec<EnvVariable>,
-    pub is_default: bool,
-    pub sort_order: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EnvVariable {
-    pub name: String,
-    pub default: String,
-    pub enum_values: Option<Vec<String>>,
-    pub description: Option<String>,
-}
-
-impl Environment {
-    pub fn new(collection_id: Uuid, name: impl Into<SharedString>, url: impl Into<String>) -> Self {
-        Self {
-            id: Uuid::new_v4(),
-            collection_id,
-            name: name.into(),
-            url: url.into(),
-            description: None,
-            variables: vec![],
-            is_default: false,
-            sort_order: 0,
-        }
-    }
 }
 
 // === Folder ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
     pub id: Uuid,
-    pub collection_id: Uuid,
+    pub workspace_id: Uuid,
     pub parent_id: Option<Uuid>,
     pub name: SharedString,
     pub description: Option<String>,
@@ -187,18 +110,17 @@ pub struct Folder {
     pub updated_at: i64,
     #[serde(default)]
     pub sync: SyncMeta,
-    
-    // Runtime only
+
     #[serde(skip)]
     pub is_expanded: bool,
 }
 
 impl Folder {
-    pub fn new(collection_id: Uuid, name: impl Into<SharedString>, parent_id: Option<Uuid>) -> Self {
+    pub fn new(workspace_id: Uuid, name: impl Into<SharedString>, parent_id: Option<Uuid>) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
-            collection_id,
+            workspace_id,
             parent_id,
             name: name.into(),
             description: None,
@@ -215,7 +137,7 @@ impl Folder {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
     pub id: Uuid,
-    pub collection_id: Uuid,
+    pub workspace_id: Uuid,
     pub folder_id: Option<Uuid>,
     pub name: SharedString,
     pub description: Option<String>,
@@ -229,11 +151,11 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(collection_id: Uuid, name: impl Into<SharedString>, service_type: ServiceType) -> Self {
+    pub fn new(workspace_id: Uuid, name: impl Into<SharedString>, service_type: ServiceType) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
-            collection_id,
+            workspace_id,
             folder_id: None,
             name: name.into(),
             description: None,
@@ -310,7 +232,7 @@ pub struct Parameter {
     pub location: ParameterLocation,
     pub description: Option<String>,
     pub required: bool,
-    pub schema: Option<String>, // JSON schema
+    pub schema: Option<String>,
     pub example: Option<String>,
 }
 

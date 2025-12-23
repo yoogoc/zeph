@@ -2,42 +2,38 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{IconName, StyledExt};
-use models::{Collection, Folder, Service, ServiceType};
+use models::{Folder, Service, ServiceType, Workspace};
 use std::collections::HashSet;
 use uuid::Uuid;
 
-pub enum CollectionSidebarEvent {
+pub enum WorkspaceSidebarEvent {
     OpenService(Uuid),
-    CreateService(Option<Uuid>), // folder_id
-    CreateFolder(Option<Uuid>),  // parent_id
+    CreateService(Option<Uuid>),
     ToggleFolder(Uuid),
 }
 
-pub struct CollectionSidebar {
-    collection: Option<Collection>,
-    search_query: String,
+pub struct WorkspaceSidebar {
+    workspace: Option<Workspace>,
     pub expanded_folders: HashSet<Uuid>,
 }
 
-impl EventEmitter<CollectionSidebarEvent> for CollectionSidebar {}
+impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
 
-impl CollectionSidebar {
+impl WorkspaceSidebar {
     pub fn new() -> Self {
         Self {
-            collection: None,
-            search_query: String::new(),
+            workspace: None,
             expanded_folders: HashSet::new(),
         }
     }
 
-    pub fn set_collection(&mut self, collection: Collection) {
-        // Auto-expand all folders on the first load
-        if self.collection.is_none() {
-            for folder in &collection.folders {
+    pub fn set_workspace(&mut self, workspace: Workspace) {
+        if self.workspace.is_none() {
+            for folder in &workspace.folders {
                 self.expanded_folders.insert(folder.id);
             }
         }
-        self.collection = Some(collection);
+        self.workspace = Some(workspace);
     }
 
     fn render_service_item(
@@ -88,7 +84,7 @@ impl CollectionSidebar {
                     .child(div().text_sm().overflow_hidden().child(service.name.clone())),
             )
             .on_click(cx.listener(move |_this, _, _, cx| {
-                cx.emit(CollectionSidebarEvent::OpenService(service_id));
+                cx.emit(WorkspaceSidebarEvent::OpenService(service_id));
             }))
     }
 
@@ -120,7 +116,7 @@ impl CollectionSidebar {
                     .child(div().text_sm().child(folder.name.clone())),
             )
             .on_click(cx.listener(move |_this, _, _, cx| {
-                cx.emit(CollectionSidebarEvent::ToggleFolder(folder_id));
+                cx.emit(WorkspaceSidebarEvent::ToggleFolder(folder_id));
             }))
     }
 
@@ -131,59 +127,35 @@ impl CollectionSidebar {
         active_service: Option<Uuid>,
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
-        let Some(collection) = &self.collection else {
+        let Some(workspace) = &self.workspace else {
             return vec![];
         };
 
         let mut elements: Vec<AnyElement> = vec![];
 
-        // Render folders at this level
-        let folders: Vec<_> = collection
-            .folders
-            .iter()
-            .filter(|f| f.parent_id == parent_id)
-            .collect();
-
-        for folder in folders {
+        for folder in workspace.folders.iter().filter(|f| f.parent_id == parent_id) {
             elements.push(self.render_folder_item(folder, depth, cx).into_any_element());
-
-            // If expanded, render children
             if self.expanded_folders.contains(&folder.id) {
-                let children = self.render_tree(Some(folder.id), depth + 1, active_service, cx);
-                elements.extend(children);
+                elements.extend(self.render_tree(Some(folder.id), depth + 1, active_service, cx));
             }
         }
 
-        // Render services at this level
-        let services: Vec<_> = collection
-            .services
-            .iter()
-            .filter(|s| s.folder_id == parent_id)
-            .filter(|s| {
-                self.search_query.is_empty()
-                    || s.name.to_lowercase().contains(&self.search_query.to_lowercase())
-            })
-            .collect();
-
-        for service in services {
+        for service in workspace.services.iter().filter(|s| s.folder_id == parent_id) {
             let is_active = active_service == Some(service.id);
-            elements.push(
-                self.render_service_item(service, is_active, depth, cx)
-                    .into_any_element(),
-            );
+            elements.push(self.render_service_item(service, is_active, depth, cx).into_any_element());
         }
 
         elements
     }
 }
 
-impl Render for CollectionSidebar {
+impl Render for WorkspaceSidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(collection) = &self.collection else {
+        let Some(workspace) = &self.workspace else {
             return div().into_any_element();
         };
 
-        let active_service = collection.active_service;
+        let active_service = workspace.active_service;
         let tree_elements = self.render_tree(None, 0, active_service, cx);
 
         div()
@@ -215,7 +187,7 @@ impl Render for CollectionSidebar {
                             .compact()
                             .icon(IconName::Plus)
                             .on_click(cx.listener(|_this, _, _, cx| {
-                                cx.emit(CollectionSidebarEvent::CreateService(None));
+                                cx.emit(WorkspaceSidebarEvent::CreateService(None));
                             })),
                     ),
             )

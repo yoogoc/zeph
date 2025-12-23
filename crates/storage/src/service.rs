@@ -14,13 +14,13 @@ impl<'a> ServiceStore<'a> {
 
     pub fn insert(&self, service: &Service) -> Result<()> {
         let (service_type, config) = serialize_service_type(&service.service_type)?;
-        
+
         self.conn.execute(
-            "INSERT INTO services (id, collection_id, folder_id, name, description, service_type, config, deprecated, sort_order, created_at, updated_at, sync_version, source, deleted)
+            "INSERT INTO services (id, workspace_id, folder_id, name, description, service_type, config, deprecated, sort_order, created_at, updated_at, sync_version, source, deleted)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)",
             params![
                 service.id.to_string(),
-                service.collection_id.to_string(),
+                service.workspace_id.to_string(),
                 service.folder_id.map(|id| id.to_string()),
                 service.name.as_ref(),
                 service.description,
@@ -40,7 +40,7 @@ impl<'a> ServiceStore<'a> {
 
     pub fn update(&self, service: &Service) -> Result<()> {
         let (service_type, config) = serialize_service_type(&service.service_type)?;
-        
+
         self.conn.execute(
             "UPDATE services SET folder_id = ?2, name = ?3, description = ?4, service_type = ?5, config = ?6, deprecated = ?7, sort_order = ?8, updated_at = ?9, sync_version = ?10
              WHERE id = ?1 AND deleted = 0",
@@ -71,10 +71,10 @@ impl<'a> ServiceStore<'a> {
 
     pub fn get(&self, id: Uuid) -> Result<Option<Service>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, collection_id, folder_id, name, description, service_type, config, deprecated, sort_order, created_at, updated_at, sync_version, source, deleted
+            "SELECT id, workspace_id, folder_id, name, description, service_type, config, deprecated, sort_order, created_at, updated_at, sync_version, source, deleted
              FROM services WHERE id = ?1 AND deleted = 0",
         )?;
-        
+
         let mut rows = stmt.query(params![id.to_string()])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row_to_service(row)?))
@@ -83,13 +83,13 @@ impl<'a> ServiceStore<'a> {
         }
     }
 
-    pub fn list_by_collection(&self, collection_id: Uuid) -> Result<Vec<Service>> {
+    pub fn list_by_workspace(&self, workspace_id: Uuid) -> Result<Vec<Service>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, collection_id, folder_id, name, description, service_type, config, deprecated, sort_order, created_at, updated_at, sync_version, source, deleted
-             FROM services WHERE collection_id = ?1 AND deleted = 0 ORDER BY sort_order, name",
+            "SELECT id, workspace_id, folder_id, name, description, service_type, config, deprecated, sort_order, created_at, updated_at, sync_version, source, deleted
+             FROM services WHERE workspace_id = ?1 AND deleted = 0 ORDER BY sort_order, name",
         )?;
-        
-        let rows = stmt.query_map(params![collection_id.to_string()], |row| {
+
+        let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
             Ok(row_to_service(row).unwrap())
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -98,7 +98,7 @@ impl<'a> ServiceStore<'a> {
 
 fn row_to_service(row: &rusqlite::Row) -> Result<Service> {
     let id: String = row.get(0)?;
-    let collection_id: String = row.get(1)?;
+    let workspace_id: String = row.get(1)?;
     let folder_id: Option<String> = row.get(2)?;
     let name: String = row.get(3)?;
     let description: Option<String> = row.get(4)?;
@@ -116,7 +116,7 @@ fn row_to_service(row: &rusqlite::Row) -> Result<Service> {
 
     Ok(Service {
         id: Uuid::parse_str(&id)?,
-        collection_id: Uuid::parse_str(&collection_id)?,
+        workspace_id: Uuid::parse_str(&workspace_id)?,
         folder_id: folder_id.map(|s| Uuid::parse_str(&s).unwrap()),
         name: name.into(),
         description,

@@ -14,11 +14,11 @@ impl<'a> FolderStore<'a> {
 
     pub fn insert(&self, folder: &Folder) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO folders (id, collection_id, parent_id, name, description, sort_order, created_at, updated_at, sync_version, source, deleted)
+            "INSERT INTO folders (id, workspace_id, parent_id, name, description, sort_order, created_at, updated_at, sync_version, source, deleted)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 folder.id.to_string(),
-                folder.collection_id.to_string(),
+                folder.workspace_id.to_string(),
                 folder.parent_id.map(|id| id.to_string()),
                 folder.name.as_ref(),
                 folder.description,
@@ -59,13 +59,13 @@ impl<'a> FolderStore<'a> {
         Ok(())
     }
 
-    pub fn list_by_collection(&self, collection_id: Uuid) -> Result<Vec<Folder>> {
+    pub fn list_by_workspace(&self, workspace_id: Uuid) -> Result<Vec<Folder>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, collection_id, parent_id, name, description, sort_order, created_at, updated_at, sync_version, source, deleted
-             FROM folders WHERE collection_id = ?1 AND deleted = 0 ORDER BY sort_order, name",
+            "SELECT id, workspace_id, parent_id, name, description, sort_order, created_at, updated_at, sync_version, source, deleted
+             FROM folders WHERE workspace_id = ?1 AND deleted = 0 ORDER BY sort_order, name",
         )?;
-        
-        let rows = stmt.query_map(params![collection_id.to_string()], |row| {
+
+        let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
             Ok(row_to_folder(row).unwrap())
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
@@ -74,7 +74,7 @@ impl<'a> FolderStore<'a> {
 
 fn row_to_folder(row: &rusqlite::Row) -> Result<Folder> {
     let id: String = row.get(0)?;
-    let collection_id: String = row.get(1)?;
+    let workspace_id: String = row.get(1)?;
     let parent_id: Option<String> = row.get(2)?;
     let name: String = row.get(3)?;
     let description: Option<String> = row.get(4)?;
@@ -87,7 +87,7 @@ fn row_to_folder(row: &rusqlite::Row) -> Result<Folder> {
 
     Ok(Folder {
         id: Uuid::parse_str(&id)?,
-        collection_id: Uuid::parse_str(&collection_id)?,
+        workspace_id: Uuid::parse_str(&workspace_id)?,
         parent_id: parent_id.map(|s| Uuid::parse_str(&s).unwrap()),
         name: name.into(),
         description,

@@ -45,33 +45,16 @@ impl Application {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         workspace_registry.update(cx, |registry, cx| {
             registry.create_workspace(name.into(), cx);
-
             if let Some(new_workspace) = registry.get_state().workspaces.last() {
                 registry.open_workspace(new_workspace.id, cx);
             }
         });
-
-        let collections_registry = collections::CollectionRegistry::global(cx);
-        if let Some(workspace_id) = workspace_registry
-            .read(cx)
-            .get_active_workspace()
-            .map(|w| w.id)
-        {
-            collections_registry.update(cx, |registry, cx| {
-                registry.ensure_workspace_collections(workspace_id, cx);
-            });
-        }
     }
 
     fn open_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         workspace_registry.update(cx, |registry, cx| {
             registry.open_workspace(workspace_id, cx);
-        });
-
-        let collections_registry = collections::CollectionRegistry::global(cx);
-        collections_registry.update(cx, |registry, cx| {
-            registry.ensure_workspace_collections(workspace_id, cx);
         });
     }
 

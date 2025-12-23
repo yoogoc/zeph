@@ -1,8 +1,7 @@
 use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::tab::{Tab, TabBar};
-use gpui_component::Sizable;
-use models::Collection;
+use models::Workspace;
 use uuid::Uuid;
 
 pub enum ServiceTabsEvent {
@@ -11,55 +10,54 @@ pub enum ServiceTabsEvent {
 }
 
 pub struct ServiceTabs {
-    collection: Option<Collection>,
+    workspace: Option<Workspace>,
 }
 
 impl EventEmitter<ServiceTabsEvent> for ServiceTabs {}
 
 impl ServiceTabs {
     pub fn new() -> Self {
-        Self { collection: None }
+        Self { workspace: None }
     }
 
-    pub fn set_collection(&mut self, collection: Collection) {
-        self.collection = Some(collection);
+    pub fn set_workspace(&mut self, workspace: Workspace) {
+        self.workspace = Some(workspace);
     }
 }
 
 impl Render for ServiceTabs {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(collection) = &self.collection else {
+        let Some(workspace) = &self.workspace else {
             return div().into_any_element();
         };
 
-        if collection.opened_services.is_empty() {
+        if workspace.opened_services.is_empty() {
             return div().into_any_element();
         }
 
-        let service_ids: Vec<_> = collection.opened_services.clone();
-        let selected_index = collection
-            .opened_services
-            .iter()
-            .position(|s| collection.active_service.eq(&Some(*s)))
+        let service_ids: Vec<_> = workspace.opened_services.clone();
+        let selected_index = workspace
+            .active_service
+            .and_then(|id| workspace.opened_services.iter().position(|&s| s == id))
             .unwrap_or(0);
 
-        let tabs: Vec<_> = collection
+        let tabs: Vec<_> = workspace
             .opened_services
             .iter()
             .filter_map(|&service_id| {
-                collection
+                workspace
                     .services
                     .iter()
                     .find(|s| s.id == service_id)
                     .map(|service| {
-                        Tab::new().label(service.name.clone()).px_1().suffix(
+                        Tab::new().label(service.name.clone()).suffix(
                             Button::new(format!("close_{}", service_id))
-                                .small()
+                                .w(px(24.0))
+                                .h(px(24.0))
                                 .flex_shrink_0()
                                 .label("×")
                                 .on_click(cx.listener(move |_this, _, _, cx| {
                                     cx.emit(ServiceTabsEvent::Close(service_id));
-                                    cx.stop_propagation();
                                 })),
                         )
                     })
