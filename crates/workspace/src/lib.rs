@@ -1,6 +1,8 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use models::{ApplicationState, Workspace};
+use storage::{Database, WorkspaceStore};
 use uuid::Uuid;
+use std::sync::Arc;
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceEvent;
@@ -13,6 +15,7 @@ struct GlobalWorkspaceRegistry(Entity<WorkspaceRegistry>);
 impl Global for GlobalWorkspaceRegistry {}
 
 pub struct WorkspaceRegistry {
+    db: Arc<Database>,
     app_state: ApplicationState,
 }
 
@@ -26,18 +29,40 @@ impl WorkspaceRegistry {
     fn set_global(registry: Entity<Self>, cx: &mut App) {
         cx.set_global(GlobalWorkspaceRegistry(registry));
     }
+
+    fn db_path() -> std::path::PathBuf {
+        let data_dir = dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("zeph");
+        std::fs::create_dir_all(&data_dir).ok();
+        data_dir.join("zeph.db")
+    }
     
     fn new(_cx: &mut Context<Self>) -> Self {
+        let db_path = Self::db_path();
+        let db = Database::open(&db_path).expect("Failed to open database");
+        let db = Arc::new(db);
+
         let mut app_state = ApplicationState::default();
         
-        // Create a default workspace
-        let mut default_workspace = Workspace::new("My Workspace".into());
-        default_workspace.current_view = models::WorkspaceView::Collections; // Default to Collections
-        app_state.active_workspace_id = Some(default_workspace.id);
-        app_state.current_view = models::ApplicationView::Workspace(default_workspace.id);
-        app_state.workspaces.push(default_workspace);
+        // Load workspaces from database
+        let store = WorkspaceStore::new(db.conn());
+        app_state.workspaces = store.list().unwrap_or_default();
+
+        // Create default workspace if none exist
+        if app_state.workspaces.is_empty() {
+            let workspace = Workspace::new("My Workspace");
+            store.insert(&workspace).ok();
+            app_state.workspaces.push(workspace);
+        }
+
+        // Set the first workspace as active
+        if let Some(first) = app_state.workspaces.first() {
+            app_state.active_workspace_id = Some(first.id);
+            app_state.current_view = models::ApplicationView::Workspace(first.id);
+        }
         
-        Self { app_state }
+        Self { db, app_state }
     }
     
     pub fn get_state(&self) -> &ApplicationState {
@@ -50,8 +75,11 @@ impl WorkspaceRegistry {
     }
     
     pub fn create_workspace(&mut self, name: SharedString, cx: &mut Context<Self>) {
-        let mut workspace = Workspace::new(name);
-        workspace.current_view = models::WorkspaceView::Collections; // Default to Collections
+        let workspace = Workspace::new(name);
+        
+        let store = WorkspaceStore::new(self.db.conn());
+        store.insert(&workspace).ok();
+        
         self.app_state.workspaces.push(workspace);
         cx.emit(WorkspaceEvent);
     }
@@ -62,7 +90,7 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent);
     }
     
-    pub fn set_workspace_view(&mut self, workspace_id: uuid::Uuid, view: models::WorkspaceView, cx: &mut Context<Self>) {
+    pub fn set_workspace_view(&mut self, workspace_id: Uuid, view: models::WorkspaceView, cx: &mut Context<Self>) {
         if let Some(workspace) = self.app_state.workspaces.iter_mut().find(|w| w.id == workspace_id) {
             workspace.current_view = view;
             cx.emit(WorkspaceEvent);
@@ -76,15 +104,15 @@ impl WorkspaceRegistry {
     }
     
     pub fn remove_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
-        // Don't allow removing the last workspace
         if self.app_state.workspaces.len() <= 1 {
             return;
         }
+
+        let store = WorkspaceStore::new(self.db.conn());
+        store.delete(workspace_id).ok();
         
-        // Remove the workspace
         self.app_state.workspaces.retain(|w| w.id != workspace_id);
         
-        // If the removed workspace was active, switch to another one or home
         if self.app_state.active_workspace_id == Some(workspace_id) {
             if let Some(first_workspace) = self.app_state.workspaces.first() {
                 self.set_active_workspace(first_workspace.id, cx);
@@ -92,6 +120,18 @@ impl WorkspaceRegistry {
                 self.go_to_home(cx);
             }
         } else {
+            cx.emit(WorkspaceEvent);
+        }
+    }
+
+    pub fn update_workspace(&mut self, workspace_id: Uuid, name: SharedString, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.app_state.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+            workspace.name = name;
+            workspace.updated_at = chrono::Utc::now().timestamp();
+            
+            let store = WorkspaceStore::new(self.db.conn());
+            store.update(workspace).ok();
+            
             cx.emit(WorkspaceEvent);
         }
     }

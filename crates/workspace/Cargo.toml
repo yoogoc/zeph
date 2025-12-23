@@ -6,5 +6,9 @@ publish.workspace = true
 
 [dependencies]
 models = { path = "../models" }
+storage = { path = "../storage" }
 gpui.workspace = true
-uuid = { version = "1.0", features = ["v4"] }
+uuid.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+dirs = "5"

@@ -22,7 +22,7 @@ pub struct HttpService {
 
 impl HttpService {
     pub fn new(config: HttpConfig, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let url = config.url.clone();
+        let url = config.path.clone();
         let url = cx.new(|cx| InputState::new(window, cx).default_value(&url));
         let response = cx.new(|cx| {
             InputState::new(window, cx)

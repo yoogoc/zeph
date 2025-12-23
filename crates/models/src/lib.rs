@@ -2,6 +2,22 @@ use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+// === Sync Metadata ===
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct SyncMeta {
+    pub sync_version: i64,
+    pub source: DataSource,
+    pub deleted: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum DataSource {
+    #[default]
+    Local,
+    Remote,
+}
+
+// === Application State ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationState {
     pub workspaces: Vec<Workspace>,
@@ -25,98 +41,211 @@ pub enum ApplicationView {
     Workspace(Uuid),
 }
 
+// === Workspace ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Workspace {
     pub id: Uuid,
     pub name: SharedString,
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sync: SyncMeta,
+    
+    // Runtime only
+    #[serde(skip)]
     pub collections: Vec<Collection>,
+    #[serde(skip)]
     pub current_view: WorkspaceView,
-    pub created_at: chrono::DateTime<chrono::Utc>,
 }
 
 impl Workspace {
-    pub fn new(name: SharedString) -> Self {
+    pub fn new(name: impl Into<SharedString>) -> Self {
+        let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
-            name,
+            name: name.into(),
+            description: None,
+            created_at: now,
+            updated_at: now,
+            sync: SyncMeta::default(),
             collections: vec![],
             current_view: WorkspaceView::Collections,
-            created_at: chrono::Utc::now(),
         }
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub enum WorkspaceView {
+    #[default]
     Collections,
     Docs,
     History,
     Settings,
 }
 
+// === Collection ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Collection {
     pub id: Uuid,
+    pub workspace_id: Uuid,
     pub name: SharedString,
-    pub services: Vec<Service>,
+    pub description: Option<String>,
+    pub version: Option<String>,
+    pub openapi_version: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sync: SyncMeta,
+    
+    // Runtime only
+    #[serde(skip)]
+    pub environments: Vec<Environment>,
+    #[serde(skip)]
     pub folders: Vec<Folder>,
-    pub opened_services: Vec<Uuid>, // Track opened services for tabs
-    pub active_service: Option<Uuid>, // Currently active service
+    #[serde(skip)]
+    pub services: Vec<Service>,
+    #[serde(skip)]
+    pub opened_services: Vec<Uuid>,
+    #[serde(skip)]
+    pub active_service: Option<Uuid>,
+    #[serde(skip)]
+    pub active_environment: Option<Uuid>,
 }
 
 impl Collection {
-    pub fn new(name: SharedString) -> Self {
+    pub fn new(workspace_id: Uuid, name: impl Into<SharedString>) -> Self {
+        let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
-            name,
-            services: vec![],
+            workspace_id,
+            name: name.into(),
+            description: None,
+            version: None,
+            openapi_version: None,
+            created_at: now,
+            updated_at: now,
+            sync: SyncMeta::default(),
+            environments: vec![],
             folders: vec![],
+            services: vec![],
             opened_services: vec![],
             active_service: None,
+            active_environment: None,
         }
     }
 }
 
+// === Environment ===
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Environment {
+    pub id: Uuid,
+    pub collection_id: Uuid,
+    pub name: SharedString,
+    pub url: String,
+    pub description: Option<String>,
+    pub variables: Vec<EnvVariable>,
+    pub is_default: bool,
+    pub sort_order: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvVariable {
+    pub name: String,
+    pub default: String,
+    pub enum_values: Option<Vec<String>>,
+    pub description: Option<String>,
+}
+
+impl Environment {
+    pub fn new(collection_id: Uuid, name: impl Into<SharedString>, url: impl Into<String>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            collection_id,
+            name: name.into(),
+            url: url.into(),
+            description: None,
+            variables: vec![],
+            is_default: false,
+            sort_order: 0,
+        }
+    }
+}
+
+// === Folder ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
     pub id: Uuid,
+    pub collection_id: Uuid,
+    pub parent_id: Option<Uuid>,
     pub name: SharedString,
-    pub parent_id: Option<Uuid>, // None for root folders
-    pub service_ids: Vec<Uuid>,
+    pub description: Option<String>,
+    pub sort_order: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sync: SyncMeta,
+    
+    // Runtime only
+    #[serde(skip)]
     pub is_expanded: bool,
 }
 
 impl Folder {
-    pub fn new(name: SharedString, parent_id: Option<Uuid>) -> Self {
+    pub fn new(collection_id: Uuid, name: impl Into<SharedString>, parent_id: Option<Uuid>) -> Self {
+        let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
-            name,
+            collection_id,
             parent_id,
-            service_ids: vec![],
+            name: name.into(),
+            description: None,
+            sort_order: 0,
+            created_at: now,
+            updated_at: now,
+            sync: SyncMeta::default(),
             is_expanded: true,
         }
     }
 }
 
+// === Service ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Service {
     pub id: Uuid,
+    pub collection_id: Uuid,
+    pub folder_id: Option<Uuid>,
     pub name: SharedString,
+    pub description: Option<String>,
     pub service_type: ServiceType,
-    pub folder_id: Option<Uuid>, // None for root level services
+    pub deprecated: bool,
+    pub sort_order: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sync: SyncMeta,
 }
 
 impl Service {
-    pub fn new(name: SharedString, service_type: ServiceType) -> Self {
+    pub fn new(collection_id: Uuid, name: impl Into<SharedString>, service_type: ServiceType) -> Self {
+        let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
-            name,
-            service_type,
+            collection_id,
             folder_id: None,
+            name: name.into(),
+            description: None,
+            service_type,
+            deprecated: false,
+            sort_order: 0,
+            created_at: now,
+            updated_at: now,
+            sync: SyncMeta::default(),
         }
     }
 }
 
+// === Service Types ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServiceType {
     Http(HttpConfig),
@@ -124,12 +253,28 @@ pub enum ServiceType {
     WebSocket(WebSocketConfig),
 }
 
+// === HTTP ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpConfig {
     pub method: HttpMethod,
-    pub url: SharedString,
-    pub headers: Vec<Header>,
-    pub body: Option<SharedString>,
+    pub path: String,
+    pub parameters: Vec<Parameter>,
+    pub request_body: Option<RequestBody>,
+    pub responses: Vec<Response>,
+    pub security: Vec<String>,
+}
+
+impl Default for HttpConfig {
+    fn default() -> Self {
+        Self {
+            method: HttpMethod::Get,
+            path: String::new(),
+            parameters: vec![],
+            request_body: None,
+            responses: vec![],
+            security: vec![],
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -158,20 +303,120 @@ impl HttpMethod {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Parameter {
+    pub name: String,
+    pub location: ParameterLocation,
+    pub description: Option<String>,
+    pub required: bool,
+    pub schema: Option<String>, // JSON schema
+    pub example: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum ParameterLocation {
+    Path,
+    Query,
+    Header,
+    Cookie,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RequestBody {
+    pub description: Option<String>,
+    pub required: bool,
+    pub content: Vec<MediaContent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaContent {
+    pub media_type: String,
+    pub schema: Option<String>,
+    pub example: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Response {
+    pub status_code: String,
+    pub description: String,
+    pub content: Vec<MediaContent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Header {
     pub key: SharedString,
     pub value: SharedString,
 }
 
+// === gRPC ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GrpcConfig {
-    pub service_url: SharedString,
-    pub method: SharedString,
+    pub service_url: String,
+    pub package: String,
+    pub service: String,
+    pub method: String,
+    pub request_type: String,
+    pub response_type: String,
+    pub streaming: StreamingType,
     pub metadata: Vec<Header>,
+    pub proto_content: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum StreamingType {
+    #[default]
+    Unary,
+    ClientStream,
+    ServerStream,
+    Bidirectional,
+}
+
+impl Default for GrpcConfig {
+    fn default() -> Self {
+        Self {
+            service_url: String::new(),
+            package: String::new(),
+            service: String::new(),
+            method: String::new(),
+            request_type: String::new(),
+            response_type: String::new(),
+            streaming: StreamingType::default(),
+            metadata: vec![],
+            proto_content: None,
+        }
+    }
+}
+
+// === WebSocket ===
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WebSocketConfig {
+    pub url: String,
+    pub protocols: Vec<String>,
+    pub headers: Vec<Header>,
+    pub messages: Vec<WsMessage>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WebSocketConfig {
-    pub url: SharedString,
-    pub protocols: Vec<SharedString>,
+pub struct WsMessage {
+    pub name: String,
+    pub content: String,
+    pub content_type: WsContentType,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum WsContentType {
+    #[default]
+    Text,
+    Binary,
+    Json,
+}
+
+impl Default for WebSocketConfig {
+    fn default() -> Self {
+        Self {
+            url: String::new(),
+            protocols: vec![],
+            headers: vec![],
+            messages: vec![],
+        }
+    }
 }
