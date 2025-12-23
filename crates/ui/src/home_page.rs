@@ -1,11 +1,12 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{IconName, StyledExt};
+use gpui_component::input::{Input, InputState};
+use gpui_component::{IconName, StyledExt, WindowExt};
 use models::Workspace;
 use uuid::Uuid;
 
 pub enum HomePageEvent {
-    CreateWorkspace,
+    CreateWorkspace(String),
     OpenWorkspace(Uuid),
     DeleteWorkspace(Uuid),
 }
@@ -23,6 +24,34 @@ impl HomePage {
 
     pub fn set_workspaces(&mut self, workspaces: Vec<Workspace>) {
         self.workspaces = workspaces;
+    }
+
+    fn open_create_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Workspace name"));
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input_clone = input.clone();
+            let this_clone = this.clone();
+
+            dialog
+                .title("Create Workspace")
+                .w(px(400.0))
+                .confirm()
+                .child(Input::new(&input).w_full())
+                .on_ok(move |_, window, cx| {
+                    let name = input_clone.read(cx).value().to_string();
+                    if !name.trim().is_empty() {
+                        if let Some(this) = this_clone.upgrade() {
+                            this.update(cx, |_, cx| {
+                                cx.emit(HomePageEvent::CreateWorkspace(name));
+                            });
+                        }
+                    }
+                    window.close_dialog(cx);
+                    true
+                })
+        });
     }
 
     fn render_workspace_card(&self, workspace: &Workspace, cx: &mut Context<Self>) -> impl IntoElement {
@@ -144,8 +173,8 @@ impl Render for HomePage {
                             .primary()
                             .icon(IconName::Plus)
                             .label("New Workspace")
-                            .on_click(cx.listener(|_this, _, _, cx| {
-                                cx.emit(HomePageEvent::CreateWorkspace);
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.open_create_dialog(window, cx);
                             })),
                     ),
             )

@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::StyledExt;
+use gpui_component::{Root, StyledExt};
 use models::ApplicationView;
 use ui::{HomePage, HomePageEvent};
 use uuid::Uuid;
@@ -20,15 +20,18 @@ impl Application {
         let home_page = cx.new(|_| HomePage::new());
 
         let home_sub = cx.subscribe(&home_page, |this, _, event, cx| match event {
-            HomePageEvent::CreateWorkspace => this.create_workspace(cx),
+            HomePageEvent::CreateWorkspace(name) => this.create_workspace(name.clone(), cx),
             HomePageEvent::OpenWorkspace(id) => this.open_workspace(*id, cx),
             HomePageEvent::DeleteWorkspace(id) => this.delete_workspace(*id, cx),
         });
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        let registry_sub = cx.subscribe(&workspace_registry, |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
-            cx.notify();
-        });
+        let registry_sub = cx.subscribe(
+            &workspace_registry,
+            |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
+                cx.notify();
+            },
+        );
 
         Self {
             title_bar: cx.new(|cx| ui::TitleBar::new(window, cx)),
@@ -38,19 +41,22 @@ impl Application {
         }
     }
 
-    fn create_workspace(&mut self, cx: &mut Context<Self>) {
+    fn create_workspace(&mut self, name: String, cx: &mut Context<Self>) {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         workspace_registry.update(cx, |registry, cx| {
-            let workspace_name = format!("Workspace {}", registry.get_state().workspaces.len() + 1);
-            registry.create_workspace(workspace_name.into(), cx);
+            registry.create_workspace(name.into(), cx);
 
             if let Some(new_workspace) = registry.get_state().workspaces.last() {
-                registry.set_active_workspace(new_workspace.id, cx);
+                registry.open_workspace(new_workspace.id, cx);
             }
         });
 
         let collections_registry = collections::CollectionRegistry::global(cx);
-        if let Some(workspace_id) = workspace_registry.read(cx).get_active_workspace().map(|w| w.id) {
+        if let Some(workspace_id) = workspace_registry
+            .read(cx)
+            .get_active_workspace()
+            .map(|w| w.id)
+        {
             collections_registry.update(cx, |registry, cx| {
                 registry.ensure_workspace_collections(workspace_id, cx);
             });
@@ -100,7 +106,8 @@ impl Application {
 }
 
 impl Render for Application {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let dialog_layer = Root::render_dialog_layer(window, cx);
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let app_state = workspace_registry.read(cx).get_state();
 
@@ -112,5 +119,6 @@ impl Render for Application {
                 ApplicationView::Home => self.render_home(cx).into_any_element(),
                 ApplicationView::Workspace(_) => self.render_workspace(cx).into_any_element(),
             })
+            .children(dialog_layer)
     }
 }
