@@ -1,29 +1,33 @@
-use crate::{HttpService, ServiceTabs, ServiceTabsEvent};
-use gpui::prelude::FluentBuilder;
+use crate::{CollectionSidebar, CollectionSidebarEvent, HttpService, ServiceTabs, ServiceTabsEvent};
 use gpui::*;
-use gpui_component::{
-    button::{Button, ButtonVariants},
-    *,
-};
-use models::{Collection, Service, ServiceType};
+use gpui_component::*;
+use models::{Collection, ServiceType};
 use uuid::Uuid;
 
 pub struct CollectionsView {
     workspace_id: Option<Uuid>,
     collection_id: Option<Uuid>,
-    search_query: String,
     http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
     service_tabs: Entity<ServiceTabs>,
+    sidebar: Entity<CollectionSidebar>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl CollectionsView {
     pub fn new(workspace_id: Option<Uuid>, collection_id: Option<Uuid>, cx: &mut Context<Self>) -> Self {
         let service_tabs = cx.new(|_| ServiceTabs::new());
+        let sidebar = cx.new(|_| CollectionSidebar::new());
 
         let tabs_sub = cx.subscribe(&service_tabs, |this, _, event, cx| match event {
             ServiceTabsEvent::Select(id) => this.set_active_service(*id, cx),
             ServiceTabsEvent::Close(id) => this.close_service(*id, cx),
+        });
+
+        let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
+            CollectionSidebarEvent::OpenService(id) => this.open_service(*id, cx),
+            CollectionSidebarEvent::CreateService(_folder_id) => {}
+            CollectionSidebarEvent::CreateFolder(_parent_id) => {}
+            CollectionSidebarEvent::ToggleFolder(id) => this.toggle_folder(*id, cx),
         });
 
         let registry = collections::CollectionRegistry::global(cx);
@@ -32,10 +36,10 @@ impl CollectionsView {
         Self {
             workspace_id,
             collection_id,
-            search_query: String::new(),
             http_services: std::collections::HashMap::new(),
             service_tabs,
-            _subscriptions: vec![tabs_sub, registry_sub],
+            sidebar,
+            _subscriptions: vec![tabs_sub, sidebar_sub, registry_sub],
         }
     }
 
@@ -70,99 +74,15 @@ impl CollectionsView {
         }
     }
 
-    fn render_service_item(
-        &mut self,
-        service: &Service,
-        collection: &Collection,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let service_id = service.id;
-        let is_active = collection.active_service == Some(service_id);
-        let method_color = match &service.service_type {
-            ServiceType::Http(config) => match config.method {
-                models::HttpMethod::Get => gpui::rgb(0x28a745),
-                models::HttpMethod::Post => gpui::rgb(0x007bff),
-                models::HttpMethod::Put => gpui::rgb(0xffc107),
-                models::HttpMethod::Delete => gpui::rgb(0xdc3545),
-                _ => gpui::rgb(0x6c757d),
-            },
-            _ => gpui::rgb(0x6c757d),
-        };
-
-        Button::new(format!("service_{}", service_id))
-            .w_full()
-            .justify_start()
-            .when(is_active, |btn: Button| btn.primary())
-            .child(
-                div()
-                    .h_flex()
-                    .items_center()
-                    .gap_2()
-                    .child(div().w(px(8.0)).h(px(8.0)).bg(method_color).rounded_full())
-                    .child(div().text_sm().child(service.name.clone())),
-            )
-            .on_click(cx.listener(move |this, _, _, cx| {
-                this.open_service(service_id, cx);
-            }))
-    }
-
-    fn render_sidebar(
-        &mut self,
-        collection: &Collection,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
-        let filtered_services: Vec<&Service> = collection
-            .services
-            .iter()
-            .filter(|service| {
-                self.search_query.is_empty()
-                    || service
-                        .name
-                        .to_lowercase()
-                        .contains(&self.search_query.to_lowercase())
-            })
-            .collect();
-
-        div()
-            .w(px(300.0))
-            .h_full()
-            .bg(gpui::rgb(0xf8f9fa))
-            .border_r_1()
-            .border_color(gpui::rgb(0xe0e0e0))
-            .p_4()
-            .child(
-                div()
-                    .v_flex()
-                    .gap_4()
-                    .child(
-                        div()
-                            .h_flex()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .flex_1()
-                                    .p_2()
-                                    .bg(gpui::rgb(0xffffff))
-                                    .border_1()
-                                    .border_color(gpui::rgb(0xdee2e6))
-                                    .rounded_md()
-                                    .child("Search services..."),
-                            )
-                            .child(
-                                Button::new("add_service")
-                                    .primary()
-                                    .label("+ New")
-                                    .on_click(|_, _, _| println!("Add service clicked")),
-                            ),
-                    )
-                    .child(
-                        div().v_flex().gap_1().children(
-                            filtered_services
-                                .into_iter()
-                                .map(|service| self.render_service_item(service, collection, cx)),
-                        ),
-                    ),
-            )
+    fn toggle_folder(&mut self, folder_id: Uuid, cx: &mut Context<Self>) {
+        self.sidebar.update(cx, |sidebar, _| {
+            if sidebar.expanded_folders.contains(&folder_id) {
+                sidebar.expanded_folders.remove(&folder_id);
+            } else {
+                sidebar.expanded_folders.insert(folder_id);
+            }
+        });
+        cx.notify();
     }
 
     fn render_service_content(
@@ -248,21 +168,25 @@ impl CollectionsView {
                 }
 
                 if let Some(collection) = collections.iter().find(|c| c.id == collection_id) {
+                    self.sidebar.update(cx, |sidebar, _| {
+                        sidebar.set_collection(collection.clone());
+                    });
+                    self.service_tabs.update(cx, |tabs, _| {
+                        tabs.set_collection(collection.clone());
+                    });
+
                     div()
                         .h_flex()
                         .size_full()
-                        .child(self.render_sidebar(collection, cx))
-                        .child({
-                            self.service_tabs.update(cx, |tabs, _| {
-                                tabs.set_collection(collection.clone());
-                            });
+                        .child(self.sidebar.clone())
+                        .child(
                             div()
                                 .flex_1()
                                 .h_full()
                                 .v_flex()
                                 .child(self.service_tabs.clone())
                                 .child(self.render_service_content(collection, window, cx))
-                        })
+                        )
                 } else {
                     div().p_4().child("Collection not found")
                 }

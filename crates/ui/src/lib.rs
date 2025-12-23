@@ -1,3 +1,4 @@
+mod collection_sidebar;
 mod collections_view;
 mod http_service;
 mod service_tabs;
@@ -6,6 +7,7 @@ mod title_bar;
 mod workspace_area;
 mod workspace_content;
 
+pub use collection_sidebar::*;
 pub use collections_view::*;
 pub use http_service::*;
 pub use service_tabs::*;
