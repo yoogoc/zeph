@@ -1,5 +1,6 @@
 mod collection_sidebar;
 mod collections_view;
+mod home_page;
 mod http_service;
 mod service_tabs;
 mod sidebar;
@@ -9,6 +10,7 @@ mod workspace_content;
 
 pub use collection_sidebar::*;
 pub use collections_view::*;
+pub use home_page::*;
 pub use http_service::*;
 pub use service_tabs::*;
 pub use sidebar::*;

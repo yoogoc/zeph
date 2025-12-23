@@ -1,49 +1,54 @@
 use gpui::*;
-use gpui_component::{button::{Button, ButtonVariants}, *};
-use gpui_component::input::{Input, InputState};
+use gpui_component::StyledExt;
 use models::ApplicationView;
+use ui::{HomePage, HomePageEvent};
+use uuid::Uuid;
 
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<Application> {
     cx.new(|cx| Application::new(window, cx))
 }
 
-#[derive(Debug)]
 pub struct Application {
     title_bar: Entity<ui::TitleBar>,
     workspace_area: Entity<ui::WorkspaceArea>,
-    input: Entity<InputState>,
+    home_page: Entity<HomePage>,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl Application {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx));
+        let home_page = cx.new(|_| HomePage::new());
 
-        // Subscribe to workspace registry changes
+        let home_sub = cx.subscribe(&home_page, |this, _, event, cx| match event {
+            HomePageEvent::CreateWorkspace => this.create_workspace(cx),
+            HomePageEvent::OpenWorkspace(id) => this.open_workspace(*id, cx),
+            HomePageEvent::DeleteWorkspace(id) => this.delete_workspace(*id, cx),
+        });
+
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        cx.subscribe(&workspace_registry, |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
+        let registry_sub = cx.subscribe(&workspace_registry, |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
             cx.notify();
-        }).detach();
+        });
 
         Self {
-            input,
             title_bar: cx.new(|cx| ui::TitleBar::new(window, cx)),
             workspace_area: cx.new(|cx| ui::WorkspaceArea::new(window, cx)),
+            home_page,
+            _subscriptions: vec![home_sub, registry_sub],
         }
     }
-    
+
     fn create_workspace(&mut self, cx: &mut Context<Self>) {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         workspace_registry.update(cx, |registry, cx| {
             let workspace_name = format!("Workspace {}", registry.get_state().workspaces.len() + 1);
             registry.create_workspace(workspace_name.into(), cx);
-            
-            // Switch to the newly created workspace
+
             if let Some(new_workspace) = registry.get_state().workspaces.last() {
                 registry.set_active_workspace(new_workspace.id, cx);
             }
         });
-        
-        // Ensure collections are initialized for the new workspace
+
         let collections_registry = collections::CollectionRegistry::global(cx);
         if let Some(workspace_id) = workspace_registry.read(cx).get_active_workspace().map(|w| w.id) {
             collections_registry.update(cx, |registry, cx| {
@@ -51,45 +56,45 @@ impl Application {
             });
         }
     }
-    
-    fn render_home(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .size_full()
-            .items_center()
-            .justify_center()
-            .child(
-                div()
-                    .v_flex()
-                    .gap_4()
-                    .items_center()
-                    .child(
-                        div()
-                            .text_2xl()
-                            .font_bold()
-                            .child("Welcome to Zeph")
-                    )
-                    .child("Your API testing companion")
-                    .child(Input::new(&self.input))
-                    .child(
-                        Button::new("create_workspace")
-                            .primary()
-                            .label("Create Workspace")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.create_workspace(cx);
-                            }))
-                    )
-            )
+
+    fn open_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        workspace_registry.update(cx, |registry, cx| {
+            registry.open_workspace(workspace_id, cx);
+        });
+
+        let collections_registry = collections::CollectionRegistry::global(cx);
+        collections_registry.update(cx, |registry, cx| {
+            registry.ensure_workspace_collections(workspace_id, cx);
+        });
     }
-    
+
+    fn delete_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        workspace_registry.update(cx, |registry, cx| {
+            registry.remove_workspace(workspace_id, cx);
+        });
+    }
+
+    fn render_home(&mut self, cx: &mut Context<Self>) -> Entity<HomePage> {
+        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        let workspaces = workspace_registry.read(cx).get_state().workspaces.clone();
+
+        self.home_page.update(cx, |page, _| {
+            page.set_workspaces(workspaces);
+        });
+
+        self.home_page.clone()
+    }
+
     fn render_workspace(&self, cx: &mut Context<Self>) -> Entity<ui::WorkspaceArea> {
-        // Update workspace_area with current workspace data
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let workspace = workspace_registry.read(cx).get_active_workspace().cloned();
-        
+
         self.workspace_area.update(cx, |area, cx| {
             area.set_workspace(workspace, cx);
         });
-        
+
         self.workspace_area.clone()
     }
 }
@@ -98,16 +103,14 @@ impl Render for Application {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let app_state = workspace_registry.read(cx).get_state();
-        
+
         div()
             .v_flex()
             .size_full()
             .child(self.title_bar.clone())
-            .child(
-                match &app_state.current_view {
-                    ApplicationView::Home => self.render_home(cx).into_any_element(),
-                    ApplicationView::Workspace(_) => self.render_workspace(cx).into_any_element(),
-                }
-            )
+            .child(match &app_state.current_view {
+                ApplicationView::Home => self.render_home(cx).into_any_element(),
+                ApplicationView::Workspace(_) => self.render_workspace(cx).into_any_element(),
+            })
     }
 }

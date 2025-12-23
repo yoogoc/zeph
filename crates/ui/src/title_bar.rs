@@ -11,24 +11,15 @@ pub struct TitleBar {
 impl TitleBar {
     pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        let app_state = workspace_registry.read(cx).get_state();
-        let current_view = app_state.current_view.clone();
-        let workspaces = app_state.workspaces.clone();
-        let selected_index = match current_view {
-            ApplicationView::Home => 0,
-            ApplicationView::Workspace(id) => workspaces
-                .iter()
-                .position(|workspace| workspace.id == id)
-                .map(|index| index + 1)
-                .unwrap_or(0),
-        };
+        cx.subscribe(
+            &workspace_registry,
+            |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
+                cx.notify();
+            },
+        )
+        .detach();
 
-        // Subscribe to workspace registry changes to update tabs
-        cx.subscribe(&workspace_registry, |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
-            cx.notify();
-        }).detach();
-
-        Self { selected_index }
+        Self { selected_index: 0 }
     }
 
     fn switch_to_home(&mut self, cx: &mut Context<Self>) {
@@ -44,11 +35,11 @@ impl TitleBar {
             registry.set_active_workspace(workspace_id, cx);
         });
     }
-    
+
     fn close_workspace(&mut self, workspace_id: uuid::Uuid, cx: &mut Context<Self>) {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         workspace_registry.update(cx, |registry, cx| {
-            registry.remove_workspace(workspace_id, cx);
+            registry.close_workspace(workspace_id, cx);
         });
     }
 }
@@ -57,58 +48,45 @@ impl Render for TitleBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let app_state = workspace_registry.read(cx).get_state();
-        let workspaces = app_state.workspaces.clone();
-        
-        // Update selected_index based on current application state
-        let current_view = app_state.current_view.clone();
+        let opened_workspaces = workspace_registry.read(cx).get_opened_workspaces();
+
+        let current_view = &app_state.current_view;
         self.selected_index = match current_view {
             ApplicationView::Home => 0,
-            ApplicationView::Workspace(id) => workspaces
+            ApplicationView::Workspace(id) => opened_workspaces
                 .iter()
-                .position(|workspace| workspace.id == id)
-                .map(|index| index + 1)
+                .position(|w| w.id == *id)
+                .map(|i| i + 1)
                 .unwrap_or(0),
         };
 
-        let workspace_ids = workspaces
-            .iter()
-            .map(|workspace| workspace.id)
-            .collect::<Vec<_>>();
+        let workspace_ids: Vec<_> = opened_workspaces.iter().map(|w| w.id).collect();
 
         GTitleBar::new().child(
             TabBar::new("workspace_tabs")
                 .menu(true)
                 .selected_index(self.selected_index)
-                .on_click(cx.listener(move |this, index, _, cx| {
-                    if this.selected_index.ne(index) {
-                        if *index == 0 {
-                            this.switch_to_home(cx);
-                        } else {
-                            let workspace_id = workspace_ids.get(*index - 1);
-                            if let Some(&workspace_id) = workspace_id {
-                                this.switch_to_workspace(workspace_id, cx);
-                            }
-                        }
+                .on_click(cx.listener(move |this, index: &usize, _, cx| {
+                    if *index == 0 {
+                        this.switch_to_home(cx);
+                    } else if let Some(&workspace_id) = workspace_ids.get(*index - 1) {
+                        this.switch_to_workspace(workspace_id, cx);
                     }
                     this.selected_index = *index;
-
                     cx.notify();
                 }))
                 .items_center()
                 .gap_2()
                 .py_2()
-                .child(Tab::new().label("Home").on_mouse_down(
-                    MouseButton::Left,
-                    move |_, window, _cx| {
-                        window.prevent_default();
-                    },
-                ))
-                .children(app_state.workspaces.clone().iter().map(|workspace| {
-                    let workspace_id = workspace.id;
-                    let workspace_name = workspace.name.clone();
-
+                .child(
                     Tab::new()
-                        .label(workspace_name)
+                        .label("Home")
+                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default()),
+                )
+                .children(opened_workspaces.iter().map(|workspace| {
+                    let workspace_id = workspace.id;
+                    Tab::new()
+                        .label(workspace.name.clone())
                         .px_1()
                         .suffix(
                             Button::new(format!("close_{}", workspace_id))
@@ -116,11 +94,10 @@ impl Render for TitleBar {
                                 .label("×")
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.close_workspace(workspace_id, cx);
+                                    cx.stop_propagation();
                                 })),
                         )
-                        .on_mouse_down(MouseButton::Left, move |_, window, _cx| {
-                            window.prevent_default();
-                        })
+                        .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                 }))
                 .h_full(),
         )

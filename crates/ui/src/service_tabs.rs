@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui_component::button::Button;
-use gpui_component::Sizable;
 use gpui_component::tab::{Tab, TabBar};
+use gpui_component::Sizable;
 use models::Collection;
 use uuid::Uuid;
 
@@ -59,6 +59,7 @@ impl Render for ServiceTabs {
                                 .label("×")
                                 .on_click(cx.listener(move |_this, _, _, cx| {
                                     cx.emit(ServiceTabsEvent::Close(service_id));
+                                    cx.stop_propagation();
                                 })),
                         )
                     })
@@ -68,10 +69,8 @@ impl Render for ServiceTabs {
         TabBar::new("service_tabs")
             .selected_index(selected_index)
             .on_click(cx.listener(move |_this, index: &usize, _, cx| {
-                if selected_index.ne(index) {
-                    if let Some(&service_id) = service_ids.get(*index) {
-                        cx.emit(ServiceTabsEvent::Select(service_id));
-                    }
+                if let Some(&service_id) = service_ids.get(*index) {
+                    cx.emit(ServiceTabsEvent::Select(service_id));
                 }
             }))
             .children(tabs)

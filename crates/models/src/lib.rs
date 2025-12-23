@@ -21,6 +21,7 @@ pub enum DataSource {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ApplicationState {
     pub workspaces: Vec<Workspace>,
+    pub opened_workspaces: Vec<Uuid>,  // Workspaces shown in titlebar tabs
     pub active_workspace_id: Option<Uuid>,
     pub current_view: ApplicationView,
 }
@@ -29,6 +30,7 @@ impl Default for ApplicationState {
     fn default() -> Self {
         Self {
             workspaces: vec![],
+            opened_workspaces: vec![],
             active_workspace_id: None,
             current_view: ApplicationView::Home,
         }

@@ -45,28 +45,27 @@ impl WorkspaceRegistry {
 
         let mut app_state = ApplicationState::default();
         
-        // Load workspaces from database
         let store = WorkspaceStore::new(db.conn());
         app_state.workspaces = store.list().unwrap_or_default();
 
-        // Create default workspace if none exist
         if app_state.workspaces.is_empty() {
             let workspace = Workspace::new("My Workspace");
             store.insert(&workspace).ok();
             app_state.workspaces.push(workspace);
         }
 
-        // Set the first workspace as active
-        if let Some(first) = app_state.workspaces.first() {
-            app_state.active_workspace_id = Some(first.id);
-            app_state.current_view = models::ApplicationView::Workspace(first.id);
-        }
-        
         Self { db, app_state }
     }
     
     pub fn get_state(&self) -> &ApplicationState {
         &self.app_state
+    }
+
+    pub fn get_opened_workspaces(&self) -> Vec<&Workspace> {
+        self.app_state.opened_workspaces
+            .iter()
+            .filter_map(|id| self.app_state.workspaces.iter().find(|w| w.id == *id))
+            .collect()
     }
     
     pub fn get_active_workspace(&self) -> Option<&Workspace> {
@@ -81,6 +80,28 @@ impl WorkspaceRegistry {
         store.insert(&workspace).ok();
         
         self.app_state.workspaces.push(workspace);
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn open_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
+        if !self.app_state.opened_workspaces.contains(&workspace_id) {
+            self.app_state.opened_workspaces.push(workspace_id);
+        }
+        self.set_active_workspace(workspace_id, cx);
+    }
+
+    pub fn close_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
+        self.app_state.opened_workspaces.retain(|&id| id != workspace_id);
+        
+        if self.app_state.active_workspace_id == Some(workspace_id) {
+            if let Some(&next_id) = self.app_state.opened_workspaces.last() {
+                self.app_state.active_workspace_id = Some(next_id);
+                self.app_state.current_view = models::ApplicationView::Workspace(next_id);
+            } else {
+                self.go_to_home(cx);
+                return;
+            }
+        }
         cx.emit(WorkspaceEvent);
     }
     
@@ -112,6 +133,7 @@ impl WorkspaceRegistry {
         store.delete(workspace_id).ok();
         
         self.app_state.workspaces.retain(|w| w.id != workspace_id);
+        self.app_state.opened_workspaces.retain(|&id| id != workspace_id);
         
         if self.app_state.active_workspace_id == Some(workspace_id) {
             if let Some(first_workspace) = self.app_state.workspaces.first() {
