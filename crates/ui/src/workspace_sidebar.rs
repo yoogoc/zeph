@@ -1,14 +1,17 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{IconName, StyledExt};
+use gpui_component::input::{Input, InputState};
+use gpui_component::menu::{DropdownMenu, PopupMenuItem};
+use gpui_component::{IconName, StyledExt, WindowExt};
 use models::{Folder, Service, ServiceType, Workspace};
 use std::collections::HashSet;
 use uuid::Uuid;
 
 pub enum WorkspaceSidebarEvent {
     OpenService(Uuid),
-    CreateService(Option<Uuid>),
+    CreateService(String, Option<Uuid>),
+    CreateFolder(String, Option<Uuid>),
     ToggleFolder(Uuid),
 }
 
@@ -34,6 +37,62 @@ impl WorkspaceSidebar {
             }
         }
         self.workspace = Some(workspace);
+    }
+
+    fn open_create_service_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Service name"));
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input_clone = input.clone();
+            let this_clone = this.clone();
+
+            dialog
+                .title("Create Service")
+                .w(px(400.0))
+                .confirm()
+                .child(Input::new(&input).w_full())
+                .on_ok(move |_, window, cx| {
+                    let name = input_clone.read(cx).value().to_string();
+                    if !name.trim().is_empty() {
+                        if let Some(this) = this_clone.upgrade() {
+                            this.update(cx, |_, cx| {
+                                cx.emit(WorkspaceSidebarEvent::CreateService(name, None));
+                            });
+                        }
+                    }
+                    window.close_dialog(cx);
+                    true
+                })
+        });
+    }
+
+    fn open_create_folder_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Folder name"));
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input_clone = input.clone();
+            let this_clone = this.clone();
+
+            dialog
+                .title("Create Folder")
+                .w(px(400.0))
+                .confirm()
+                .child(Input::new(&input).w_full())
+                .on_ok(move |_, window, cx| {
+                    let name = input_clone.read(cx).value().to_string();
+                    if !name.trim().is_empty() {
+                        if let Some(this) = this_clone.upgrade() {
+                            this.update(cx, |_, cx| {
+                                cx.emit(WorkspaceSidebarEvent::CreateFolder(name, None));
+                            });
+                        }
+                    }
+                    window.close_dialog(cx);
+                    true
+                })
+        });
     }
 
     fn render_service_item(
@@ -81,7 +140,12 @@ impl WorkspaceSidebar {
                             .text_color(rgb(0xffffff))
                             .child(method_label),
                     )
-                    .child(div().text_sm().overflow_hidden().child(service.name.clone())),
+                    .child(
+                        div()
+                            .text_sm()
+                            .overflow_hidden()
+                            .child(service.name.clone()),
+                    ),
             )
             .on_click(cx.listener(move |_this, _, _, cx| {
                 cx.emit(WorkspaceSidebarEvent::OpenService(service_id));
@@ -133,16 +197,30 @@ impl WorkspaceSidebar {
 
         let mut elements: Vec<AnyElement> = vec![];
 
-        for folder in workspace.folders.iter().filter(|f| f.parent_id == parent_id) {
-            elements.push(self.render_folder_item(folder, depth, cx).into_any_element());
+        for folder in workspace
+            .folders
+            .iter()
+            .filter(|f| f.parent_id == parent_id)
+        {
+            elements.push(
+                self.render_folder_item(folder, depth, cx)
+                    .into_any_element(),
+            );
             if self.expanded_folders.contains(&folder.id) {
                 elements.extend(self.render_tree(Some(folder.id), depth + 1, active_service, cx));
             }
         }
 
-        for service in workspace.services.iter().filter(|s| s.folder_id == parent_id) {
+        for service in workspace
+            .services
+            .iter()
+            .filter(|s| s.folder_id == parent_id)
+        {
             let is_active = active_service == Some(service.id);
-            elements.push(self.render_service_item(service, is_active, depth, cx).into_any_element());
+            elements.push(
+                self.render_service_item(service, is_active, depth, cx)
+                    .into_any_element(),
+            );
         }
 
         elements
@@ -157,6 +235,7 @@ impl Render for WorkspaceSidebar {
 
         let active_service = workspace.active_service;
         let tree_elements = self.render_tree(None, 0, active_service, cx);
+        let view = cx.entity();
 
         div()
             .w(px(300.0))
@@ -182,14 +261,23 @@ impl Render for WorkspaceSidebar {
                             .text_color(rgb(0x999999))
                             .child("Search..."),
                     )
-                    .child(
-                        Button::new("add_service")
-                            .compact()
-                            .icon(IconName::Plus)
-                            .on_click(cx.listener(|_this, _, _, cx| {
-                                cx.emit(WorkspaceSidebarEvent::CreateService(None));
-                            })),
-                    ),
+                    .child(Button::new("btn").icon(IconName::Plus).dropdown_menu(
+                        move |menu, window, _cx| {
+                            menu.item(PopupMenuItem::new("Add Service").on_click(
+                                window.listener_for(&view, |this, _, window, cx| {
+                                    this.open_create_service_dialog(window, cx);
+                                }),
+                            ))
+                            .item(
+                                PopupMenuItem::new("Add Folder").on_click(window.listener_for(
+                                    &view,
+                                    |this, _, window, cx| {
+                                        this.open_create_folder_dialog(window, cx);
+                                    },
+                                )),
+                            )
+                        },
+                    )),
             )
             .child(
                 div()

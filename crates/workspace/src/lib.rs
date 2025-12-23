@@ -207,6 +207,41 @@ impl WorkspaceRegistry {
 
     // === Service Operations ===
 
+    pub fn create_service(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+        let workspace_id = match self.get_active_workspace() {
+            Some(w) => w.id,
+            None => return,
+        };
+
+        let mut service = Service::new(workspace_id, &name, ServiceType::Http(HttpConfig::default()));
+        service.folder_id = folder_id;
+
+        let service_store = ServiceStore::new(self.db.conn());
+        service_store.insert(&service).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            workspace.services.push(service);
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn create_folder(&mut self, name: String, parent_id: Option<Uuid>, cx: &mut Context<Self>) {
+        let workspace_id = match self.get_active_workspace() {
+            Some(w) => w.id,
+            None => return,
+        };
+
+        let folder = models::Folder::new(workspace_id, &name, parent_id);
+
+        let folder_store = FolderStore::new(self.db.conn());
+        folder_store.insert(&folder).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            workspace.folders.push(folder);
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
     pub fn open_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
         if let Some(workspace) = self.get_active_workspace_mut() {
             if !workspace.opened_services.contains(&service_id) {
