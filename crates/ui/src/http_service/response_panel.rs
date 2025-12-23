@@ -63,13 +63,13 @@ impl Render for ResponsePanel {
                     .flex_1()
                     .min_h_0()
                     .when(active_tab == ResponseTab::Body, |el| {
-                        el.child(Input::new(&self.response).h_full())
+                        el.child(Input::new(&self.response).disabled(true).h_full())
                     })
                     .when(active_tab == ResponseTab::Headers, |el| {
-                        el.child(Input::new(&self.headers).h_full())
+                        el.child(Input::new(&self.headers).disabled(true).h_full())
                     })
                     .when(active_tab == ResponseTab::Request, |el| {
-                        el.child(Input::new(&self.request).h_full())
+                        el.child(Input::new(&self.request).disabled(true).h_full())
                     }),
             )
     }
