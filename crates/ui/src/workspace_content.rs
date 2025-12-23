@@ -36,8 +36,10 @@ impl WorkspaceContent {
 
         let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
             WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
+            WorkspaceSidebarEvent::OpenSchema(_id) => {} // TODO: implement schema editor
             WorkspaceSidebarEvent::CreateService(name, folder_id) => this.create_service(name.clone(), *folder_id, cx),
-            WorkspaceSidebarEvent::CreateFolder(name, parent_id) => this.create_folder(name.clone(), *parent_id, cx),
+            WorkspaceSidebarEvent::CreateSchema(name, folder_id) => this.create_schema(name.clone(), *folder_id, cx),
+            WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx),
             WorkspaceSidebarEvent::ToggleFolder(id) => this.toggle_folder(*id, cx),
         });
 
@@ -62,10 +64,17 @@ impl WorkspaceContent {
         });
     }
 
-    fn create_folder(&mut self, name: String, parent_id: Option<Uuid>, cx: &mut Context<Self>) {
+    fn create_schema(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
-            registry.create_folder(name, parent_id, cx);
+            registry.create_schema(name, folder_id, cx);
+        });
+    }
+
+    fn create_folder(&mut self, name: String, parent_id: Option<Uuid>, folder_type: models::FolderType, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.create_folder(name, parent_id, folder_type, cx);
         });
     }
 

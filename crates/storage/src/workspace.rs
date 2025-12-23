@@ -102,6 +102,7 @@ fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
         },
         folders: vec![],
         services: vec![],
+        schemas: vec![],
         opened_services: vec![],
         active_service: None,
         current_view: Default::default(),

@@ -59,6 +59,8 @@ pub struct Workspace {
     pub folders: Vec<Folder>,
     #[serde(skip)]
     pub services: Vec<Service>,
+    #[serde(skip)]
+    pub schemas: Vec<Schema>,
 
     // Runtime state
     #[serde(skip)]
@@ -81,6 +83,7 @@ impl Workspace {
             sync: SyncMeta::default(),
             folders: vec![],
             services: vec![],
+            schemas: vec![],
             opened_services: vec![],
             active_service: None,
             current_view: WorkspaceView::default(),
@@ -99,10 +102,23 @@ pub enum WorkspaceView {
 
 // === Folder ===
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum FolderType {
+    Service,
+    Schema,
+}
+
+impl Default for FolderType {
+    fn default() -> Self {
+        Self::Service
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Folder {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub parent_id: Option<Uuid>,
+    pub folder_type: FolderType,
     pub name: SharedString,
     pub description: Option<String>,
     pub sort_order: i32,
@@ -117,11 +133,16 @@ pub struct Folder {
 
 impl Folder {
     pub fn new(workspace_id: Uuid, name: impl Into<SharedString>, parent_id: Option<Uuid>) -> Self {
+        Self::with_type(workspace_id, name, parent_id, FolderType::Service)
+    }
+
+    pub fn with_type(workspace_id: Uuid, name: impl Into<SharedString>, parent_id: Option<Uuid>, folder_type: FolderType) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
             workspace_id,
             parent_id,
+            folder_type,
             name: name.into(),
             description: None,
             sort_order: 0,
@@ -343,4 +364,76 @@ impl Default for WebSocketConfig {
             messages: vec![],
         }
     }
+}
+
+
+// === OpenAPI Schema (Data Models) ===
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Schema {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub folder_id: Option<Uuid>,
+    pub name: SharedString,
+    pub description: Option<String>,
+    pub schema_type: SchemaType,
+    pub properties: Vec<SchemaProperty>,
+    pub required: Vec<String>,
+    pub sort_order: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sync: SyncMeta,
+}
+
+impl Schema {
+    pub fn new(workspace_id: Uuid, name: impl Into<SharedString>) -> Self {
+        let now = chrono::Utc::now().timestamp();
+        Self {
+            id: Uuid::new_v4(),
+            workspace_id,
+            folder_id: None,
+            name: name.into(),
+            description: None,
+            schema_type: SchemaType::Object,
+            properties: vec![],
+            required: vec![],
+            sort_order: 0,
+            created_at: now,
+            updated_at: now,
+            sync: SyncMeta::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub enum SchemaType {
+    #[default]
+    Object,
+    Array,
+    String,
+    Integer,
+    Number,
+    Boolean,
+    Enum(Vec<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SchemaProperty {
+    pub name: String,
+    pub property_type: PropertyType,
+    pub description: Option<String>,
+    pub nullable: bool,
+    pub default: Option<String>,
+    pub example: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum PropertyType {
+    String,
+    Integer,
+    Number,
+    Boolean,
+    Array(Box<PropertyType>),
+    Ref(String), // Reference to another schema by name
+    Object,
 }

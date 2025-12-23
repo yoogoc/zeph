@@ -1,5 +1,5 @@
 use anyhow::Result;
-use models::{DataSource, Folder, SyncMeta};
+use models::{DataSource, Folder, FolderType, SyncMeta};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
@@ -14,12 +14,13 @@ impl<'a> FolderStore<'a> {
 
     pub fn insert(&self, folder: &Folder) -> Result<()> {
         self.conn.execute(
-            "INSERT INTO folders (id, workspace_id, parent_id, name, description, sort_order, created_at, updated_at, sync_version, source, deleted)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+            "INSERT INTO folders (id, workspace_id, parent_id, folder_type, name, description, sort_order, created_at, updated_at, sync_version, source, deleted)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
             params![
                 folder.id.to_string(),
                 folder.workspace_id.to_string(),
                 folder.parent_id.map(|id| id.to_string()),
+                folder_type_to_str(&folder.folder_type),
                 folder.name.as_ref(),
                 folder.description,
                 folder.sort_order,
@@ -33,35 +34,9 @@ impl<'a> FolderStore<'a> {
         Ok(())
     }
 
-    pub fn update(&self, folder: &Folder) -> Result<()> {
-        self.conn.execute(
-            "UPDATE folders SET parent_id = ?2, name = ?3, description = ?4, sort_order = ?5, updated_at = ?6, sync_version = ?7
-             WHERE id = ?1 AND deleted = 0",
-            params![
-                folder.id.to_string(),
-                folder.parent_id.map(|id| id.to_string()),
-                folder.name.as_ref(),
-                folder.description,
-                folder.sort_order,
-                folder.updated_at,
-                folder.sync.sync_version,
-            ],
-        )?;
-        Ok(())
-    }
-
-    pub fn delete(&self, id: Uuid) -> Result<()> {
-        let now = chrono::Utc::now().timestamp();
-        self.conn.execute(
-            "UPDATE folders SET deleted = 1, updated_at = ?2 WHERE id = ?1",
-            params![id.to_string(), now],
-        )?;
-        Ok(())
-    }
-
     pub fn list_by_workspace(&self, workspace_id: Uuid) -> Result<Vec<Folder>> {
         let mut stmt = self.conn.prepare(
-            "SELECT id, workspace_id, parent_id, name, description, sort_order, created_at, updated_at, sync_version, source, deleted
+            "SELECT id, workspace_id, parent_id, folder_type, name, description, sort_order, created_at, updated_at, sync_version, source, deleted
              FROM folders WHERE workspace_id = ?1 AND deleted = 0 ORDER BY sort_order, name",
         )?;
 
@@ -76,19 +51,21 @@ fn row_to_folder(row: &rusqlite::Row) -> Result<Folder> {
     let id: String = row.get(0)?;
     let workspace_id: String = row.get(1)?;
     let parent_id: Option<String> = row.get(2)?;
-    let name: String = row.get(3)?;
-    let description: Option<String> = row.get(4)?;
-    let sort_order: i32 = row.get(5)?;
-    let created_at: i64 = row.get(6)?;
-    let updated_at: i64 = row.get(7)?;
-    let sync_version: i64 = row.get(8)?;
-    let source: String = row.get(9)?;
-    let deleted: bool = row.get(10)?;
+    let folder_type: String = row.get(3)?;
+    let name: String = row.get(4)?;
+    let description: Option<String> = row.get(5)?;
+    let sort_order: i32 = row.get(6)?;
+    let created_at: i64 = row.get(7)?;
+    let updated_at: i64 = row.get(8)?;
+    let sync_version: i64 = row.get(9)?;
+    let source: String = row.get(10)?;
+    let deleted: bool = row.get(11)?;
 
     Ok(Folder {
         id: Uuid::parse_str(&id)?,
         workspace_id: Uuid::parse_str(&workspace_id)?,
-        parent_id: parent_id.map(|s| Uuid::parse_str(&s).unwrap()),
+        parent_id: parent_id.and_then(|s| Uuid::parse_str(&s).ok()),
+        folder_type: str_to_folder_type(&folder_type),
         name: name.into(),
         description,
         sort_order,
@@ -101,6 +78,20 @@ fn row_to_folder(row: &rusqlite::Row) -> Result<Folder> {
         },
         is_expanded: true,
     })
+}
+
+fn folder_type_to_str(t: &FolderType) -> &'static str {
+    match t {
+        FolderType::Service => "service",
+        FolderType::Schema => "schema",
+    }
+}
+
+fn str_to_folder_type(s: &str) -> FolderType {
+    match s {
+        "schema" => FolderType::Schema,
+        _ => FolderType::Service,
+    }
 }
 
 fn source_to_str(source: &DataSource) -> &'static str {

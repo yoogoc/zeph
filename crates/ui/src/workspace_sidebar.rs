@@ -4,20 +4,23 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::{IconName, StyledExt, WindowExt};
-use models::{Folder, Service, ServiceType, Workspace};
+use models::{Folder, FolderType, Schema, Service, ServiceType, Workspace};
 use std::collections::HashSet;
 use uuid::Uuid;
 
 pub enum WorkspaceSidebarEvent {
     OpenService(Uuid),
+    OpenSchema(Uuid),
     CreateService(String, Option<Uuid>),
-    CreateFolder(String, Option<Uuid>),
+    CreateSchema(String, Option<Uuid>),
+    CreateFolder(String, Option<Uuid>, FolderType),
     ToggleFolder(Uuid),
 }
 
 pub struct WorkspaceSidebar {
     workspace: Option<Workspace>,
     pub expanded_folders: HashSet<Uuid>,
+    expanded_sections: (bool, bool), // (services, schemas)
 }
 
 impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
@@ -27,6 +30,7 @@ impl WorkspaceSidebar {
         Self {
             workspace: None,
             expanded_folders: HashSet::new(),
+            expanded_sections: (true, true),
         }
     }
 
@@ -67,13 +71,42 @@ impl WorkspaceSidebar {
         });
     }
 
-    fn open_create_folder_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_create_schema_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Schema name"));
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input_clone = input.clone();
+            let this_clone = this.clone();
+
+            dialog
+                .title("Create Schema")
+                .w(px(400.0))
+                .confirm()
+                .child(Input::new(&input).w_full())
+                .on_ok(move |_, window, cx| {
+                    let name = input_clone.read(cx).value().to_string();
+                    if !name.trim().is_empty() {
+                        if let Some(this) = this_clone.upgrade() {
+                            this.update(cx, |_, cx| {
+                                cx.emit(WorkspaceSidebarEvent::CreateSchema(name, None));
+                            });
+                        }
+                    }
+                    window.close_dialog(cx);
+                    true
+                })
+        });
+    }
+
+    fn open_create_folder_dialog(&mut self, folder_type: FolderType, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Folder name"));
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let input_clone = input.clone();
             let this_clone = this.clone();
+            let ft = folder_type.clone();
 
             dialog
                 .title("Create Folder")
@@ -85,7 +118,7 @@ impl WorkspaceSidebar {
                     if !name.trim().is_empty() {
                         if let Some(this) = this_clone.upgrade() {
                             this.update(cx, |_, cx| {
-                                cx.emit(WorkspaceSidebarEvent::CreateFolder(name, None));
+                                cx.emit(WorkspaceSidebarEvent::CreateFolder(name, None, ft.clone()));
                             });
                         }
                     }
@@ -95,13 +128,7 @@ impl WorkspaceSidebar {
         });
     }
 
-    fn render_service_item(
-        &self,
-        service: &Service,
-        is_active: bool,
-        depth: usize,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_service_item(&self, service: &Service, is_active: bool, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let service_id = service.id;
         let method_color = match &service.service_type {
             ServiceType::Http(config) => match config.method {
@@ -140,31 +167,37 @@ impl WorkspaceSidebar {
                             .text_color(rgb(0xffffff))
                             .child(method_label),
                     )
-                    .child(
-                        div()
-                            .text_sm()
-                            .overflow_hidden()
-                            .child(service.name.clone()),
-                    ),
+                    .child(div().text_sm().overflow_hidden().child(service.name.clone())),
             )
             .on_click(cx.listener(move |_this, _, _, cx| {
                 cx.emit(WorkspaceSidebarEvent::OpenService(service_id));
             }))
     }
 
-    fn render_folder_item(
-        &self,
-        folder: &Folder,
-        depth: usize,
-        cx: &mut Context<Self>,
-    ) -> impl IntoElement {
+    fn render_schema_item(&self, schema: &Schema, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
+        let schema_id = schema.id;
+
+        Button::new(format!("schema_{}", schema_id))
+            .w_full()
+            .justify_start()
+            .child(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_2()
+                    .pl(px(depth as f32 * 16.0))
+                    .child(gpui_component::Icon::new(IconName::File).size_4().text_color(rgb(0x6f42c1)))
+                    .child(div().text_sm().overflow_hidden().child(schema.name.clone())),
+            )
+            .on_click(cx.listener(move |_this, _, _, cx| {
+                cx.emit(WorkspaceSidebarEvent::OpenSchema(schema_id));
+            }))
+    }
+
+    fn render_folder_item(&self, folder: &Folder, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
         let folder_id = folder.id;
         let is_expanded = self.expanded_folders.contains(&folder_id);
-        let icon = if is_expanded {
-            IconName::ChevronDown
-        } else {
-            IconName::ChevronRight
-        };
+        let icon = if is_expanded { IconName::ChevronDown } else { IconName::ChevronRight };
 
         Button::new(format!("folder_{}", folder_id))
             .w_full()
@@ -184,43 +217,38 @@ impl WorkspaceSidebar {
             }))
     }
 
-    fn render_tree(
-        &self,
-        parent_id: Option<Uuid>,
-        depth: usize,
-        active_service: Option<Uuid>,
-        cx: &mut Context<Self>,
-    ) -> Vec<AnyElement> {
-        let Some(workspace) = &self.workspace else {
-            return vec![];
-        };
-
+    fn render_service_tree(&self, parent_id: Option<Uuid>, depth: usize, active_service: Option<Uuid>, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(workspace) = &self.workspace else { return vec![] };
         let mut elements: Vec<AnyElement> = vec![];
 
-        for folder in workspace
-            .folders
-            .iter()
-            .filter(|f| f.parent_id == parent_id)
-        {
-            elements.push(
-                self.render_folder_item(folder, depth, cx)
-                    .into_any_element(),
-            );
+        for folder in workspace.folders.iter().filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Service)) {
+            elements.push(self.render_folder_item(folder, depth, cx).into_any_element());
             if self.expanded_folders.contains(&folder.id) {
-                elements.extend(self.render_tree(Some(folder.id), depth + 1, active_service, cx));
+                elements.extend(self.render_service_tree(Some(folder.id), depth + 1, active_service, cx));
             }
         }
 
-        for service in workspace
-            .services
-            .iter()
-            .filter(|s| s.folder_id == parent_id)
-        {
+        for service in workspace.services.iter().filter(|s| s.folder_id == parent_id) {
             let is_active = active_service == Some(service.id);
-            elements.push(
-                self.render_service_item(service, is_active, depth, cx)
-                    .into_any_element(),
-            );
+            elements.push(self.render_service_item(service, is_active, depth, cx).into_any_element());
+        }
+
+        elements
+    }
+
+    fn render_schema_tree(&self, parent_id: Option<Uuid>, depth: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+        let Some(workspace) = &self.workspace else { return vec![] };
+        let mut elements: Vec<AnyElement> = vec![];
+
+        for folder in workspace.folders.iter().filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Schema)) {
+            elements.push(self.render_folder_item(folder, depth, cx).into_any_element());
+            if self.expanded_folders.contains(&folder.id) {
+                elements.extend(self.render_schema_tree(Some(folder.id), depth + 1, cx));
+            }
+        }
+
+        for schema in workspace.schemas.iter().filter(|s| s.folder_id == parent_id) {
+            elements.push(self.render_schema_item(schema, depth, cx).into_any_element());
         }
 
         elements
@@ -234,8 +262,20 @@ impl Render for WorkspaceSidebar {
         };
 
         let active_service = workspace.active_service;
-        let tree_elements = self.render_tree(None, 0, active_service, cx);
+        let (services_expanded, schemas_expanded) = self.expanded_sections;
         let view = cx.entity();
+
+        let service_tree = if services_expanded {
+            self.render_service_tree(None, 0, active_service, cx)
+        } else {
+            vec![]
+        };
+
+        let schema_tree = if schemas_expanded {
+            self.render_schema_tree(None, 0, cx)
+        } else {
+            vec![]
+        };
 
         div()
             .w(px(300.0))
@@ -247,11 +287,8 @@ impl Render for WorkspaceSidebar {
             .child(
                 div()
                     .p_2()
-                    .h_flex()
-                    .gap_2()
                     .child(
                         div()
-                            .flex_1()
                             .p_2()
                             .bg(rgb(0xffffff))
                             .border_1()
@@ -260,33 +297,107 @@ impl Render for WorkspaceSidebar {
                             .text_sm()
                             .text_color(rgb(0x999999))
                             .child("Search..."),
-                    )
-                    .child(Button::new("btn").icon(IconName::Plus).dropdown_menu(
-                        move |menu, window, _cx| {
-                            menu.item(PopupMenuItem::new("Add Service").on_click(
-                                window.listener_for(&view, |this, _, window, cx| {
-                                    this.open_create_service_dialog(window, cx);
-                                }),
-                            ))
-                            .item(
-                                PopupMenuItem::new("Add Folder").on_click(window.listener_for(
-                                    &view,
-                                    |this, _, window, cx| {
-                                        this.open_create_folder_dialog(window, cx);
-                                    },
-                                )),
-                            )
-                        },
-                    )),
+                    ),
             )
             .child(
                 div()
                     .flex_1()
-                    .overflow_hidden()
+                    .overflow_y_hidden()
                     .p_2()
                     .v_flex()
-                    .gap_px()
-                    .children(tree_elements),
+                    .gap_2()
+                    // Services Section
+                    .child(
+                        div()
+                            .v_flex()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .id("services_header")
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .cursor_pointer()
+                                            .child(gpui_component::Icon::new(if services_expanded { IconName::ChevronDown } else { IconName::ChevronRight }).size_4())
+                                            .child(div().text_sm().font_semibold().child("Services"))
+                                            .on_click(cx.listener(|this, _, _, _| {
+                                                this.expanded_sections.0 = !this.expanded_sections.0;
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("add_service_btn")
+                                            .ghost()
+                                            .compact()
+                                            .icon(IconName::Plus)
+                                            .dropdown_menu({
+                                                let view = view.clone();
+                                                move |menu, window, _cx| {
+                                                    menu.item(PopupMenuItem::new("Add Service").on_click(
+                                                        window.listener_for(&view, |this, _, window, cx| {
+                                                            this.open_create_service_dialog(window, cx);
+                                                        }),
+                                                    ))
+                                                    .item(PopupMenuItem::new("Add Folder").on_click(
+                                                        window.listener_for(&view, |this, _, window, cx| {
+                                                            this.open_create_folder_dialog(FolderType::Service, window, cx);
+                                                        }),
+                                                    ))
+                                                }
+                                            }),
+                                    ),
+                            )
+                            .when(services_expanded, |el| el.child(div().v_flex().gap_px().children(service_tree))),
+                    )
+                    // Schemas Section
+                    .child(
+                        div()
+                            .v_flex()
+                            .child(
+                                div()
+                                    .h_flex()
+                                    .justify_between()
+                                    .items_center()
+                                    .child(
+                                        div()
+                                            .id("schemas_header")
+                                            .h_flex()
+                                            .items_center()
+                                            .gap_1()
+                                            .cursor_pointer()
+                                            .child(gpui_component::Icon::new(if schemas_expanded { IconName::ChevronDown } else { IconName::ChevronRight }).size_4())
+                                            .child(div().text_sm().font_semibold().child("Schemas"))
+                                            .on_click(cx.listener(|this, _, _, _| {
+                                                this.expanded_sections.1 = !this.expanded_sections.1;
+                                            })),
+                                    )
+                                    .child(
+                                        Button::new("add_schema_btn")
+                                            .ghost()
+                                            .compact()
+                                            .icon(IconName::Plus)
+                                            .dropdown_menu({
+                                                let view = view.clone();
+                                                move |menu, window, _cx| {
+                                                    menu.item(PopupMenuItem::new("Add Schema").on_click(
+                                                        window.listener_for(&view, |this, _, window, cx| {
+                                                            this.open_create_schema_dialog(window, cx);
+                                                        }),
+                                                    ))
+                                                    .item(PopupMenuItem::new("Add Folder").on_click(
+                                                        window.listener_for(&view, |this, _, window, cx| {
+                                                            this.open_create_folder_dialog(FolderType::Schema, window, cx);
+                                                        }),
+                                                    ))
+                                                }
+                                            }),
+                                    ),
+                            )
+                            .when(schemas_expanded, |el| el.child(div().v_flex().gap_px().children(schema_tree))),
+                    ),
             )
             .into_any_element()
     }

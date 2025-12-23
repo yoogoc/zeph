@@ -1,6 +1,6 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use models::{HttpConfig, HttpMethod, Service, ServiceType, Workspace};
-use storage::{Database, FolderStore, ServiceStore, WorkspaceStore};
+use storage::{Database, FolderStore, SchemaStore, ServiceStore, WorkspaceStore};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -225,13 +225,31 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent);
     }
 
-    pub fn create_folder(&mut self, name: String, parent_id: Option<Uuid>, cx: &mut Context<Self>) {
+    pub fn create_schema(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
         let workspace_id = match self.get_active_workspace() {
             Some(w) => w.id,
             None => return,
         };
 
-        let folder = models::Folder::new(workspace_id, &name, parent_id);
+        let mut schema = models::Schema::new(workspace_id, &name);
+        schema.folder_id = folder_id;
+
+        let schema_store = SchemaStore::new(self.db.conn());
+        schema_store.insert(&schema).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            workspace.schemas.push(schema);
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn create_folder(&mut self, name: String, parent_id: Option<Uuid>, folder_type: models::FolderType, cx: &mut Context<Self>) {
+        let workspace_id = match self.get_active_workspace() {
+            Some(w) => w.id,
+            None => return,
+        };
+
+        let folder = models::Folder::with_type(workspace_id, &name, parent_id, folder_type);
 
         let folder_store = FolderStore::new(self.db.conn());
         folder_store.insert(&folder).ok();
