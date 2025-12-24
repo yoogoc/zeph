@@ -33,6 +33,7 @@ CREATE TABLE IF NOT EXISTS services (
     name TEXT NOT NULL,
     description TEXT,
     service_type TEXT NOT NULL,
+    config TEXT NOT NULL,
     deprecated INTEGER DEFAULT 0,
     sort_order INTEGER DEFAULT 0,
     created_at INTEGER NOT NULL,

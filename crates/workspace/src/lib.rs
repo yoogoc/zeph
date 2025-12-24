@@ -1,8 +1,9 @@
-use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
-use models::{HttpConfig, HttpMethod, Service, ServiceType, Workspace};
-use storage::{Database, FolderStore, SchemaStore, ServiceStore, WorkspaceStore};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
+use models::{CreateWorkspace, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
 use std::sync::Arc;
+use storage::{Database, FolderStore, SchemaStore, ServiceStore, WorkspaceStore};
 use uuid::Uuid;
+use log::error;
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceEvent;
@@ -48,12 +49,6 @@ impl WorkspaceRegistry {
         let store = WorkspaceStore::new(db.conn());
         app_state.workspaces = store.list().unwrap_or_default();
 
-        if app_state.workspaces.is_empty() {
-            let workspace = Workspace::new("My Workspace");
-            store.insert(&workspace).ok();
-            app_state.workspaces.push(workspace);
-        }
-
         Self { db, app_state }
     }
 
@@ -83,10 +78,13 @@ impl WorkspaceRegistry {
 
     // === Workspace CRUD ===
 
-    pub fn create_workspace(&mut self, name: SharedString, cx: &mut Context<Self>) {
-        let workspace = Workspace::new(name);
+    pub fn create_workspace(&mut self, param: CreateWorkspace, cx: &mut Context<Self>) {
+        let workspace = Workspace::new(param.name);
         let store = WorkspaceStore::new(self.db.conn());
         store.insert(&workspace).ok();
+        if param.create_sample_services {
+            self.create_sample_services(workspace.id);
+        }
         self.app_state.workspaces.push(workspace);
         cx.emit(WorkspaceEvent);
     }
@@ -128,18 +126,24 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent);
     }
 
-    pub fn set_workspace_view(&mut self, workspace_id: Uuid, view: models::WorkspaceView, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.app_state.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+    pub fn set_workspace_view(
+        &mut self,
+        workspace_id: Uuid,
+        view: models::WorkspaceView,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(workspace) = self
+            .app_state
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+        {
             workspace.current_view = view;
             cx.emit(WorkspaceEvent);
         }
     }
 
     pub fn remove_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
-        if self.app_state.workspaces.len() <= 1 {
-            return;
-        }
-
         let store = WorkspaceStore::new(self.db.conn());
         store.delete(workspace_id).ok();
 
@@ -162,58 +166,82 @@ impl WorkspaceRegistry {
     // === Content Loading ===
 
     fn load_workspace_content(&mut self, workspace_id: Uuid) {
-        if let Some(workspace) = self.app_state.workspaces.iter_mut().find(|w| w.id == workspace_id) {
+        if let Some(workspace) = self
+            .app_state
+            .workspaces
+            .iter_mut()
+            .find(|w| w.id == workspace_id)
+        {
             if workspace.services.is_empty() && workspace.folders.is_empty() {
                 let folder_store = FolderStore::new(self.db.conn());
                 let service_store = ServiceStore::new(self.db.conn());
 
-                workspace.folders = folder_store.list_by_workspace(workspace_id).unwrap_or_default();
-                workspace.services = service_store.list_by_workspace(workspace_id).unwrap_or_default();
-
-                // Create sample services if empty
-                if workspace.services.is_empty() {
-                    self.create_sample_services(workspace_id);
-                }
+                workspace.folders = folder_store
+                    .list_by_workspace(workspace_id)
+                    .unwrap_or_default();
+                workspace.services = service_store
+                    .list_by_workspace(workspace_id)
+                    .unwrap_or_default();
             }
         }
     }
 
     fn create_sample_services(&mut self, workspace_id: Uuid) {
         let samples = vec![
-            ("Get Users", HttpMethod::Get, "https://api.example.com/users"),
-            ("Create User", HttpMethod::Post, "https://api.example.com/users"),
+            (
+                "Get Users",
+                HttpMethod::Get,
+                "https://api.example.com/users",
+            ),
+            (
+                "Create User",
+                HttpMethod::Post,
+                "https://api.example.com/users",
+            ),
             ("httpbin json", HttpMethod::Get, "https://httpbin.org/json"),
-            ("httpbin stream", HttpMethod::Get, "https://httpbin.org/stream/5"),
+            (
+                "httpbin stream",
+                HttpMethod::Get,
+                "https://httpbin.org/stream/5",
+            ),
         ];
 
         let service_store = ServiceStore::new(self.db.conn());
 
-        if let Some(workspace) = self.app_state.workspaces.iter_mut().find(|w| w.id == workspace_id) {
-            for (name, method, path) in samples {
-                let service = Service::new(
-                    workspace_id,
-                    name,
-                    ServiceType::Http(HttpConfig {
-                        method,
-                        path: path.into(),
-                        ..Default::default()
-                    }),
-                );
-                service_store.insert(&service).ok();
-                workspace.services.push(service);
+        for (name, method, path) in samples {
+            let service = Service::new(
+                workspace_id,
+                name,
+                ServiceType::Http(HttpConfig {
+                    method,
+                    path: path.into(),
+                    ..Default::default()
+                }),
+            );
+            if let Err(err) = service_store.insert(&service) {
+                error!("Failed to create service: {}", err);
             }
         }
     }
 
     // === Service Operations ===
 
-    pub fn create_service(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+    pub fn create_service(
+        &mut self,
+        name: String,
+        folder_id: Option<Uuid>,
+        cx: &mut Context<Self>,
+    ) {
         let workspace_id = match self.get_active_workspace() {
             Some(w) => w.id,
             None => return,
         };
 
-        let mut service = Service::new(workspace_id, &name, ServiceType::Http(HttpConfig::default()));
+        let mut service = Service::new(
+            workspace_id,
+            &name,
+            ServiceType::Http(HttpConfig::default()),
+        );
         service.folder_id = folder_id;
 
         let service_store = ServiceStore::new(self.db.conn());
@@ -243,7 +271,13 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent);
     }
 
-    pub fn create_folder(&mut self, name: String, parent_id: Option<Uuid>, folder_type: models::FolderType, cx: &mut Context<Self>) {
+    pub fn create_folder(
+        &mut self,
+        name: String,
+        parent_id: Option<Uuid>,
+        folder_type: models::FolderType,
+        cx: &mut Context<Self>,
+    ) {
         let workspace_id = match self.get_active_workspace() {
             Some(w) => w.id,
             None => return,

@@ -7897,6 +7897,7 @@ dependencies = [
  "chrono",
  "dirs 5.0.1",
  "gpui",
+ "log",
  "models",
  "storage",
  "uuid",

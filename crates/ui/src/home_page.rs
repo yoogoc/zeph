@@ -2,11 +2,12 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::{IconName, StyledExt, WindowExt};
-use models::Workspace;
+use gpui_component::checkbox::Checkbox;
+use models::{CreateWorkspace, Workspace};
 use uuid::Uuid;
 
 pub enum HomePageEvent {
-    CreateWorkspace(String),
+    CreateWorkspace(CreateWorkspace),
     OpenWorkspace(Uuid),
     DeleteWorkspace(Uuid),
 }
@@ -29,22 +30,42 @@ impl HomePage {
     fn open_create_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Workspace name"));
+        let create_sample = std::rc::Rc::new(std::cell::Cell::new(true));
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let input_clone = input.clone();
             let this_clone = this.clone();
+            let create_sample_clone = create_sample.clone();
+            let create_sample_for_checkbox = create_sample.clone();
 
             dialog
                 .title("Create Workspace")
                 .w(px(400.0))
                 .confirm()
-                .child(Input::new(&input).w_full())
+                .child(
+                    div()
+                        .v_flex()
+                        .gap_3()
+                        .child(Input::new(&input).w_full())
+                        .child(
+                            Checkbox::new("create_sample_services")
+                                .label("Create sample services")
+                                .checked(create_sample_for_checkbox.get())
+                                .on_click(move |checked, _, _| {
+                                    create_sample_for_checkbox.set(*checked);
+                                })
+                        )
+                )
                 .on_ok(move |_, window, cx| {
-                    let name = input_clone.read(cx).value().to_string();
+                    let name = input_clone.read(cx).value();
                     if !name.trim().is_empty() {
                         if let Some(this) = this_clone.upgrade() {
+                            let create_sample_services = create_sample_clone.get();
                             this.update(cx, |_, cx| {
-                                cx.emit(HomePageEvent::CreateWorkspace(name));
+                                cx.emit(HomePageEvent::CreateWorkspace(CreateWorkspace { 
+                                    name, 
+                                    create_sample_services 
+                                }));
                             });
                         }
                     }
@@ -126,6 +147,8 @@ impl HomePage {
                                     .icon(IconName::Close)
                                     .on_click(cx.listener(move |_this, _, _, cx| {
                                         cx.emit(HomePageEvent::DeleteWorkspace(workspace_id));
+                                        cx.stop_propagation();
+                                        cx.notify();
                                     })),
                             ),
                     )

@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_component::{Root, StyledExt};
-use models::ApplicationView;
+use models::{ApplicationView, CreateWorkspace};
 use ui::{HomePage, HomePageEvent};
 use uuid::Uuid;
 
@@ -20,7 +20,7 @@ impl Application {
         let home_page = cx.new(|_| HomePage::new());
 
         let home_sub = cx.subscribe(&home_page, |this, _, event, cx| match event {
-            HomePageEvent::CreateWorkspace(name) => this.create_workspace(name.clone(), cx),
+            HomePageEvent::CreateWorkspace(param) => this.create_workspace(param.clone(), cx),
             HomePageEvent::OpenWorkspace(id) => this.open_workspace(*id, cx),
             HomePageEvent::DeleteWorkspace(id) => this.delete_workspace(*id, cx),
         });
@@ -41,10 +41,10 @@ impl Application {
         }
     }
 
-    fn create_workspace(&mut self, name: String, cx: &mut Context<Self>) {
+    fn create_workspace(&mut self, param: CreateWorkspace, cx: &mut Context<Self>) {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         workspace_registry.update(cx, |registry, cx| {
-            registry.create_workspace(name.into(), cx);
+            registry.create_workspace(param, cx);
             if let Some(new_workspace) = registry.get_state().workspaces.last() {
                 registry.open_workspace(new_workspace.id, cx);
             }

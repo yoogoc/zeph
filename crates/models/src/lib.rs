@@ -71,6 +71,12 @@ pub struct Workspace {
     pub current_view: WorkspaceView,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CreateWorkspace {
+    pub name: SharedString,
+    pub create_sample_services: bool
+}
+
 impl Workspace {
     pub fn new(name: impl Into<SharedString>) -> Self {
         let now = chrono::Utc::now().timestamp();
