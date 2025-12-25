@@ -7899,6 +7899,9 @@ dependencies = [
  "gpui",
  "log",
  "models",
+ "serde",
+ "serde_json",
+ "serde_yaml",
  "storage",
  "uuid",
 ]

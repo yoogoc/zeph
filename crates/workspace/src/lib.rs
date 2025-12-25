@@ -1,9 +1,12 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
+use log::error;
 use models::{CreateWorkspace, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
 use std::sync::Arc;
 use storage::{Database, FolderStore, SchemaStore, ServiceStore, WorkspaceStore};
 use uuid::Uuid;
-use log::error;
+
+mod openapi;
+pub use openapi::{parse_openapi, ImportResult, OpenApiSpec};
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceEvent;
@@ -324,5 +327,40 @@ impl WorkspaceRegistry {
     pub fn get_service(&self, service_id: Uuid) -> Option<&Service> {
         self.get_active_workspace()
             .and_then(|w| w.services.iter().find(|s| s.id == service_id))
+    }
+
+    // === OpenAPI Import ===
+
+    pub fn import_openapi(&mut self, content: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        let workspace_id = match self.get_active_workspace() {
+            Some(w) => w.id,
+            None => return Err(anyhow::anyhow!("No active workspace")),
+        };
+
+        let spec = openapi::parse_openapi(content)?;
+        let result = openapi::import_openapi(workspace_id, &spec)?;
+
+        let folder_store = FolderStore::new(self.db.conn());
+        let service_store = ServiceStore::new(self.db.conn());
+        let schema_store = SchemaStore::new(self.db.conn());
+
+        for folder in &result.folders {
+            folder_store.insert(folder).ok();
+        }
+        for service in &result.services {
+            service_store.insert(service).ok();
+        }
+        for schema in &result.schemas {
+            schema_store.insert(schema).ok();
+        }
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            workspace.folders.extend(result.folders);
+            workspace.services.extend(result.services);
+            workspace.schemas.extend(result.schemas);
+        }
+
+        cx.emit(WorkspaceEvent);
+        Ok(())
     }
 }

@@ -41,6 +41,7 @@ impl WorkspaceContent {
             WorkspaceSidebarEvent::CreateSchema(name, folder_id) => this.create_schema(name.clone(), *folder_id, cx),
             WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx),
             WorkspaceSidebarEvent::ToggleFolder(id) => this.toggle_folder(*id, cx),
+            WorkspaceSidebarEvent::ImportOpenApi(content) => this.import_openapi(content.clone(), cx),
         });
 
         let registry = workspace::WorkspaceRegistry::global(cx);
@@ -55,6 +56,15 @@ impl WorkspaceContent {
         self.view = view;
         self.workspace_id = workspace_id;
         cx.notify();
+    }
+
+    fn import_openapi(&mut self, content: String, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            if let Err(e) = registry.import_openapi(&content, cx) {
+                eprintln!("Failed to import OpenAPI: {}", e);
+            }
+        });
     }
 
     fn create_service(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {

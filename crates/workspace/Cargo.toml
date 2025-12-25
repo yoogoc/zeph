@@ -13,3 +13,6 @@ anyhow.workspace = true
 chrono.workspace = true
 dirs = "5"
 log = "0.4.29"
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"

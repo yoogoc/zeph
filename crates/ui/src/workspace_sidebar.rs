@@ -15,6 +15,7 @@ pub enum WorkspaceSidebarEvent {
     CreateSchema(String, Option<Uuid>),
     CreateFolder(String, Option<Uuid>, FolderType),
     ToggleFolder(Uuid),
+    ImportOpenApi(String),
 }
 
 pub struct WorkspaceSidebar {
@@ -119,6 +120,34 @@ impl WorkspaceSidebar {
                         if let Some(this) = this_clone.upgrade() {
                             this.update(cx, |_, cx| {
                                 cx.emit(WorkspaceSidebarEvent::CreateFolder(name, None, ft.clone()));
+                            });
+                        }
+                    }
+                    window.close_dialog(cx);
+                    true
+                })
+        });
+    }
+
+    fn open_import_openapi_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let this = cx.entity().downgrade();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Paste OpenAPI JSON or YAML URL or content..."));
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input_clone = input.clone();
+            let this_clone = this.clone();
+
+            dialog
+                .title("Import OpenAPI")
+                .w(px(500.0))
+                .confirm()
+                .child(Input::new(&input).w_full())
+                .on_ok(move |_, window, cx| {
+                    let content = input_clone.read(cx).value().to_string();
+                    if !content.trim().is_empty() {
+                        if let Some(this) = this_clone.upgrade() {
+                            this.update(cx, |_, cx| {
+                                cx.emit(WorkspaceSidebarEvent::ImportOpenApi(content));
                             });
                         }
                     }
@@ -344,6 +373,12 @@ impl Render for WorkspaceSidebar {
                                                     .item(PopupMenuItem::new("Add Folder").on_click(
                                                         window.listener_for(&view, |this, _, window, cx| {
                                                             this.open_create_folder_dialog(FolderType::Service, window, cx);
+                                                        }),
+                                                    ))
+                                                    .separator()
+                                                    .item(PopupMenuItem::new("Import OpenAPI").on_click(
+                                                        window.listener_for(&view, |this, _, window, cx| {
+                                                            this.open_import_openapi_dialog(window, cx);
                                                         }),
                                                     ))
                                                 }
