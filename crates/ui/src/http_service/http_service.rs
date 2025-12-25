@@ -1,6 +1,7 @@
 use super::request_body::BodyType;
 use super::request_panel::{RequestPanel, RequestPanelEvent};
 use super::response_panel::ResponsePanel;
+use super::url_utils;
 use futures::StreamExt;
 use gpui::*;
 use gpui_component::input::{InputState, TabSize};
@@ -17,12 +18,15 @@ pub struct HttpService {
     request_panel: Entity<RequestPanel>,
     response_panel: Entity<ResponsePanel>,
     is_loading: bool,
+    base_url: String,
+    use_base_url: bool,
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
 
 impl HttpService {
-    pub fn new(config: HttpConfig, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(config: HttpConfig, base_url: Option<String>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let url = config.path.clone();
+        let use_base_url = config.use_base_url;
         let url = cx.new(|cx| InputState::new(window, cx).default_value(&url));
         let response = cx.new(|cx| {
             InputState::new(window, cx)
@@ -48,7 +52,7 @@ impl HttpService {
             ResponsePanel::new(response.clone(), response_headers.clone(), request_info.clone())
         });
         let request_panel =
-            cx.new(|cx| RequestPanel::new(config.method.clone(), url.clone(), window, cx));
+            cx.new(|cx| RequestPanel::new(config.method.clone(), url.clone(), use_base_url, base_url.clone().unwrap_or_default(), window, cx));
 
         let subscription = cx.subscribe_in(&request_panel, window, |this, _, event, window, cx| {
             match event {
@@ -65,6 +69,9 @@ impl HttpService {
                 RequestPanelEvent::MethodChanged(_) => {
                     // Method is managed by MethodSelector, no action needed here
                 }
+                RequestPanelEvent::ToggleBaseUrl => {
+                    this.toggle_use_base_url(cx);
+                }
             }
         });
 
@@ -76,8 +83,35 @@ impl HttpService {
             request_panel,
             response_panel,
             is_loading: false,
+            base_url: base_url.unwrap_or_default(),
+            use_base_url,
             _subscriptions: smallvec![subscription],
         }
+    }
+
+    /// Updates the base_url when the environment changes
+    pub fn set_base_url(&mut self, base_url: String, cx: &mut Context<Self>) {
+        self.base_url = base_url.clone();
+        self.request_panel.update(cx, |panel, _cx| {
+            panel.set_base_url(base_url);
+        });
+        cx.notify();
+    }
+
+    /// Toggles the use_base_url mode
+    pub fn toggle_use_base_url(&mut self, cx: &mut Context<Self>) {
+        self.use_base_url = !self.use_base_url;
+        let use_base_url = self.use_base_url;
+        self.request_panel.update(cx, |panel, _cx| {
+            panel.set_use_base_url(use_base_url);
+        });
+        cx.notify();
+    }
+
+    /// Gets the final URL by resolving base_url and user-entered path
+    pub fn final_url(&self, cx: &Context<Self>) -> String {
+        let path = self.url.read(cx).value().to_string();
+        url_utils::resolve_url(&self.base_url, &path, self.use_base_url)
     }
 
     fn update_content_type_header(
@@ -114,13 +148,18 @@ impl HttpService {
         self.response_headers
             .update(cx, |state, cx| state.set_value("", window, cx));
 
-        let url = self.url.read(cx).value().to_string();
+        let user_entered_url = self.url.read(cx).value().to_string();
+        let url = self.final_url(cx);
         let method = self.request_panel.read(cx).method(cx);
         let headers = self.request_panel.read(cx).headers(cx);
         let body = self.request_panel.read(cx).body(cx);
 
-        // Build request info
-        let mut request_info_text = format!("{:?} {}\n\n", method, url);
+        // Build request info with final URL and base_url usage indicator
+        let mut request_info_text = format!("{:?} {}\n", method, url);
+        if self.use_base_url && !self.base_url.is_empty() && !url_utils::is_absolute_url(&user_entered_url) {
+            request_info_text.push_str(&format!("(Base URL: {})\n", self.base_url));
+        }
+        request_info_text.push('\n');
         for h in &headers {
             request_info_text.push_str(&format!("{}: {}\n", h.key, h.value));
         }

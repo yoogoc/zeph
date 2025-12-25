@@ -295,6 +295,12 @@ pub struct HttpConfig {
     pub request_body: Option<RequestBody>,
     pub responses: Vec<Response>,
     pub security: Vec<String>,
+    #[serde(default = "default_use_base_url")]
+    pub use_base_url: bool,
+}
+
+fn default_use_base_url() -> bool {
+    true
 }
 
 impl Default for HttpConfig {
@@ -306,6 +312,7 @@ impl Default for HttpConfig {
             request_body: None,
             responses: vec![],
             security: vec![],
+            use_base_url: default_use_base_url(),
         }
     }
 }

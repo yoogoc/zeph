@@ -238,6 +238,7 @@ pub fn import_openapi(workspace_id: Uuid, spec: &OpenApiSpec) -> Result<ImportRe
                         request_body,
                         responses,
                         security: vec![],
+                        use_base_url: true,
                     }),
                 );
                 service.folder_id = folder_id;

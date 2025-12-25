@@ -76,6 +76,9 @@ impl WorkspaceContent {
     fn select_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.set_active_environment(env_id, cx));
+        
+        // Update base_url for all existing HttpService instances
+        self.update_http_services_base_url(cx);
     }
 
     fn create_environment(&mut self, name: String, cx: &mut Context<Self>) {
@@ -86,11 +89,17 @@ impl WorkspaceContent {
     fn update_environment(&mut self, env: models::Environment, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.update_environment(env, cx));
+        
+        // Update base_url for all existing HttpService instances if the active environment was updated
+        self.update_http_services_base_url(cx);
     }
 
     fn delete_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.delete_environment(env_id, cx));
+        
+        // Update base_url for all existing HttpService instances (in case the deleted env was active)
+        self.update_http_services_base_url(cx);
     }
 
     fn add_variable(&mut self, env_id: Uuid, var: models::EnvironmentVariable, cx: &mut Context<Self>) {
@@ -106,6 +115,27 @@ impl WorkspaceContent {
     fn delete_variable(&mut self, var_id: Uuid, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.delete_environment_variable(var_id, cx));
+    }
+
+    /// Updates the base_url for all existing HttpService instances when the environment changes
+    fn update_http_services_base_url(&mut self, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        let workspace = registry.read(cx).get_active_workspace().cloned();
+        
+        if let Some(workspace) = workspace {
+            // Get base_url from active environment
+            let base_url = workspace.active_environment_id
+                .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
+                .map(|env| env.base_url.clone())
+                .unwrap_or_default();
+            
+            // Update all existing HttpService instances
+            for http_service in self.http_services.values() {
+                http_service.update(cx, |service, cx| {
+                    service.set_base_url(base_url.clone(), cx);
+                });
+            }
+        }
     }
 
     fn import_openapi(&mut self, content: String, cx: &mut Context<Self>) {
@@ -182,13 +212,18 @@ impl WorkspaceContent {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
+        // Get base_url from active environment
+        let base_url = workspace.active_environment_id
+            .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
+            .map(|env| env.base_url.clone());
+
         if let Some(active_service_id) = workspace.active_service {
             if let Some(service) = workspace.services.iter().find(|s| s.id == active_service_id) {
                 match &service.service_type {
                     ServiceType::Http(config) => {
                         if !self.http_services.contains_key(&service.id) {
                             let http_service =
-                                cx.new(|cx| HttpService::new(config.clone(), window, cx));
+                                cx.new(|cx| HttpService::new(config.clone(), base_url.clone(), window, cx));
                             self.http_services.insert(service.id, http_service);
                         }
                         self.http_services
