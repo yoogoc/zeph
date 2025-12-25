@@ -178,6 +178,7 @@ impl WorkspaceRegistry {
             if workspace.services.is_empty() && workspace.folders.is_empty() {
                 let folder_store = FolderStore::new(self.db.conn());
                 let service_store = ServiceStore::new(self.db.conn());
+                let schema_store = SchemaStore::new(self.db.conn());
                 let env_store = EnvironmentStore::new(self.db.conn());
                 let var_store = EnvironmentVariableStore::new(self.db.conn());
 
@@ -185,6 +186,9 @@ impl WorkspaceRegistry {
                     .list_by_workspace(workspace_id)
                     .unwrap_or_default();
                 workspace.services = service_store
+                    .list_by_workspace(workspace_id)
+                    .unwrap_or_default();
+                workspace.schemas = schema_store
                     .list_by_workspace(workspace_id)
                     .unwrap_or_default();
                 workspace.environments = env_store
@@ -359,18 +363,27 @@ impl WorkspaceRegistry {
         let spec = openapi::parse_openapi(content)?;
         let result = openapi::import_openapi(workspace_id, &spec)?;
 
+        log::info!("Importing {} folders, {} services, {} schemas", 
+            result.folders.len(), result.services.len(), result.schemas.len());
+
         let folder_store = FolderStore::new(self.db.conn());
         let service_store = ServiceStore::new(self.db.conn());
         let schema_store = SchemaStore::new(self.db.conn());
 
         for folder in &result.folders {
-            folder_store.insert(folder).ok();
+            if let Err(e) = folder_store.insert(folder) {
+                error!("Failed to insert folder {}: {}", folder.name, e);
+            }
         }
         for service in &result.services {
-            service_store.insert(service).ok();
+            if let Err(e) = service_store.insert(service) {
+                error!("Failed to insert service {}: {}", service.name, e);
+            }
         }
         for schema in &result.schemas {
-            schema_store.insert(schema).ok();
+            if let Err(e) = schema_store.insert(schema) {
+                error!("Failed to insert schema {}: {}", schema.name, e);
+            }
         }
 
         if let Some(workspace) = self.get_active_workspace_mut() {

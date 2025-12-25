@@ -22,8 +22,7 @@ CREATE TABLE IF NOT EXISTS folders (
     updated_at INTEGER NOT NULL,
     sync_version INTEGER DEFAULT 0,
     source TEXT DEFAULT 'local',
-    deleted INTEGER DEFAULT 0,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+    deleted INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS services (
@@ -40,9 +39,7 @@ CREATE TABLE IF NOT EXISTS services (
     updated_at INTEGER NOT NULL,
     sync_version INTEGER DEFAULT 0,
     source TEXT DEFAULT 'local',
-    deleted INTEGER DEFAULT 0,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-    FOREIGN KEY (folder_id) REFERENCES folders(id)
+    deleted INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS schemas (
@@ -59,9 +56,7 @@ CREATE TABLE IF NOT EXISTS schemas (
     updated_at INTEGER NOT NULL,
     sync_version INTEGER DEFAULT 0,
     source TEXT DEFAULT 'local',
-    deleted INTEGER DEFAULT 0,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id),
-    FOREIGN KEY (folder_id) REFERENCES folders(id)
+    deleted INTEGER DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_folders_workspace ON folders(workspace_id);
@@ -79,8 +74,7 @@ CREATE TABLE IF NOT EXISTS environments (
     updated_at INTEGER NOT NULL,
     sync_version INTEGER DEFAULT 0,
     source TEXT DEFAULT 'local',
-    deleted INTEGER DEFAULT 0,
-    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+    deleted INTEGER DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS environment_variables (
@@ -92,8 +86,7 @@ CREATE TABLE IF NOT EXISTS environment_variables (
     local_value TEXT,
     description TEXT,
     created_at INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    FOREIGN KEY (environment_id) REFERENCES environments(id)
+    updated_at INTEGER NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_environments_workspace ON environments(workspace_id);
