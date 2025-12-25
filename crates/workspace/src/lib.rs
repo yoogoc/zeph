@@ -1,8 +1,8 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
 use log::error;
-use models::{CreateWorkspace, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
+use models::{CreateWorkspace, Environment, EnvironmentVariable, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
 use std::sync::Arc;
-use storage::{Database, FolderStore, SchemaStore, ServiceStore, WorkspaceStore};
+use storage::{Database, EnvironmentStore, EnvironmentVariableStore, FolderStore, SchemaStore, ServiceStore, WorkspaceStore};
 use uuid::Uuid;
 
 mod openapi;
@@ -178,6 +178,8 @@ impl WorkspaceRegistry {
             if workspace.services.is_empty() && workspace.folders.is_empty() {
                 let folder_store = FolderStore::new(self.db.conn());
                 let service_store = ServiceStore::new(self.db.conn());
+                let env_store = EnvironmentStore::new(self.db.conn());
+                let var_store = EnvironmentVariableStore::new(self.db.conn());
 
                 workspace.folders = folder_store
                     .list_by_workspace(workspace_id)
@@ -185,6 +187,23 @@ impl WorkspaceRegistry {
                 workspace.services = service_store
                     .list_by_workspace(workspace_id)
                     .unwrap_or_default();
+                workspace.environments = env_store
+                    .list_by_workspace(workspace_id)
+                    .unwrap_or_default();
+
+                // Load variables for each environment
+                for env in &mut workspace.environments {
+                    env.variables = var_store.list_by_environment(env.id).unwrap_or_default();
+                }
+
+                // Set default environment as active
+                if workspace.active_environment_id.is_none() {
+                    workspace.active_environment_id = workspace.environments
+                        .iter()
+                        .find(|e| e.is_default)
+                        .or(workspace.environments.first())
+                        .map(|e| e.id);
+                }
             }
         }
     }
@@ -362,5 +381,109 @@ impl WorkspaceRegistry {
 
         cx.emit(WorkspaceEvent);
         Ok(())
+    }
+
+    // === Environment Operations ===
+
+    pub fn create_environment(&mut self, name: String, cx: &mut Context<Self>) {
+        let workspace_id = match self.get_active_workspace() {
+            Some(w) => w.id,
+            None => return,
+        };
+
+        let env = Environment::new(workspace_id, &name);
+        let env_store = EnvironmentStore::new(self.db.conn());
+        env_store.insert(&env).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            let is_first = workspace.environments.is_empty();
+            workspace.environments.push(env.clone());
+            if is_first {
+                workspace.active_environment_id = Some(env.id);
+            }
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn update_environment(&mut self, env: Environment, cx: &mut Context<Self>) {
+        let env_store = EnvironmentStore::new(self.db.conn());
+        env_store.update(&env).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            if let Some(existing) = workspace.environments.iter_mut().find(|e| e.id == env.id) {
+                existing.name = env.name;
+                existing.base_url = env.base_url;
+                existing.is_default = env.is_default;
+            }
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn delete_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
+        let env_store = EnvironmentStore::new(self.db.conn());
+        env_store.delete(env_id).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            workspace.environments.retain(|e| e.id != env_id);
+            if workspace.active_environment_id == Some(env_id) {
+                workspace.active_environment_id = workspace.environments.first().map(|e| e.id);
+            }
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn set_active_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            workspace.active_environment_id = Some(env_id);
+            cx.emit(WorkspaceEvent);
+        }
+    }
+
+    pub fn get_active_environment(&self) -> Option<&Environment> {
+        self.get_active_workspace().and_then(|w| {
+            w.active_environment_id
+                .and_then(|id| w.environments.iter().find(|e| e.id == id))
+        })
+    }
+
+    // === Environment Variable Operations ===
+
+    pub fn add_environment_variable(&mut self, env_id: Uuid, var: EnvironmentVariable, cx: &mut Context<Self>) {
+        let var_store = EnvironmentVariableStore::new(self.db.conn());
+        var_store.insert(&var).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            if let Some(env) = workspace.environments.iter_mut().find(|e| e.id == env_id) {
+                env.variables.push(var);
+            }
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn update_environment_variable(&mut self, var: EnvironmentVariable, cx: &mut Context<Self>) {
+        let var_store = EnvironmentVariableStore::new(self.db.conn());
+        var_store.update(&var).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            for env in &mut workspace.environments {
+                if let Some(existing) = env.variables.iter_mut().find(|v| v.id == var.id) {
+                    *existing = var.clone();
+                    break;
+                }
+            }
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn delete_environment_variable(&mut self, var_id: Uuid, cx: &mut Context<Self>) {
+        let var_store = EnvironmentVariableStore::new(self.db.conn());
+        var_store.delete(var_id).ok();
+
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            for env in &mut workspace.environments {
+                env.variables.retain(|v| v.id != var_id);
+            }
+        }
+        cx.emit(WorkspaceEvent);
     }
 }

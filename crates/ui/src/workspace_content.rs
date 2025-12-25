@@ -1,4 +1,4 @@
-use crate::{HttpService, ServiceTabs, ServiceTabsEvent, WorkspaceSidebar, WorkspaceSidebarEvent};
+use crate::{EnvironmentSelector, EnvironmentSelectorEvent, HttpService, ServiceTabs, ServiceTabsEvent, WorkspaceSidebar, WorkspaceSidebarEvent};
 use gpui::*;
 use gpui_component::StyledExt;
 use models::{ServiceType, Workspace, WorkspaceView};
@@ -10,6 +10,7 @@ pub struct WorkspaceContent {
     http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
     service_tabs: Option<Entity<ServiceTabs>>,
     sidebar: Option<Entity<WorkspaceSidebar>>,
+    env_selector: Option<Entity<EnvironmentSelector>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -21,6 +22,7 @@ impl WorkspaceContent {
             http_services: std::collections::HashMap::new(),
             service_tabs: None,
             sidebar: None,
+            env_selector: None,
             _subscriptions: vec![],
         }
     }
@@ -28,6 +30,7 @@ impl WorkspaceContent {
     pub fn init(&mut self, cx: &mut Context<Self>) {
         let service_tabs = cx.new(|_| ServiceTabs::new());
         let sidebar = cx.new(|_| WorkspaceSidebar::new());
+        let env_selector = cx.new(|_| EnvironmentSelector::new());
 
         let tabs_sub = cx.subscribe(&service_tabs, |this, _, event, cx| match event {
             ServiceTabsEvent::Select(id) => this.set_active_service(*id, cx),
@@ -36,7 +39,7 @@ impl WorkspaceContent {
 
         let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
             WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
-            WorkspaceSidebarEvent::OpenSchema(_id) => {} // TODO: implement schema editor
+            WorkspaceSidebarEvent::OpenSchema(_id) => {}
             WorkspaceSidebarEvent::CreateService(name, folder_id) => this.create_service(name.clone(), *folder_id, cx),
             WorkspaceSidebarEvent::CreateSchema(name, folder_id) => this.create_schema(name.clone(), *folder_id, cx),
             WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx),
@@ -44,18 +47,65 @@ impl WorkspaceContent {
             WorkspaceSidebarEvent::ImportOpenApi(content) => this.import_openapi(content.clone(), cx),
         });
 
+        let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
+            EnvironmentSelectorEvent::SelectEnvironment(id) => this.select_environment(*id, cx),
+            EnvironmentSelectorEvent::CreateEnvironment(name) => this.create_environment(name.clone(), cx),
+            EnvironmentSelectorEvent::UpdateEnvironment(env) => this.update_environment(env.clone(), cx),
+            EnvironmentSelectorEvent::DeleteEnvironment(id) => this.delete_environment(*id, cx),
+            EnvironmentSelectorEvent::AddVariable(env_id, var) => this.add_variable(*env_id, var.clone(), cx),
+            EnvironmentSelectorEvent::UpdateVariable(var) => this.update_variable(var.clone(), cx),
+            EnvironmentSelectorEvent::DeleteVariable(id) => this.delete_variable(*id, cx),
+        });
+
         let registry = workspace::WorkspaceRegistry::global(cx);
         let registry_sub = cx.observe(&registry, |_, _, cx| cx.notify());
 
         self.service_tabs = Some(service_tabs);
         self.sidebar = Some(sidebar);
-        self._subscriptions = vec![tabs_sub, sidebar_sub, registry_sub];
+        self.env_selector = Some(env_selector);
+        self._subscriptions = vec![tabs_sub, sidebar_sub, env_sub, registry_sub];
     }
 
     pub fn set_view(&mut self, view: WorkspaceView, workspace_id: Option<Uuid>, cx: &mut Context<Self>) {
         self.view = view;
         self.workspace_id = workspace_id;
         cx.notify();
+    }
+
+    // Environment operations
+    fn select_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.set_active_environment(env_id, cx));
+    }
+
+    fn create_environment(&mut self, name: String, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.create_environment(name, cx));
+    }
+
+    fn update_environment(&mut self, env: models::Environment, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.update_environment(env, cx));
+    }
+
+    fn delete_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.delete_environment(env_id, cx));
+    }
+
+    fn add_variable(&mut self, env_id: Uuid, var: models::EnvironmentVariable, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.add_environment_variable(env_id, var, cx));
+    }
+
+    fn update_variable(&mut self, var: models::EnvironmentVariable, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.update_environment_variable(var, cx));
+    }
+
+    fn delete_variable(&mut self, var_id: Uuid, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.delete_environment_variable(var_id, cx));
     }
 
     fn import_openapi(&mut self, content: String, cx: &mut Context<Self>) {
@@ -186,6 +236,9 @@ impl WorkspaceContent {
             if let Some(tabs) = &self.service_tabs {
                 tabs.update(cx, |t, _| t.set_workspace(workspace.clone()));
             }
+            if let Some(env_sel) = &self.env_selector {
+                env_sel.update(cx, |e, _| e.set_workspace(workspace.clone()));
+            }
 
             div()
                 .h_flex()
@@ -196,7 +249,21 @@ impl WorkspaceContent {
                         .flex_1()
                         .h_full()
                         .v_flex()
-                        .children(self.service_tabs.clone())
+                        .child(
+                            // Tabs row with environment selector
+                            div()
+                                .h_flex()
+                                .items_center()
+                                .justify_between()
+                                .border_b_1()
+                                .border_color(gpui::rgb(0xe0e0e0))
+                                .child(
+                                    div().flex_1().children(self.service_tabs.clone())
+                                )
+                                .child(
+                                    div().px_2().children(self.env_selector.clone())
+                                )
+                        )
                         .child(self.render_service_content(&workspace, window, cx)),
                 )
         } else {

@@ -67,4 +67,35 @@ CREATE TABLE IF NOT EXISTS schemas (
 CREATE INDEX IF NOT EXISTS idx_folders_workspace ON folders(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_services_workspace ON services(workspace_id);
 CREATE INDEX IF NOT EXISTS idx_schemas_workspace ON schemas(workspace_id);
+
+CREATE TABLE IF NOT EXISTS environments (
+    id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    base_url TEXT DEFAULT '',
+    is_default INTEGER DEFAULT 0,
+    sort_order INTEGER DEFAULT 0,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    sync_version INTEGER DEFAULT 0,
+    source TEXT DEFAULT 'local',
+    deleted INTEGER DEFAULT 0,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id)
+);
+
+CREATE TABLE IF NOT EXISTS environment_variables (
+    id TEXT PRIMARY KEY,
+    environment_id TEXT NOT NULL,
+    name TEXT NOT NULL,
+    var_type TEXT DEFAULT 'default',
+    remote_value TEXT,
+    local_value TEXT,
+    description TEXT,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (environment_id) REFERENCES environments(id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_environments_workspace ON environments(workspace_id);
+CREATE INDEX IF NOT EXISTS idx_env_vars_environment ON environment_variables(environment_id);
 "#;

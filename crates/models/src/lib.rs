@@ -61,6 +61,8 @@ pub struct Workspace {
     pub services: Vec<Service>,
     #[serde(skip)]
     pub schemas: Vec<Schema>,
+    #[serde(skip)]
+    pub environments: Vec<Environment>,
 
     // Runtime state
     #[serde(skip)]
@@ -68,7 +70,85 @@ pub struct Workspace {
     #[serde(skip)]
     pub active_service: Option<Uuid>,
     #[serde(skip)]
+    pub active_environment_id: Option<Uuid>,
+    #[serde(skip)]
     pub current_view: WorkspaceView,
+}
+
+// === Environment ===
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Environment {
+    pub id: Uuid,
+    pub workspace_id: Uuid,
+    pub name: SharedString,
+    pub base_url: String,
+    pub is_default: bool,
+    pub sort_order: i32,
+    pub created_at: i64,
+    pub updated_at: i64,
+    #[serde(default)]
+    pub sync: SyncMeta,
+    #[serde(skip)]
+    pub variables: Vec<EnvironmentVariable>,
+}
+
+impl Environment {
+    pub fn new(workspace_id: Uuid, name: impl Into<SharedString>) -> Self {
+        let now = chrono::Utc::now().timestamp();
+        Self {
+            id: Uuid::new_v4(),
+            workspace_id,
+            name: name.into(),
+            base_url: String::new(),
+            is_default: false,
+            sort_order: 0,
+            created_at: now,
+            updated_at: now,
+            sync: SyncMeta::default(),
+            variables: vec![],
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EnvironmentVariable {
+    pub id: Uuid,
+    pub environment_id: Uuid,
+    pub name: SharedString,
+    pub var_type: VariableType,
+    pub remote_value: Option<String>,
+    pub local_value: Option<String>,
+    pub description: Option<String>,
+    pub created_at: i64,
+    pub updated_at: i64,
+}
+
+impl EnvironmentVariable {
+    pub fn new(environment_id: Uuid, name: impl Into<SharedString>) -> Self {
+        let now = chrono::Utc::now().timestamp();
+        Self {
+            id: Uuid::new_v4(),
+            environment_id,
+            name: name.into(),
+            var_type: VariableType::Default,
+            remote_value: None,
+            local_value: None,
+            description: None,
+            created_at: now,
+            updated_at: now,
+        }
+    }
+
+    pub fn value(&self) -> Option<&str> {
+        self.local_value.as_deref().or(self.remote_value.as_deref())
+    }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub enum VariableType {
+    #[default]
+    Default,
+    Secret,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -90,8 +170,10 @@ impl Workspace {
             folders: vec![],
             services: vec![],
             schemas: vec![],
+            environments: vec![],
             opened_services: vec![],
             active_service: None,
+            active_environment_id: None,
             current_view: WorkspaceView::default(),
         }
     }

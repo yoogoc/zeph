@@ -1,3 +1,4 @@
+mod environment_selector;
 mod home_page;
 mod http_service;
 mod service_tabs;
@@ -7,6 +8,7 @@ mod workspace_area;
 mod workspace_content;
 mod workspace_sidebar;
 
+pub use environment_selector::*;
 pub use home_page::*;
 pub use http_service::*;
 pub use service_tabs::*;
