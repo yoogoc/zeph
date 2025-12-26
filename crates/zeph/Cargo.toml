@@ -19,7 +19,7 @@ models = { path = "../models" }
 workspace = { path = "../workspace" }
 
 [package.metadata.bundle]
-icon = ["resources/app-icon.png"]
+icon = ["resources/app-icon*.png"]
 identifier = "dev.yoogo.Zeph"
 name = "Zeph"
 #osx_minimum_system_version = "10.15.7"
@@ -33,3 +33,10 @@ osx_url_schemes = ["zeph"]
 ##osx_minimum_system_version = "10.15.7"
 ##osx_info_plist_exts = ["resources/info/*"]
 #osx_url_schemes = ["zeph"]
+
+[package.metadata.packager]
+before-packaging-command = "cargo build --release"
+product-name = "Zeph"
+identifier = "dev.yoogo.Zeph"
+resources = ["Cargo.toml", "src", "resources"]
+icons = ["resources/app-icon*.png"]
