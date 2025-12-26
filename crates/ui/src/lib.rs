@@ -1,6 +1,8 @@
 mod environment_selector;
+mod folder_selector;
 mod home_page;
 mod http_service;
+mod import_dialog;
 mod service_tabs;
 mod sidebar;
 mod title_bar;
@@ -9,8 +11,10 @@ mod workspace_content;
 mod workspace_sidebar;
 
 pub use environment_selector::*;
+pub use folder_selector::*;
 pub use home_page::*;
 pub use http_service::*;
+pub use import_dialog::*;
 pub use service_tabs::*;
 pub use sidebar::*;
 pub use title_bar::*;

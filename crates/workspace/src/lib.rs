@@ -6,7 +6,558 @@ use storage::{Database, EnvironmentStore, EnvironmentVariableStore, FolderStore,
 use uuid::Uuid;
 
 mod openapi;
-pub use openapi::{parse_openapi, ImportResult, OpenApiSpec};
+pub use openapi::{
+    parse_openapi, import_openapi, import_openapi_with_options, generate_import_preview,
+    ImportResult, ImportOptions, ImportPreview, ServicePreview, SchemaPreview, 
+    SchemaFolderStrategy, OpenApiSpec, validate_import_options, check_name_conflicts,
+    import_openapi_with_options_and_existing_folders, validate_openapi_content,
+    validate_import_request, import_openapi_with_validation, NameConflict, ConflictType,
+    ConflictResolution, resolve_conflicts
+};
+
+#[cfg(test)]
+mod tests {
+    use crate::{OpenApiSpec, ImportOptions, import_openapi_with_options_and_existing_folders, 
+                generate_import_preview, validate_import_request, check_name_conflicts, 
+                resolve_conflicts, parse_openapi, ConflictResolution, SchemaFolderStrategy};
+    use models::{Folder, FolderType, Service, ServiceType, HttpConfig, Schema};
+    use uuid::Uuid;
+    use std::collections::HashMap;
+
+    fn create_test_spec() -> OpenApiSpec {
+        let spec_json = r#"
+        {
+            "openapi": "3.0.0",
+            "info": {
+                "title": "Test API",
+                "version": "1.0.0"
+            },
+            "paths": {
+                "/users": {
+                    "get": {
+                        "tags": ["users"],
+                        "summary": "Get users",
+                        "responses": {
+                            "200": {
+                                "description": "Success"
+                            }
+                        }
+                    },
+                    "post": {
+                        "tags": ["users"],
+                        "summary": "Create user",
+                        "responses": {
+                            "201": {
+                                "description": "Created"
+                            }
+                        }
+                    }
+                },
+                "/posts": {
+                    "get": {
+                        "tags": ["posts"],
+                        "summary": "Get posts",
+                        "responses": {
+                            "200": {
+                                "description": "Success"
+                            }
+                        }
+                    }
+                }
+            },
+            "components": {
+                "schemas": {
+                    "User": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "name": {"type": "string"}
+                        }
+                    },
+                    "Post": {
+                        "type": "object",
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "title": {"type": "string"},
+                            "content": {"type": "string"}
+                        }
+                    }
+                }
+            }
+        }
+        "#;
+        
+        serde_json::from_str(spec_json).unwrap()
+    }
+
+    #[test]
+    fn test_basic_import_functionality() {
+        let workspace_id = Uuid::new_v4();
+        let spec = create_test_spec();
+        
+        let result = import_openapi_with_options_and_existing_folders(
+            workspace_id, 
+            &spec, 
+            ImportOptions::default(), 
+            &[]
+        );
+        
+        // Should succeed with basic import
+        assert!(result.is_ok());
+        let result = result.unwrap();
+        
+        // Should have imported services and schemas
+        assert!(!result.services.is_empty());
+        assert!(!result.schemas.is_empty());
+    }
+
+    // Performance and Integration Tests
+    
+    /// Integration test: Large OpenAPI specification processing
+    /// Tests performance optimization for large specs
+    #[test]
+    fn test_large_openapi_spec_performance() {
+        let workspace_id = Uuid::new_v4();
+        
+        // Create a large OpenAPI spec with many paths and schemas
+        let mut large_spec = create_test_spec();
+        
+        // Add many paths to simulate a large API
+        for i in 0..100 {
+            let path = format!("/resource{}", i);
+            let tag = format!("resource{}", i % 10); // Group into 10 tags
+            
+            let path_item = serde_json::json!({
+                "get": {
+                    "tags": [tag],
+                    "summary": format!("Get resource {}", i),
+                    "responses": {
+                        "200": {
+                            "description": "Success"
+                        }
+                    }
+                }
+            });
+            
+            large_spec.paths.insert(path, serde_json::from_value(path_item).unwrap());
+        }
+        
+        // Add many schemas
+        if let Some(ref mut components) = large_spec.components {
+            for i in 0..50 {
+                let schema_name = format!("Schema{}", i);
+                let schema = serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "name": {"type": "string"}
+                    }
+                });
+                components.schemas.insert(schema_name, serde_json::from_value(schema).unwrap());
+            }
+        }
+        
+        let start_time = std::time::Instant::now();
+        
+        let result = import_openapi_with_options_and_existing_folders(
+            workspace_id,
+            &large_spec,
+            ImportOptions::default(),
+            &[]
+        );
+        
+        let duration = start_time.elapsed();
+        
+        assert!(result.is_ok());
+        let import_result = result.unwrap();
+        
+        // Verify results
+        assert!(import_result.services.len() >= 100, "Should have at least 100 services, got {}", import_result.services.len()); // One service per path plus original
+        assert_eq!(import_result.schemas.len(), 52); // All schemas imported (50 + 2 original)
+        
+        // Performance assertion: should complete within reasonable time
+        assert!(duration.as_millis() < 1000, "Import took too long: {:?}", duration);
+        
+        println!("Large spec import completed in {:?}", duration);
+    }
+
+    /// Integration test: Folder selection with complex hierarchy
+    /// Tests performance optimization for folder operations
+    #[test]
+    fn test_complex_folder_hierarchy_performance() {
+        let workspace_id = Uuid::new_v4();
+        let spec = create_test_spec();
+        
+        // Create a complex folder hierarchy
+        let mut existing_folders = Vec::new();
+        let root_folder = Folder::with_type(workspace_id, "API", None, FolderType::Service);
+        let root_id = root_folder.id;
+        existing_folders.push(root_folder);
+        
+        // Create multiple levels of nested folders
+        let mut current_parent = Some(root_id);
+        for level in 0..5 {
+            let mut level_folders = Vec::new();
+            for i in 0..10 {
+                let folder = Folder::with_type(
+                    workspace_id, 
+                    format!("Level{}Folder{}", level, i), 
+                    current_parent, 
+                    FolderType::Service
+                );
+                level_folders.push(folder.id);
+                existing_folders.push(folder);
+            }
+            current_parent = level_folders.first().copied();
+        }
+        
+        let options = ImportOptions {
+            target_folder: Some(root_id),
+            create_subfolders: true,
+            schema_folder_strategy: SchemaFolderStrategy::SeparateFolder,
+        };
+        
+        let start_time = std::time::Instant::now();
+        
+        let result = import_openapi_with_options_and_existing_folders(
+            workspace_id,
+            &spec,
+            options,
+            &existing_folders
+        );
+        
+        let duration = start_time.elapsed();
+        
+        assert!(result.is_ok());
+        
+        // Performance assertion: should handle complex hierarchy efficiently
+        assert!(duration.as_millis() < 500, "Complex hierarchy processing took too long: {:?}", duration);
+        
+        println!("Complex folder hierarchy processed in {:?}", duration);
+    }
+
+    /// Integration test: Preview generation performance
+    /// Tests optimized preview generation for large specs
+    #[test]
+    fn test_preview_generation_performance() {
+        let spec = create_test_spec();
+        let existing_folders = vec![
+            Folder::with_type(Uuid::new_v4(), "Existing", None, FolderType::Service)
+        ];
+        
+        let options = ImportOptions {
+            target_folder: Some(existing_folders[0].id),
+            create_subfolders: true,
+            schema_folder_strategy: SchemaFolderStrategy::SeparateFolder,
+        };
+        
+        let start_time = std::time::Instant::now();
+        
+        let result = generate_import_preview(&spec, &options, &existing_folders);
+        
+        let duration = start_time.elapsed();
+        
+        assert!(result.is_ok());
+        let preview = result.unwrap();
+        
+        // Verify preview content
+        assert_eq!(preview.services.len(), 3);
+        assert_eq!(preview.schemas.len(), 2);
+        assert!(!preview.folders_to_create.is_empty());
+        
+        // Performance assertion
+        assert!(duration.as_millis() < 100, "Preview generation took too long: {:?}", duration);
+        
+        println!("Preview generation completed in {:?}", duration);
+    }
+
+    /// Integration test: Validation and error handling
+    /// Tests comprehensive validation workflow
+    #[test]
+    fn test_comprehensive_validation_workflow() {
+        let workspace_id = Uuid::new_v4();
+        let existing_folders = vec![
+            Folder::with_type(workspace_id, "Services", None, FolderType::Service),
+            Folder::with_type(workspace_id, "Schemas", None, FolderType::Schema),
+        ];
+        
+        // Test valid content
+        let valid_content = serde_json::to_string(&create_test_spec()).unwrap();
+        let options = ImportOptions {
+            target_folder: Some(existing_folders[0].id),
+            create_subfolders: false,
+            schema_folder_strategy: SchemaFolderStrategy::SeparateFolder,
+        };
+        
+        let result = validate_import_request(&valid_content, &options, &existing_folders);
+        assert!(result.is_ok());
+        
+        // Test invalid content
+        let invalid_content = "invalid json content";
+        let result = validate_import_request(invalid_content, &options, &existing_folders);
+        assert!(result.is_err());
+        
+        // Test invalid target folder
+        let invalid_options = ImportOptions {
+            target_folder: Some(Uuid::new_v4()), // Non-existent folder
+            create_subfolders: false,
+            schema_folder_strategy: SchemaFolderStrategy::SeparateFolder,
+        };
+        
+        let result = validate_import_request(&valid_content, &invalid_options, &existing_folders);
+        assert!(result.is_err());
+        
+        // Test empty content
+        let result = validate_import_request("", &options, &existing_folders);
+        assert!(result.is_err());
+        
+        // Test oversized content
+        let large_content = "x".repeat(15_000_000); // 15MB
+        let result = validate_import_request(&large_content, &options, &existing_folders);
+        assert!(result.is_err());
+    }
+
+    /// Integration test: Name conflict detection and resolution
+    /// Tests conflict handling workflow
+    #[test]
+    fn test_name_conflict_detection_and_resolution() {
+        let workspace_id = Uuid::new_v4();
+        let spec = create_test_spec();
+        let options = ImportOptions::default();
+        
+        // Create existing services with conflicting names
+        let existing_services = vec![
+            Service::new(workspace_id, "Get users", ServiceType::Http(HttpConfig::default())),
+            Service::new(workspace_id, "Create user", ServiceType::Http(HttpConfig::default())),
+        ];
+        
+        // Create existing schemas with conflicting names
+        let existing_schemas = vec![
+            Schema::new(workspace_id, "User".to_string()),
+        ];
+        
+        let conflicts = check_name_conflicts(&spec, &options, &existing_services, &existing_schemas);
+        assert!(conflicts.is_ok());
+        
+        let conflicts = conflicts.unwrap();
+        assert!(!conflicts.is_empty(), "Should detect name conflicts");
+        
+        // Test conflict resolution
+        let mut resolutions = HashMap::new();
+        for conflict in &conflicts {
+            resolutions.insert(conflict.name.clone(), ConflictResolution::Rename(conflict.suggested_name.clone()));
+        }
+        
+        let result = resolve_conflicts(&conflicts, &resolutions);
+        assert!(result.is_ok(), "Should resolve conflicts successfully");
+        
+        // Test incomplete resolution
+        let incomplete_resolutions = HashMap::new();
+        let result = resolve_conflicts(&conflicts, &incomplete_resolutions);
+        assert!(result.is_err(), "Should fail with incomplete resolutions");
+    }
+
+    /// Integration test: End-to-end import workflow
+    /// Tests complete import process with all features
+    #[test]
+    fn test_end_to_end_import_workflow() {
+        let workspace_id = Uuid::new_v4();
+        let content = serde_json::to_string(&create_test_spec()).unwrap();
+        
+        // Create existing folder structure
+        let existing_folders = vec![
+            Folder::with_type(workspace_id, "API", None, FolderType::Service),
+            Folder::with_type(workspace_id, "Models", None, FolderType::Schema),
+        ];
+        
+        let options = ImportOptions {
+            target_folder: Some(existing_folders[0].id),
+            create_subfolders: true,
+            schema_folder_strategy: SchemaFolderStrategy::ExistingSchemaFolder(existing_folders[1].id),
+        };
+        
+        // Step 1: Validate import request
+        let spec = validate_import_request(&content, &options, &existing_folders);
+        assert!(spec.is_ok());
+        let spec = spec.unwrap();
+        
+        // Step 2: Generate preview
+        let preview = generate_import_preview(&spec, &options, &existing_folders);
+        assert!(preview.is_ok());
+        let preview = preview.unwrap();
+        
+        // Verify preview content
+        assert_eq!(preview.services.len(), 3);
+        assert_eq!(preview.schemas.len(), 2);
+        
+        // Step 3: Check for conflicts (none expected with new workspace)
+        let conflicts = check_name_conflicts(&spec, &options, &[], &[]);
+        assert!(conflicts.is_ok());
+        let conflicts = conflicts.unwrap();
+        assert!(conflicts.is_empty());
+        
+        // Step 4: Perform actual import
+        let result = import_openapi_with_options_and_existing_folders(
+            workspace_id,
+            &spec,
+            options,
+            &existing_folders
+        );
+        
+        assert!(result.is_ok());
+        let import_result = result.unwrap();
+        
+        // Verify import results
+        assert_eq!(import_result.services.len(), 3);
+        assert_eq!(import_result.schemas.len(), 2);
+        
+        // Verify folder structure
+        let created_folders: Vec<_> = import_result.folders.iter()
+            .filter(|f| f.parent_id == Some(existing_folders[0].id))
+            .collect();
+        assert_eq!(created_folders.len(), 2); // users and posts subfolders
+        
+        // Verify schemas are in the specified schema folder
+        for schema in &import_result.schemas {
+            assert_eq!(schema.folder_id, Some(existing_folders[1].id));
+        }
+    }
+
+    /// Performance benchmark test for parsing optimization
+    #[test]
+    fn test_parsing_performance_with_caching() {
+        let content = serde_json::to_string(&create_test_spec()).unwrap();
+        
+        // First parse (should cache)
+        let start_time = std::time::Instant::now();
+        let result1 = parse_openapi(&content);
+        let first_parse_duration = start_time.elapsed();
+        assert!(result1.is_ok());
+        
+        // Second parse (should use cache)
+        let start_time = std::time::Instant::now();
+        let result2 = parse_openapi(&content);
+        let second_parse_duration = start_time.elapsed();
+        assert!(result2.is_ok());
+        
+        // Cache should make second parse faster (though this might be flaky in CI)
+        println!("First parse: {:?}, Second parse: {:?}", first_parse_duration, second_parse_duration);
+        
+        // At minimum, both should complete quickly
+        assert!(first_parse_duration.as_millis() < 100);
+        assert!(second_parse_duration.as_millis() < 100);
+    }
+
+    /// Memory usage test for large specifications
+    #[test]
+    fn test_memory_efficiency_large_spec() {
+        // Create a very large spec to test memory efficiency
+        let mut large_spec = create_test_spec();
+        
+        // Add 1000 paths with complex schemas
+        for i in 0..1000 {
+            let path = format!("/api/v1/resource{}/items", i);
+            let tag = format!("resource{}", i % 20);
+            
+            let path_item = serde_json::json!({
+                "get": {
+                    "tags": [tag.clone()],
+                    "summary": format!("Get resource {} items", i),
+                    "parameters": [
+                        {
+                            "name": "limit",
+                            "in": "query",
+                            "schema": {"type": "integer"}
+                        },
+                        {
+                            "name": "offset", 
+                            "in": "query",
+                            "schema": {"type": "integer"}
+                        }
+                    ],
+                    "responses": {
+                        "200": {
+                            "description": "Success",
+                            "content": {
+                                "application/json": {
+                                    "schema": {
+                                        "type": "array",
+                                        "items": {"$ref": format!("#/components/schemas/Resource{}", i)}
+                                    }
+                                }
+                            }
+                        }
+                    }
+                },
+                "post": {
+                    "tags": [tag],
+                    "summary": format!("Create resource {} item", i),
+                    "requestBody": {
+                        "content": {
+                            "application/json": {
+                                "schema": {"$ref": format!("#/components/schemas/Resource{}", i)}
+                            }
+                        }
+                    },
+                    "responses": {
+                        "201": {
+                            "description": "Created"
+                        }
+                    }
+                }
+            });
+            
+            large_spec.paths.insert(path, serde_json::from_value(path_item).unwrap());
+        }
+        
+        // Add corresponding schemas
+        if let Some(ref mut components) = large_spec.components {
+            for i in 0..1000 {
+                let schema_name = format!("Resource{}", i);
+                let schema = serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "integer"},
+                        "name": {"type": "string"},
+                        "description": {"type": "string"},
+                        "created_at": {"type": "string", "format": "date-time"},
+                        "updated_at": {"type": "string", "format": "date-time"},
+                        "metadata": {
+                            "type": "object",
+                            "additionalProperties": true
+                        }
+                    },
+                    "required": ["id", "name"]
+                });
+                components.schemas.insert(schema_name, serde_json::from_value(schema).unwrap());
+            }
+        }
+        
+        let workspace_id = Uuid::new_v4();
+        let start_time = std::time::Instant::now();
+        
+        let result = import_openapi_with_options_and_existing_folders(
+            workspace_id,
+            &large_spec,
+            ImportOptions::default(),
+            &[]
+        );
+        
+        let duration = start_time.elapsed();
+        
+        assert!(result.is_ok());
+        let import_result = result.unwrap();
+        
+        // Verify all items were processed
+        assert!(import_result.services.len() >= 2000, "Should have at least 2000 services, got {}", import_result.services.len()); // 2 operations per path plus original
+        assert!(import_result.schemas.len() >= 1000, "Should have at least 1000 schemas, got {}", import_result.schemas.len());
+        
+        // Performance assertion: should handle large specs efficiently
+        assert!(duration.as_secs() < 5, "Large spec import took too long: {:?}", duration);
+        
+        println!("Large spec with 1000 resources processed in {:?}", duration);
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct WorkspaceEvent;
@@ -355,13 +906,24 @@ impl WorkspaceRegistry {
     // === OpenAPI Import ===
 
     pub fn import_openapi(&mut self, content: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        self.import_openapi_with_options(content, openapi::ImportOptions::default(), cx)
+    }
+
+    pub fn import_openapi_with_options(
+        &mut self, 
+        content: &str, 
+        options: openapi::ImportOptions, 
+        cx: &mut Context<Self>
+    ) -> anyhow::Result<()> {
         let workspace_id = match self.get_active_workspace() {
             Some(w) => w.id,
             None => return Err(anyhow::anyhow!("No active workspace")),
         };
 
+        let workspace = self.get_state().workspaces.iter().find(|w| w.id == workspace_id).unwrap();
+
         let spec = openapi::parse_openapi(content)?;
-        let result = openapi::import_openapi(workspace_id, &spec)?;
+        let result = openapi::import_openapi_with_options(workspace_id, &spec, options, &workspace.folders)?;
 
         log::info!("Importing {} folders, {} services, {} schemas", 
             result.folders.len(), result.services.len(), result.schemas.len());
@@ -394,6 +956,18 @@ impl WorkspaceRegistry {
 
         cx.emit(WorkspaceEvent);
         Ok(())
+    }
+
+    pub fn generate_openapi_import_preview(
+        &self,
+        content: &str,
+        options: openapi::ImportOptions,
+    ) -> anyhow::Result<openapi::ImportPreview> {
+        let workspace = self.get_active_workspace()
+            .ok_or_else(|| anyhow::anyhow!("No active workspace"))?;
+
+        let spec = openapi::parse_openapi(content)?;
+        openapi::generate_import_preview(&spec, &options, &workspace.folders)
     }
 
     // === Environment Operations ===

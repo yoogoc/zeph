@@ -5,8 +5,11 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::{IconName, StyledExt, WindowExt};
 use models::{Folder, FolderType, Schema, Service, ServiceType, Workspace};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+use workspace::ConflictResolution;
+
+use crate::{ImportDialog, ImportDialogEvent, ImportConfig};
 
 pub enum WorkspaceSidebarEvent {
     OpenService(Uuid),
@@ -15,7 +18,10 @@ pub enum WorkspaceSidebarEvent {
     CreateSchema(String, Option<Uuid>),
     CreateFolder(String, Option<Uuid>, FolderType),
     ToggleFolder(Uuid),
-    ImportOpenApi(String),
+    ImportOpenApi(ImportConfig),
+    PreviewImport(ImportConfig),
+    RequestImportPreview(ImportConfig),
+    ResolveImportConflicts(ImportConfig, HashMap<String, ConflictResolution>),
 }
 
 pub struct WorkspaceSidebar {
@@ -130,27 +136,48 @@ impl WorkspaceSidebar {
     }
 
     fn open_import_openapi_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let this = cx.entity().downgrade();
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Paste OpenAPI JSON or YAML URL or content..."));
+        let _this = cx.entity().downgrade();
+        let import_dialog = cx.new(|cx| ImportDialog::new(window, cx));
+        
+        // Set available folders for the dialog
+        if let Some(workspace) = &self.workspace {
+            let service_folders: Vec<Folder> = workspace.folders
+                .iter()
+                .filter(|f| f.folder_type == FolderType::Service)
+                .cloned()
+                .collect();
+            
+            import_dialog.update(cx, |dialog, cx| {
+                dialog.set_folders(service_folders, cx);
+            });
+        }
+
+        // Subscribe to import dialog events
+        let import_dialog_clone = import_dialog.clone();
+        cx.subscribe(&import_dialog, move |_this, _dialog, event, cx| {
+            match event {
+                ImportDialogEvent::Import(config) => {
+                    cx.emit(WorkspaceSidebarEvent::ImportOpenApi(config.clone()));
+                }
+                ImportDialogEvent::RequestPreview(config) => {
+                    cx.emit(WorkspaceSidebarEvent::RequestImportPreview(config.clone()));
+                }
+                ImportDialogEvent::ResolveConflicts(config, resolutions) => {
+                    cx.emit(WorkspaceSidebarEvent::ResolveImportConflicts(config.clone(), resolutions.clone()));
+                }
+                ImportDialogEvent::Cancel => {
+                    // Dialog will be closed automatically
+                }
+            }
+        }).detach();
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input_clone = input.clone();
-            let this_clone = this.clone();
-
             dialog
                 .title("Import OpenAPI")
-                .w(px(500.0))
-                .confirm()
-                .child(Input::new(&input).w_full())
+                .w(px(700.0))
+                .max_h(px(600.0))
+                .child(import_dialog_clone.clone())
                 .on_ok(move |_, window, cx| {
-                    let content = input_clone.read(cx).value().to_string();
-                    if !content.trim().is_empty() {
-                        if let Some(this) = this_clone.upgrade() {
-                            this.update(cx, |_, cx| {
-                                cx.emit(WorkspaceSidebarEvent::ImportOpenApi(content));
-                            });
-                        }
-                    }
                     window.close_dialog(cx);
                     true
                 })

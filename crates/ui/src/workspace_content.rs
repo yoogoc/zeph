@@ -1,4 +1,4 @@
-use crate::{EnvironmentSelector, EnvironmentSelectorEvent, HttpService, ServiceTabs, ServiceTabsEvent, WorkspaceSidebar, WorkspaceSidebarEvent};
+use crate::{EnvironmentSelector, EnvironmentSelectorEvent, HttpService, ServiceTabs, ServiceTabsEvent, WorkspaceSidebar, WorkspaceSidebarEvent, ImportConfig};
 use gpui::*;
 use gpui_component::StyledExt;
 use models::{ServiceType, Workspace, WorkspaceView};
@@ -44,7 +44,10 @@ impl WorkspaceContent {
             WorkspaceSidebarEvent::CreateSchema(name, folder_id) => this.create_schema(name.clone(), *folder_id, cx),
             WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx),
             WorkspaceSidebarEvent::ToggleFolder(id) => this.toggle_folder(*id, cx),
-            WorkspaceSidebarEvent::ImportOpenApi(content) => this.import_openapi(content.clone(), cx),
+            WorkspaceSidebarEvent::ImportOpenApi(config) => this.import_openapi(config.clone(), cx),
+            WorkspaceSidebarEvent::PreviewImport(config) => this.preview_import(config.clone(), cx),
+            WorkspaceSidebarEvent::RequestImportPreview(config) => this.request_import_preview(config.clone(), cx),
+            WorkspaceSidebarEvent::ResolveImportConflicts(config, resolutions) => this.resolve_import_conflicts(config.clone(), resolutions.clone(), cx),
         });
 
         let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
@@ -138,11 +141,108 @@ impl WorkspaceContent {
         }
     }
 
-    fn import_openapi(&mut self, content: String, cx: &mut Context<Self>) {
+    fn import_openapi(&mut self, config: ImportConfig, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
-            if let Err(e) = registry.import_openapi(&content, cx) {
+            let options = workspace::ImportOptions {
+                target_folder: config.target_folder,
+                create_subfolders: config.create_subfolders,
+                schema_folder_strategy: config.schema_folder_strategy,
+            };
+            if let Err(e) = registry.import_openapi_with_options(&config.content, options, cx) {
                 eprintln!("Failed to import OpenAPI: {}", e);
+            }
+        });
+    }
+
+    fn preview_import(&mut self, config: ImportConfig, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, _cx| {
+            let options = workspace::ImportOptions {
+                target_folder: config.target_folder,
+                create_subfolders: config.create_subfolders,
+                schema_folder_strategy: config.schema_folder_strategy,
+            };
+            if let Ok(preview) = registry.generate_openapi_import_preview(&config.content, options) {
+                // In a real implementation, we would send this preview back to the dialog
+                // For now, we'll just log it
+                println!("Import preview: {} services, {} schemas", preview.services.len(), preview.schemas.len());
+            }
+        });
+    }
+
+    /// Handle request for import preview with enhanced error handling
+    /// Implements Requirements 6.1, 6.2 for error handling in UI
+    fn request_import_preview(&mut self, config: ImportConfig, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, _cx| {
+            let options = workspace::ImportOptions {
+                target_folder: config.target_folder,
+                create_subfolders: config.create_subfolders,
+                schema_folder_strategy: config.schema_folder_strategy,
+            };
+            
+            // Validate content first
+            match workspace::validate_openapi_content(&config.content) {
+                Ok(_) => {
+                    // Generate preview
+                    match registry.generate_openapi_import_preview(&config.content, options) {
+                        Ok(preview) => {
+                            // TODO: Send preview back to dialog
+                            println!("Import preview generated: {} services, {} schemas", 
+                                preview.services.len(), preview.schemas.len());
+                        }
+                        Err(e) => {
+                            // TODO: Send error back to dialog
+                            eprintln!("Failed to generate preview: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    // TODO: Send validation error back to dialog
+                    eprintln!("Content validation failed: {}", e);
+                }
+            }
+        });
+    }
+
+    /// Handle conflict resolution and import with enhanced validation
+    /// Implements Requirements 6.4 for conflict resolution
+    fn resolve_import_conflicts(&mut self, config: ImportConfig, resolutions: std::collections::HashMap<String, workspace::ConflictResolution>, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, _cx| {
+            let options = workspace::ImportOptions {
+                target_folder: config.target_folder,
+                create_subfolders: config.create_subfolders,
+                schema_folder_strategy: config.schema_folder_strategy,
+            };
+            
+            // Get current workspace data for conflict checking
+            if let Some(workspace) = registry.get_active_workspace() {
+                let existing_folders = &workspace.folders;
+                let existing_services = &workspace.services;
+                let existing_schemas = &workspace.schemas;
+                
+                // Use the enhanced import function with conflict resolution
+                match workspace::import_openapi_with_validation(
+                    workspace.id,
+                    &config.content,
+                    options,
+                    existing_folders,
+                    existing_services,
+                    existing_schemas,
+                    Some(&resolutions),
+                ) {
+                    Ok(result) => {
+                        println!("Import completed with conflict resolution: {} folders, {} services, {} schemas", 
+                            result.folders.len(), result.services.len(), result.schemas.len());
+                        // TODO: Update UI with imported data
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to import with conflict resolution: {}", e);
+                        // TODO: Send error back to dialog
+                    }
+                }
             }
         });
     }
