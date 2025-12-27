@@ -3,14 +3,14 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_component::{IconName, StyledExt, WindowExt};
+use gpui_component::scroll::ScrollableElement;
+use gpui_component::{h_flex, v_flex, IconName, StyledExt, WindowExt};
 use models::{Folder, FolderType, Schema, Service, ServiceType, Workspace};
 use std::collections::{HashMap, HashSet};
-use gpui_component::scroll::ScrollableElement;
 use uuid::Uuid;
 use workspace::ConflictResolution;
 
-use crate::{ImportDialog, ImportDialogEvent, ImportConfig};
+use crate::{ImportConfig, ImportDialog, ImportDialogEvent};
 
 // === Error Handling Constants ===
 
@@ -110,7 +110,7 @@ impl ContextMenuButton {
     pub fn render(&self, cx: &mut Context<WorkspaceSidebar>) -> impl IntoElement {
         let item_id = self.item_id;
         let menu_type = self.menu_type.clone();
-        
+
         // Only render if visible
         if !self.visible {
             return div().into_any_element();
@@ -118,7 +118,7 @@ impl ContextMenuButton {
 
         // Create dropdown menu based on menu type
         let view = cx.entity();
-        
+
         Button::new(format!("context_menu_{}", self.item_id))
             .ghost()
             .compact()
@@ -127,101 +127,124 @@ impl ContextMenuButton {
                 match &menu_type {
                     MenuType::Folder(options) => {
                         let mut menu = menu;
-                        
+
                         // Create menu items for folder
                         if options.can_create_service {
-                            menu = menu.item(
-                                PopupMenuItem::new("Create Service").on_click(
-                                    window.listener_for(&view, move |this, _, _window, cx| {
-                                        this.handle_menu_event(WorkspaceSidebarEvent::CreateService("New Service".to_string(), Some(item_id)), cx);
-                                    })
-                                )
-                            );
-                        }
-                        
-                        if options.can_create_schema {
-                            menu = menu.item(
-                                PopupMenuItem::new("Create Schema").on_click(
-                                    window.listener_for(&view, move |this, _, _window, cx| {
-                                        this.handle_menu_event(WorkspaceSidebarEvent::CreateSchema("New Schema".to_string(), Some(item_id)), cx);
-                                    })
-                                )
-                            );
-                        }
-                        
-                        if options.can_create_folder {
-                            menu = menu.item(
-                                PopupMenuItem::new("Create Folder").on_click(
-                                    window.listener_for(&view, move |this, _, _window, cx| {
-                                        // Determine folder type based on parent folder
-                                        let folder_type = if let Some(workspace) = &this.workspace {
-                                            workspace.folders.iter()
-                                                .find(|f| f.id == item_id)
-                                                .map(|f| f.folder_type.clone())
-                                                .unwrap_or(FolderType::Service)
-                                        } else {
-                                            FolderType::Service
-                                        };
-                                        this.handle_menu_event(WorkspaceSidebarEvent::CreateFolder("New Folder".to_string(), Some(item_id), folder_type), cx);
-                                    })
-                                )
-                            );
-                        }
-                        
-                        // View Details option
-                        menu = menu.item(
-                            PopupMenuItem::new("View Details").on_click(
+                            menu = menu.item(PopupMenuItem::new("Create Service").on_click(
                                 window.listener_for(&view, move |this, _, _window, cx| {
-                                    this.handle_menu_event(WorkspaceSidebarEvent::OpenFolderDetail(item_id), cx);
-                                })
-                            )
-                        );
-                        
+                                    this.handle_menu_event(
+                                        WorkspaceSidebarEvent::CreateService(
+                                            "New Service".to_string(),
+                                            Some(item_id),
+                                        ),
+                                        cx,
+                                    );
+                                }),
+                            ));
+                        }
+
+                        if options.can_create_schema {
+                            menu = menu.item(PopupMenuItem::new("Create Schema").on_click(
+                                window.listener_for(&view, move |this, _, _window, cx| {
+                                    this.handle_menu_event(
+                                        WorkspaceSidebarEvent::CreateSchema(
+                                            "New Schema".to_string(),
+                                            Some(item_id),
+                                        ),
+                                        cx,
+                                    );
+                                }),
+                            ));
+                        }
+
+                        if options.can_create_folder {
+                            menu = menu.item(PopupMenuItem::new("Create Folder").on_click(
+                                window.listener_for(&view, move |this, _, _window, cx| {
+                                    // Determine folder type based on parent folder
+                                    let folder_type = if let Some(workspace) = &this.workspace {
+                                        workspace
+                                            .folders
+                                            .iter()
+                                            .find(|f| f.id == item_id)
+                                            .map(|f| f.folder_type.clone())
+                                            .unwrap_or(FolderType::Service)
+                                    } else {
+                                        FolderType::Service
+                                    };
+                                    this.handle_menu_event(
+                                        WorkspaceSidebarEvent::CreateFolder(
+                                            "New Folder".to_string(),
+                                            Some(item_id),
+                                            folder_type,
+                                        ),
+                                        cx,
+                                    );
+                                }),
+                            ));
+                        }
+
+                        // View Details option
+                        menu = menu.item(PopupMenuItem::new("View Details").on_click(
+                            window.listener_for(&view, move |this, _, _window, cx| {
+                                this.handle_menu_event(
+                                    WorkspaceSidebarEvent::OpenFolderDetail(item_id),
+                                    cx,
+                                );
+                            }),
+                        ));
+
                         // Import option
                         if options.can_import {
                             menu = menu.separator().item(
-                                PopupMenuItem::new("Import OpenAPI").on_click(
-                                    window.listener_for(&view, move |this, _, window, cx| {
+                                PopupMenuItem::new("Import OpenAPI").on_click(window.listener_for(
+                                    &view,
+                                    move |this, _, window, cx| {
                                         this.open_import_openapi_dialog(window, cx);
-                                    })
-                                )
+                                    },
+                                )),
                             );
                         }
-                        
+
                         // Delete option
                         if options.can_delete {
-                            if options.can_create_service || options.can_create_schema || options.can_create_folder || options.can_import {
+                            if options.can_create_service
+                                || options.can_create_schema
+                                || options.can_create_folder
+                                || options.can_import
+                            {
                                 menu = menu.separator();
                             }
-                            menu = menu.item(
-                                PopupMenuItem::new("Delete").on_click(
-                                    window.listener_for(&view, move |this, _, _window, cx| {
-                                        this.handle_menu_event(WorkspaceSidebarEvent::DeleteFolder(item_id), cx);
-                                    })
-                                )
-                            );
+                            menu = menu.item(PopupMenuItem::new("Delete").on_click(
+                                window.listener_for(&view, move |this, _, _window, cx| {
+                                    this.handle_menu_event(
+                                        WorkspaceSidebarEvent::DeleteFolder(item_id),
+                                        cx,
+                                    );
+                                }),
+                            ));
                         }
-                        
+
                         menu
-                    },
-                    MenuType::Service(_options) => {
-                        menu.item(
-                            PopupMenuItem::new("Delete").on_click(
-                                window.listener_for(&view, move |this, _, _window, cx| {
-                                    this.handle_menu_event(WorkspaceSidebarEvent::DeleteService(item_id), cx);
-                                })
-                            )
-                        )
-                    },
-                    MenuType::Schema(_options) => {
-                        menu.item(
-                            PopupMenuItem::new("Delete").on_click(
-                                window.listener_for(&view, move |this, _, _window, cx| {
-                                    this.handle_menu_event(WorkspaceSidebarEvent::DeleteSchema(item_id), cx);
-                                })
-                            )
-                        )
                     }
+                    MenuType::Service(_options) => {
+                        menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
+                            &view,
+                            move |this, _, _window, cx| {
+                                this.handle_menu_event(
+                                    WorkspaceSidebarEvent::DeleteService(item_id),
+                                    cx,
+                                );
+                            },
+                        )))
+                    }
+                    MenuType::Schema(_options) => menu.item(PopupMenuItem::new("Delete").on_click(
+                        window.listener_for(&view, move |this, _, _window, cx| {
+                            this.handle_menu_event(
+                                WorkspaceSidebarEvent::DeleteSchema(item_id),
+                                cx,
+                            );
+                        }),
+                    )),
                 }
             })
             .into_any_element()
@@ -272,10 +295,10 @@ impl TreeItem {
             can_import: matches!(folder.folder_type, FolderType::Service),
             can_delete: true,
         };
-        
+
         let mut context_menu_button = ContextMenuButton::folder(folder.id, folder_options);
         context_menu_button.set_visible(true); // Always set visible, we control visibility at render time
-        
+
         Self {
             item_type: TreeItemType::Folder(folder),
             depth,
@@ -288,13 +311,11 @@ impl TreeItem {
 
     /// Create a new TreeItem for a service
     pub fn service(service: Service, depth: usize, is_active: bool) -> Self {
-        let service_options = ServiceMenuOptions {
-            can_delete: true,
-        };
-        
+        let service_options = ServiceMenuOptions { can_delete: true };
+
         let mut context_menu_button = ContextMenuButton::service(service.id, service_options);
         context_menu_button.set_visible(true); // Always set visible, we control visibility at render time
-        
+
         Self {
             item_type: TreeItemType::Service(service),
             depth,
@@ -307,13 +328,11 @@ impl TreeItem {
 
     /// Create a new TreeItem for a schema
     pub fn schema(schema: Schema, depth: usize) -> Self {
-        let schema_options = SchemaMenuOptions {
-            can_delete: true,
-        };
-        
+        let schema_options = SchemaMenuOptions { can_delete: true };
+
         let mut context_menu_button = ContextMenuButton::schema(schema.id, schema_options);
         context_menu_button.set_visible(true); // Always set visible, we control visibility at render time
-        
+
         Self {
             item_type: TreeItemType::Schema(schema),
             depth,
@@ -424,10 +443,10 @@ pub struct WorkspaceSidebar {
     workspace: Option<Workspace>,
     pub expanded_folders: HashSet<Uuid>,
     expanded_sections: (bool, bool), // (services, schemas)
-    hovered_item: Option<Uuid>, // Track which item is being hovered
-    active_item: Option<Uuid>, // Track which item is currently active/selected
-    pressed_item: Option<Uuid>, // Track which item is being pressed/clicked
-    sidebar_width: f32, // Track current sidebar width for responsive layout
+    hovered_item: Option<Uuid>,      // Track which item is being hovered
+    active_item: Option<Uuid>,       // Track which item is currently active/selected
+    pressed_item: Option<Uuid>,      // Track which item is being pressed/clicked
+    sidebar_width: f32,              // Track current sidebar width for responsive layout
 }
 
 impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
@@ -483,7 +502,10 @@ impl WorkspaceSidebar {
     /// Validate tree depth to prevent overflow
     fn validate_tree_depth(&self, depth: usize) -> Result<usize, String> {
         if depth > MAX_TREE_DEPTH {
-            eprintln!("Warning: Tree depth {} exceeds maximum allowed depth {}. Limiting to maximum.", depth, MAX_TREE_DEPTH);
+            eprintln!(
+                "Warning: Tree depth {} exceeds maximum allowed depth {}. Limiting to maximum.",
+                depth, MAX_TREE_DEPTH
+            );
             Ok(MAX_TREE_DEPTH)
         } else {
             Ok(depth)
@@ -502,13 +524,22 @@ impl WorkspaceSidebar {
         };
 
         // Check if folder has any child folders
-        let has_child_folders = workspace.folders.iter().any(|f| f.parent_id == Some(folder_id));
-        
+        let has_child_folders = workspace
+            .folders
+            .iter()
+            .any(|f| f.parent_id == Some(folder_id));
+
         // Check if folder has any services
-        let has_services = workspace.services.iter().any(|s| s.folder_id == Some(folder_id));
-        
+        let has_services = workspace
+            .services
+            .iter()
+            .any(|s| s.folder_id == Some(folder_id));
+
         // Check if folder has any schemas
-        let has_schemas = workspace.schemas.iter().any(|s| s.folder_id == Some(folder_id));
+        let has_schemas = workspace
+            .schemas
+            .iter()
+            .any(|s| s.folder_id == Some(folder_id));
 
         if has_child_folders || has_services || has_schemas {
             Ok(false) // Cannot delete non-empty folder
@@ -523,14 +554,22 @@ impl WorkspaceSidebar {
         match self.try_render_context_menu(item, cx) {
             Ok(menu_element) => menu_element,
             Err(error) => {
-                eprintln!("Warning: Failed to render context menu for item {}: {}. Using fallback.", item.id(), error);
+                eprintln!(
+                    "Warning: Failed to render context menu for item {}: {}. Using fallback.",
+                    item.id(),
+                    error
+                );
                 self.render_fallback_menu(item.id(), &item.item_type, cx)
             }
         }
     }
 
     /// Try to render context menu, returning error if it fails
-    fn try_render_context_menu(&self, item: &TreeItem, cx: &mut Context<Self>) -> Result<AnyElement, String> {
+    fn try_render_context_menu(
+        &self,
+        item: &TreeItem,
+        cx: &mut Context<Self>,
+    ) -> Result<AnyElement, String> {
         let Some(ref menu_button) = item.context_menu_button else {
             return Err("No context menu button available".to_string());
         };
@@ -545,35 +584,48 @@ impl WorkspaceSidebar {
     }
 
     /// Render a simple fallback menu when the main menu fails
-    fn render_fallback_menu(&self, item_id: Uuid, item_type: &TreeItemType, cx: &mut Context<Self>) -> AnyElement {
+    fn render_fallback_menu(
+        &self,
+        item_id: Uuid,
+        item_type: &TreeItemType,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         // Simple fallback button that only shows a basic menu
         let view = cx.entity();
         let item_type_clone = item_type.clone();
-        
+
         Button::new(format!("fallback_menu_{}", item_id))
             .ghost()
             .compact()
             .icon(IconName::Settings)
             .dropdown_menu(move |menu, window, _cx| {
                 let item_type_for_closure = item_type_clone.clone();
-                menu.item(
-                    PopupMenuItem::new("Delete").on_click(
-                        window.listener_for(&view, move |this, _, _window, cx| {
-                            // Emit appropriate delete event based on item type
-                            match &item_type_for_closure {
-                                TreeItemType::Folder(_) => {
-                                    this.handle_menu_event(WorkspaceSidebarEvent::DeleteFolder(item_id), cx);
-                                }
-                                TreeItemType::Service(_) => {
-                                    this.handle_menu_event(WorkspaceSidebarEvent::DeleteService(item_id), cx);
-                                }
-                                TreeItemType::Schema(_) => {
-                                    this.handle_menu_event(WorkspaceSidebarEvent::DeleteSchema(item_id), cx);
-                                }
+                menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
+                    &view,
+                    move |this, _, _window, cx| {
+                        // Emit appropriate delete event based on item type
+                        match &item_type_for_closure {
+                            TreeItemType::Folder(_) => {
+                                this.handle_menu_event(
+                                    WorkspaceSidebarEvent::DeleteFolder(item_id),
+                                    cx,
+                                );
                             }
-                        })
-                    )
-                )
+                            TreeItemType::Service(_) => {
+                                this.handle_menu_event(
+                                    WorkspaceSidebarEvent::DeleteService(item_id),
+                                    cx,
+                                );
+                            }
+                            TreeItemType::Schema(_) => {
+                                this.handle_menu_event(
+                                    WorkspaceSidebarEvent::DeleteSchema(item_id),
+                                    cx,
+                                );
+                            }
+                        }
+                    },
+                )))
             })
             .into_any_element()
     }
@@ -609,9 +661,10 @@ impl WorkspaceSidebar {
         let menu_button_space = 32.0; // Space reserved for menu button
         let padding_and_margins = 32.0; // Additional padding and margins
         let icon_space = 24.0; // Space for folder/service icons
-        
+
         // Ensure minimum usable width
-        let available_width = self.sidebar_width - indentation - menu_button_space - padding_and_margins - icon_space;
+        let available_width =
+            self.sidebar_width - indentation - menu_button_space - padding_and_margins - icon_space;
         available_width.max(60.0) // Minimum 60px for item names
     }
 
@@ -620,7 +673,7 @@ impl WorkspaceSidebar {
         // Simple character-based truncation (in a real implementation, you might want to measure actual text width)
         let chars_per_pixel = 0.15; // Approximate characters per pixel for typical font
         let max_chars = (max_width * chars_per_pixel) as usize;
-        
+
         if text.len() <= max_chars {
             text.to_string()
         } else if max_chars <= 3 {
@@ -706,24 +759,31 @@ impl WorkspaceSidebar {
     }
 
     /// Get context information for menu events
-    pub fn get_menu_context(&self, item_id: Uuid) -> Option<(String, Option<Uuid>, Option<FolderType>)> {
+    pub fn get_menu_context(
+        &self,
+        item_id: Uuid,
+    ) -> Option<(String, Option<Uuid>, Option<FolderType>)> {
         let workspace = self.workspace.as_ref()?;
-        
+
         // Check if it's a folder
         if let Some(folder) = workspace.folders.iter().find(|f| f.id == item_id) {
-            return Some((folder.name.to_string(), folder.parent_id, Some(folder.folder_type.clone())));
+            return Some((
+                folder.name.to_string(),
+                folder.parent_id,
+                Some(folder.folder_type.clone()),
+            ));
         }
-        
+
         // Check if it's a service
         if let Some(service) = workspace.services.iter().find(|s| s.id == item_id) {
             return Some((service.name.to_string(), service.folder_id, None));
         }
-        
+
         // Check if it's a schema
         if let Some(schema) = workspace.schemas.iter().find(|s| s.id == item_id) {
             return Some((schema.name.to_string(), schema.folder_id, None));
         }
-        
+
         None
     }
     pub fn handle_menu_event(&mut self, event: WorkspaceSidebarEvent, cx: &mut Context<Self>) {
@@ -743,7 +803,7 @@ impl WorkspaceSidebar {
                             Err("No workspace available".to_string())
                         }
                     }
-                    Err(e) => Err(e)
+                    Err(e) => Err(e),
                 }
             }
             WorkspaceSidebarEvent::DeleteSchema(schema_id) => {
@@ -760,7 +820,7 @@ impl WorkspaceSidebar {
                             Err("No workspace available".to_string())
                         }
                     }
-                    Err(e) => Err(e)
+                    Err(e) => Err(e),
                 }
             }
             WorkspaceSidebarEvent::DeleteFolder(folder_id) => {
@@ -771,8 +831,11 @@ impl WorkspaceSidebar {
                             if workspace.folders.iter().any(|f| f.id == *folder_id) {
                                 match self.can_delete_folder(*folder_id) {
                                     Ok(true) => Ok(()),
-                                    Ok(false) => Err(format!("Folder {} cannot be deleted: it contains items", folder_id)),
-                                    Err(e) => Err(e)
+                                    Ok(false) => Err(format!(
+                                        "Folder {} cannot be deleted: it contains items",
+                                        folder_id
+                                    )),
+                                    Err(e) => Err(e),
                                 }
                             } else {
                                 Err(format!("ID {} is not a folder", folder_id))
@@ -781,7 +844,7 @@ impl WorkspaceSidebar {
                             Err("No workspace available".to_string())
                         }
                     }
-                    Err(e) => Err(e)
+                    Err(e) => Err(e),
                 }
             }
             WorkspaceSidebarEvent::CreateService(name, parent_id) => {
@@ -792,11 +855,16 @@ impl WorkspaceSidebar {
                         Ok(_) => {
                             // Ensure parent is a service folder
                             if let Some(workspace) = &self.workspace {
-                                if let Some(folder) = workspace.folders.iter().find(|f| f.id == *parent_id) {
+                                if let Some(folder) =
+                                    workspace.folders.iter().find(|f| f.id == *parent_id)
+                                {
                                     if matches!(folder.folder_type, FolderType::Service) {
                                         Ok(())
                                     } else {
-                                        Err(format!("Parent folder {} is not a service folder", parent_id))
+                                        Err(format!(
+                                            "Parent folder {} is not a service folder",
+                                            parent_id
+                                        ))
                                     }
                                 } else {
                                     Err(format!("Parent ID {} is not a folder", parent_id))
@@ -805,7 +873,7 @@ impl WorkspaceSidebar {
                                 Err("No workspace available".to_string())
                             }
                         }
-                        Err(e) => Err(e)
+                        Err(e) => Err(e),
                     }
                 } else {
                     Ok(()) // No parent is valid
@@ -819,11 +887,16 @@ impl WorkspaceSidebar {
                         Ok(_) => {
                             // Ensure parent is a schema folder
                             if let Some(workspace) = &self.workspace {
-                                if let Some(folder) = workspace.folders.iter().find(|f| f.id == *parent_id) {
+                                if let Some(folder) =
+                                    workspace.folders.iter().find(|f| f.id == *parent_id)
+                                {
                                     if matches!(folder.folder_type, FolderType::Schema) {
                                         Ok(())
                                     } else {
-                                        Err(format!("Parent folder {} is not a schema folder", parent_id))
+                                        Err(format!(
+                                            "Parent folder {} is not a schema folder",
+                                            parent_id
+                                        ))
                                     }
                                 } else {
                                     Err(format!("Parent ID {} is not a folder", parent_id))
@@ -832,7 +905,7 @@ impl WorkspaceSidebar {
                                 Err("No workspace available".to_string())
                             }
                         }
-                        Err(e) => Err(e)
+                        Err(e) => Err(e),
                     }
                 } else {
                     Ok(()) // No parent is valid
@@ -855,16 +928,26 @@ impl WorkspaceSidebar {
                 cx.emit(event);
             }
             Err(error) => {
-                eprintln!("Warning: Invalid menu operation attempted: {:?}. Error: {}", event, error);
+                eprintln!(
+                    "Warning: Invalid menu operation attempted: {:?}. Error: {}",
+                    event, error
+                );
                 // Optionally, you could emit an error event or show a user notification here
             }
         }
     }
 
     /// Build tree items for services section
-    fn build_service_tree_items(&self, parent_id: Option<Uuid>, depth: usize, active_service: Option<Uuid>) -> Vec<TreeItem> {
-        let Some(workspace) = &self.workspace else { return vec![] };
-        
+    fn build_service_tree_items(
+        &self,
+        parent_id: Option<Uuid>,
+        depth: usize,
+        active_service: Option<Uuid>,
+    ) -> Vec<TreeItem> {
+        let Some(workspace) = &self.workspace else {
+            return vec![];
+        };
+
         // Validate and limit depth to prevent overflow
         let safe_depth = match self.validate_tree_depth(depth) {
             Ok(d) => d,
@@ -874,32 +957,44 @@ impl WorkspaceSidebar {
         let mut items = Vec::new();
 
         // Add folders first
-        for folder in workspace.folders.iter()
-            .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Service)) {
-            
+        for folder in workspace
+            .folders
+            .iter()
+            .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Service))
+        {
             // Skip if we've reached maximum depth
             if safe_depth >= MAX_TREE_DEPTH {
-                eprintln!("Warning: Skipping folder {} due to maximum depth limit", folder.name);
+                eprintln!(
+                    "Warning: Skipping folder {} due to maximum depth limit",
+                    folder.name
+                );
                 continue;
             }
 
             let is_expanded = self.expanded_folders.contains(&folder.id);
             let item = TreeItem::folder(folder.clone(), safe_depth, is_expanded);
-            
+
             items.push(item);
-            
+
             // Add children if expanded and not at max depth
             if is_expanded && safe_depth < MAX_TREE_DEPTH {
-                items.extend(self.build_service_tree_items(Some(folder.id), safe_depth + 1, active_service));
+                items.extend(self.build_service_tree_items(
+                    Some(folder.id),
+                    safe_depth + 1,
+                    active_service,
+                ));
             }
         }
 
         // Add services
-        for service in workspace.services.iter()
-            .filter(|s| s.folder_id == parent_id) {
+        for service in workspace
+            .services
+            .iter()
+            .filter(|s| s.folder_id == parent_id)
+        {
             let is_active = active_service == Some(service.id);
             let item = TreeItem::service(service.clone(), safe_depth, is_active);
-            
+
             items.push(item);
         }
 
@@ -908,8 +1003,10 @@ impl WorkspaceSidebar {
 
     /// Build tree items for schemas section
     fn build_schema_tree_items(&self, parent_id: Option<Uuid>, depth: usize) -> Vec<TreeItem> {
-        let Some(workspace) = &self.workspace else { return vec![] };
-        
+        let Some(workspace) = &self.workspace else {
+            return vec![];
+        };
+
         // Validate and limit depth to prevent overflow
         let safe_depth = match self.validate_tree_depth(depth) {
             Ok(d) => d,
@@ -919,20 +1016,25 @@ impl WorkspaceSidebar {
         let mut items = Vec::new();
 
         // Add folders first
-        for folder in workspace.folders.iter()
-            .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Schema)) {
-            
+        for folder in workspace
+            .folders
+            .iter()
+            .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Schema))
+        {
             // Skip if we've reached maximum depth
             if safe_depth >= MAX_TREE_DEPTH {
-                eprintln!("Warning: Skipping folder {} due to maximum depth limit", folder.name);
+                eprintln!(
+                    "Warning: Skipping folder {} due to maximum depth limit",
+                    folder.name
+                );
                 continue;
             }
 
             let is_expanded = self.expanded_folders.contains(&folder.id);
             let item = TreeItem::folder(folder.clone(), safe_depth, is_expanded);
-            
+
             items.push(item);
-            
+
             // Add children if expanded and not at max depth
             if is_expanded && safe_depth < MAX_TREE_DEPTH {
                 items.extend(self.build_schema_tree_items(Some(folder.id), safe_depth + 1));
@@ -940,10 +1042,13 @@ impl WorkspaceSidebar {
         }
 
         // Add schemas
-        for schema in workspace.schemas.iter()
-            .filter(|s| s.folder_id == parent_id) {
+        for schema in workspace
+            .schemas
+            .iter()
+            .filter(|s| s.folder_id == parent_id)
+        {
             let item = TreeItem::schema(schema.clone(), safe_depth);
-            
+
             items.push(item);
         }
 
@@ -969,7 +1074,8 @@ impl WorkspaceSidebar {
         let (_menu_class, _menu_color) = self.get_menu_button_style(item_type);
 
         // Adjust layout for deep indentation or narrow sidebar
-        let should_compact_layout = is_minimum_width || self.sidebar_width < minimum_width_for_depth;
+        let should_compact_layout =
+            is_minimum_width || self.sidebar_width < minimum_width_for_depth;
         let adjusted_indentation = if should_compact_layout {
             // Reduce indentation for deep levels when space is limited
             (item.depth.min(3) as f32 * 12.0).min(indentation)
@@ -978,11 +1084,10 @@ impl WorkspaceSidebar {
         };
 
         // Create the main content container with enhanced interaction handling
-        let mut content_container = div()
-            .h_flex()
+        let mut content_container = h_flex()
             .items_center()
             .justify_between()
-            .w_full()
+            // .w_full()
             .px_2()
             .py_1()
             .rounded_md()
@@ -991,12 +1096,18 @@ impl WorkspaceSidebar {
                 this.set_hovered_item(Some(item_id));
                 cx.notify(); // Trigger re-render to show menu
             }))
-            .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, _cx| {
-                this.set_pressed_item(Some(item_id));
-            }))
-            .on_mouse_up(MouseButton::Left, cx.listener(move |this, _, _, _cx| {
-                this.set_pressed_item(None);
-            }));
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, _cx| {
+                    this.set_pressed_item(Some(item_id));
+                }),
+            )
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(move |this, _, _, _cx| {
+                    this.set_pressed_item(None);
+                }),
+            );
 
         // Add border if item is active
         if let Some(border) = border_color {
@@ -1006,7 +1117,11 @@ impl WorkspaceSidebar {
         match &item.item_type {
             TreeItemType::Folder(folder) => {
                 let folder_id = folder.id;
-                let icon = if item.is_expanded { IconName::ChevronDown } else { IconName::ChevronRight };
+                let icon = if item.is_expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                };
 
                 content_container
                     .child(
@@ -1025,12 +1140,12 @@ impl WorkspaceSidebar {
                                             .size_4()
                                             .when(self.is_item_active(item_id), |icon| {
                                                 icon.text_color(rgb(0x2196f3))
-                                            })
+                                            }),
                                     )
                                     .child(
                                         gpui_component::Icon::new(IconName::Folder)
                                             .size_4()
-                                            .text_color(rgb(0xffc107)) // Folder icon always yellow
+                                            .text_color(rgb(0xffc107)), // Folder icon always yellow
                                     )
                                     .child(
                                         div()
@@ -1041,24 +1156,23 @@ impl WorkspaceSidebar {
                                             .when(self.is_item_active(item_id), |div| {
                                                 div.font_semibold().text_color(rgb(0x2196f3))
                                             })
-                                            .child(truncated_name.clone())
+                                            .child(truncated_name.clone()),
                                     ),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_active_item(Some(folder_id));
                                 cx.emit(WorkspaceSidebarEvent::ToggleFolder(folder_id));
-                            }))
+                            })),
                     )
                     .child(
                         // Menu button container - always reserve space to ensure visibility
-                        div()
+                        h_flex()
                             .w(px(32.0)) // Fixed width for menu button area
-                            .h_flex()
                             .justify_end()
                             .items_center()
                             .when(self.is_item_hovered(item_id), |container| {
                                 container.child(self.safe_render_context_menu(item, cx))
-                            })
+                            }),
                     )
             }
             TreeItemType::Service(service) => {
@@ -1087,9 +1201,10 @@ impl WorkspaceSidebar {
                             .w_full()
                             .justify_start()
                             .ghost()
-                            .when(item.is_active || self.is_item_active(item_id), |btn: Button| {
-                                btn.primary()
-                            })
+                            .when(
+                                item.is_active || self.is_item_active(item_id),
+                                |btn: Button| btn.primary(),
+                            )
                             .child(
                                 div()
                                     .h_flex()
@@ -1108,11 +1223,13 @@ impl WorkspaceSidebar {
                                                 // Use shorter labels in compact mode
                                                 div.min_w(px(20.0))
                                             })
-                                            .child(if should_compact_layout && method_label.len() > 3 {
-                                                &method_label[..3.min(method_label.len())]
-                                            } else {
-                                                method_label
-                                            }),
+                                            .child(
+                                                if should_compact_layout && method_label.len() > 3 {
+                                                    &method_label[..3.min(method_label.len())]
+                                                } else {
+                                                    method_label
+                                                },
+                                            ),
                                     )
                                     .child(
                                         div()
@@ -1123,13 +1240,13 @@ impl WorkspaceSidebar {
                                             .when(self.is_item_active(item_id), |div| {
                                                 div.font_semibold().text_color(rgb(0x4caf50))
                                             })
-                                            .child(truncated_name.clone())
+                                            .child(truncated_name.clone()),
                                     ),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_active_item(Some(service_id));
                                 cx.emit(WorkspaceSidebarEvent::OpenService(service_id));
-                            }))
+                            })),
                     )
                     .child(
                         // Menu button container - always reserve space to ensure visibility
@@ -1140,7 +1257,7 @@ impl WorkspaceSidebar {
                             .items_center()
                             .when(self.is_item_hovered(item_id), |container| {
                                 container.child(self.safe_render_context_menu(item, cx))
-                            })
+                            }),
                     )
             }
             TreeItemType::Schema(schema) => {
@@ -1152,9 +1269,7 @@ impl WorkspaceSidebar {
                             .w_full()
                             .justify_start()
                             .ghost()
-                            .when(self.is_item_active(item_id), |btn: Button| {
-                                btn.primary()
-                            })
+                            .when(self.is_item_active(item_id), |btn: Button| btn.primary())
                             .child(
                                 div()
                                     .h_flex()
@@ -1164,7 +1279,7 @@ impl WorkspaceSidebar {
                                     .child(
                                         gpui_component::Icon::new(IconName::File)
                                             .size_4()
-                                            .text_color(rgb(0x6f42c1))
+                                            .text_color(rgb(0x6f42c1)),
                                     )
                                     .child(
                                         div()
@@ -1175,13 +1290,13 @@ impl WorkspaceSidebar {
                                             .when(self.is_item_active(item_id), |div| {
                                                 div.font_semibold().text_color(rgb(0x9c27b0))
                                             })
-                                            .child(truncated_name.clone())
+                                            .child(truncated_name.clone()),
                                     ),
                             )
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.set_active_item(Some(schema_id));
                                 cx.emit(WorkspaceSidebarEvent::OpenSchema(schema_id));
-                            }))
+                            })),
                     )
                     .child(
                         // Menu button container - always reserve space to ensure visibility
@@ -1192,7 +1307,7 @@ impl WorkspaceSidebar {
                             .items_center()
                             .when(self.is_item_hovered(item_id), |container| {
                                 container.child(self.safe_render_context_menu(item, cx))
-                            })
+                            }),
                     )
             }
         }
@@ -1254,7 +1369,12 @@ impl WorkspaceSidebar {
         });
     }
 
-    fn open_create_folder_dialog(&mut self, folder_type: FolderType, window: &mut Window, cx: &mut Context<Self>) {
+    fn open_create_folder_dialog(
+        &mut self,
+        folder_type: FolderType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let this = cx.entity().downgrade();
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Folder name"));
 
@@ -1273,7 +1393,11 @@ impl WorkspaceSidebar {
                     if !name.trim().is_empty() {
                         if let Some(this) = this_clone.upgrade() {
                             this.update(cx, |_, cx| {
-                                cx.emit(WorkspaceSidebarEvent::CreateFolder(name, None, ft.clone()));
+                                cx.emit(WorkspaceSidebarEvent::CreateFolder(
+                                    name,
+                                    None,
+                                    ft.clone(),
+                                ));
                             });
                         }
                     }
@@ -1286,15 +1410,16 @@ impl WorkspaceSidebar {
     fn open_import_openapi_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let _this = cx.entity().downgrade();
         let import_dialog = cx.new(|cx| ImportDialog::new(window, cx));
-        
+
         // Set available folders for the dialog
         if let Some(workspace) = &self.workspace {
-            let service_folders: Vec<Folder> = workspace.folders
+            let service_folders: Vec<Folder> = workspace
+                .folders
                 .iter()
                 .filter(|f| f.folder_type == FolderType::Service)
                 .cloned()
                 .collect();
-            
+
             import_dialog.update(cx, |dialog, cx| {
                 dialog.set_folders(service_folders, cx);
             });
@@ -1311,13 +1436,17 @@ impl WorkspaceSidebar {
                     cx.emit(WorkspaceSidebarEvent::RequestImportPreview(config.clone()));
                 }
                 ImportDialogEvent::ResolveConflicts(config, resolutions) => {
-                    cx.emit(WorkspaceSidebarEvent::ResolveImportConflicts(config.clone(), resolutions.clone()));
+                    cx.emit(WorkspaceSidebarEvent::ResolveImportConflicts(
+                        config.clone(),
+                        resolutions.clone(),
+                    ));
                 }
                 ImportDialogEvent::Cancel => {
                     // Dialog will be closed automatically
                 }
             }
-        }).detach();
+        })
+        .detach();
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             dialog
@@ -1390,48 +1519,55 @@ impl Render for WorkspaceSidebar {
                 }
             }))
             .child(
-                div()
-                    .p_2()
-                    .child(
-                        div()
-                            .p_2()
-                            .bg(rgb(0xffffff))
-                            .border_1()
-                            .border_color(rgb(0xdee2e6))
-                            .rounded_md()
-                            .text_sm()
-                            .text_color(rgb(0x999999))
-                            .overflow_hidden()
-                            .child(if is_minimum_width { "Search" } else { "Search..." }),
-                    ),
+                div().p_2().child(
+                    div()
+                        .p_2()
+                        .bg(rgb(0xffffff))
+                        .border_1()
+                        .border_color(rgb(0xdee2e6))
+                        .rounded_md()
+                        .text_sm()
+                        .text_color(rgb(0x999999))
+                        .overflow_hidden()
+                        .child(if is_minimum_width {
+                            "Search"
+                        } else {
+                            "Search..."
+                        }),
+                ),
             )
             .child(
-                div()
+                v_flex()
                     .flex_1()
-                    .overflow_scrollbar()
                     .p_2()
-                    .v_flex()
                     .gap_2()
                     // Services Section
                     .child(
-                        div()
-                            .v_flex()
+                        v_flex()
                             .child(
-                                div()
-                                    .h_flex()
+                                h_flex()
                                     .justify_between()
                                     .items_center()
                                     .child(
-                                        div()
+                                        h_flex()
                                             .id("services_header")
-                                            .h_flex()
                                             .items_center()
                                             .gap_1()
                                             .cursor_pointer()
-                                            .child(gpui_component::Icon::new(if services_expanded { IconName::ChevronDown } else { IconName::ChevronRight }).size_4())
-                                            .child(div().text_sm().font_semibold().child("Services"))
+                                            .child(
+                                                gpui_component::Icon::new(if services_expanded {
+                                                    IconName::ChevronDown
+                                                } else {
+                                                    IconName::ChevronRight
+                                                })
+                                                .size_4(),
+                                            )
+                                            .child(
+                                                div().text_sm().font_semibold().child("Services"),
+                                            )
                                             .on_click(cx.listener(|this, _, _, _| {
-                                                this.expanded_sections.0 = !this.expanded_sections.0;
+                                                this.expanded_sections.0 =
+                                                    !this.expanded_sections.0;
                                             })),
                                     )
                                     .child(
@@ -1442,48 +1578,77 @@ impl Render for WorkspaceSidebar {
                                             .dropdown_menu({
                                                 let view = view.clone();
                                                 move |menu, window, _cx| {
-                                                    menu.item(PopupMenuItem::new("Add Service").on_click(
-                                                        window.listener_for(&view, |this, _, window, cx| {
-                                                            this.open_create_service_dialog(window, cx);
-                                                        }),
-                                                    ))
-                                                    .item(PopupMenuItem::new("Add Folder").on_click(
-                                                        window.listener_for(&view, |this, _, window, cx| {
-                                                            this.open_create_folder_dialog(FolderType::Service, window, cx);
-                                                        }),
-                                                    ))
+                                                    menu.item(
+                                                        PopupMenuItem::new("Add Service").on_click(
+                                                            window.listener_for(
+                                                                &view,
+                                                                |this, _, window, cx| {
+                                                                    this.open_create_service_dialog(
+                                                                    window, cx,
+                                                                );
+                                                                },
+                                                            ),
+                                                        ),
+                                                    )
+                                                    .item(
+                                                        PopupMenuItem::new("Add Folder").on_click(
+                                                            window.listener_for(
+                                                                &view,
+                                                                |this, _, window, cx| {
+                                                                    this.open_create_folder_dialog(
+                                                                        FolderType::Service,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            ),
+                                                        ),
+                                                    )
                                                     .separator()
-                                                    .item(PopupMenuItem::new("Import OpenAPI").on_click(
-                                                        window.listener_for(&view, |this, _, window, cx| {
-                                                            this.open_import_openapi_dialog(window, cx);
-                                                        }),
-                                                    ))
+                                                    .item(
+                                                        PopupMenuItem::new("Import OpenAPI")
+                                                            .on_click(window.listener_for(
+                                                                &view,
+                                                                |this, _, window, cx| {
+                                                                    this.open_import_openapi_dialog(
+                                                                    window, cx,
+                                                                );
+                                                                },
+                                                            )),
+                                                    )
                                                 }
                                             }),
                                     ),
                             )
-                            .when(services_expanded, |el| el.child(div().v_flex().gap_px().children(service_elements))),
+                            .when(services_expanded, |el| {
+                                el.child(v_flex().gap_px().children(service_elements))
+                            }),
                     )
                     // Schemas Section
                     .child(
-                        div()
-                            .v_flex()
+                        v_flex()
                             .child(
-                                div()
-                                    .h_flex()
+                                h_flex()
                                     .justify_between()
                                     .items_center()
                                     .child(
-                                        div()
+                                        h_flex()
                                             .id("schemas_header")
-                                            .h_flex()
                                             .items_center()
                                             .gap_1()
                                             .cursor_pointer()
-                                            .child(gpui_component::Icon::new(if schemas_expanded { IconName::ChevronDown } else { IconName::ChevronRight }).size_4())
+                                            .child(
+                                                gpui_component::Icon::new(if schemas_expanded {
+                                                    IconName::ChevronDown
+                                                } else {
+                                                    IconName::ChevronRight
+                                                })
+                                                .size_4(),
+                                            )
                                             .child(div().text_sm().font_semibold().child("Schemas"))
                                             .on_click(cx.listener(|this, _, _, _| {
-                                                this.expanded_sections.1 = !this.expanded_sections.1;
+                                                this.expanded_sections.1 =
+                                                    !this.expanded_sections.1;
                                             })),
                                     )
                                     .child(
@@ -1494,21 +1659,39 @@ impl Render for WorkspaceSidebar {
                                             .dropdown_menu({
                                                 let view = view.clone();
                                                 move |menu, window, _cx| {
-                                                    menu.item(PopupMenuItem::new("Add Schema").on_click(
-                                                        window.listener_for(&view, |this, _, window, cx| {
-                                                            this.open_create_schema_dialog(window, cx);
-                                                        }),
-                                                    ))
-                                                    .item(PopupMenuItem::new("Add Folder").on_click(
-                                                        window.listener_for(&view, |this, _, window, cx| {
-                                                            this.open_create_folder_dialog(FolderType::Schema, window, cx);
-                                                        }),
-                                                    ))
+                                                    menu.item(
+                                                        PopupMenuItem::new("Add Schema").on_click(
+                                                            window.listener_for(
+                                                                &view,
+                                                                |this, _, window, cx| {
+                                                                    this.open_create_schema_dialog(
+                                                                        window, cx,
+                                                                    );
+                                                                },
+                                                            ),
+                                                        ),
+                                                    )
+                                                    .item(
+                                                        PopupMenuItem::new("Add Folder").on_click(
+                                                            window.listener_for(
+                                                                &view,
+                                                                |this, _, window, cx| {
+                                                                    this.open_create_folder_dialog(
+                                                                        FolderType::Schema,
+                                                                        window,
+                                                                        cx,
+                                                                    );
+                                                                },
+                                                            ),
+                                                        ),
+                                                    )
                                                 }
                                             }),
                                     ),
                             )
-                            .when(schemas_expanded, |el| el.child(div().v_flex().gap_px().children(schema_elements))),
+                            .when(schemas_expanded, |el| {
+                                el.child(v_flex().gap_px().children(schema_elements))
+                            }),
                     ),
             )
             .into_any_element()
