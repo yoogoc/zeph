@@ -48,6 +48,23 @@ impl WorkspaceContent {
             WorkspaceSidebarEvent::PreviewImport(config) => this.preview_import(config.clone(), cx),
             WorkspaceSidebarEvent::RequestImportPreview(config) => this.request_import_preview(config.clone(), cx),
             WorkspaceSidebarEvent::ResolveImportConflicts(config, resolutions) => this.resolve_import_conflicts(config.clone(), resolutions.clone(), cx),
+            // New menu events - for now just log them, actual implementation will be added later
+            WorkspaceSidebarEvent::DeleteService(id) => {
+                // TODO: Implement service deletion
+                eprintln!("Delete service requested: {}", id);
+            }
+            WorkspaceSidebarEvent::DeleteSchema(id) => {
+                // TODO: Implement schema deletion
+                eprintln!("Delete schema requested: {}", id);
+            }
+            WorkspaceSidebarEvent::DeleteFolder(id) => {
+                // TODO: Implement folder deletion
+                eprintln!("Delete folder requested: {}", id);
+            }
+            WorkspaceSidebarEvent::ShowContextMenu(id, menu_type) => {
+                // TODO: Implement context menu display
+                eprintln!("Show context menu requested for item: {} with type: {:?}", id, menu_type);
+            }
         });
 
         let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
