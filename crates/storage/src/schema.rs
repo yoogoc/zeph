@@ -22,7 +22,9 @@ CREATE TABLE IF NOT EXISTS folders (
     updated_at INTEGER NOT NULL,
     sync_version INTEGER DEFAULT 0,
     source TEXT DEFAULT 'local',
-    deleted INTEGER DEFAULT 0
+    deleted INTEGER DEFAULT 0,
+    common_headers TEXT DEFAULT '[]',
+    common_search_params TEXT DEFAULT '[]'
 );
 
 CREATE TABLE IF NOT EXISTS services (

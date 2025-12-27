@@ -168,9 +168,18 @@ impl ContextMenuButton {
                             );
                         }
                         
+                        // View Details option
+                        menu = menu.item(
+                            PopupMenuItem::new("View Details").on_click(
+                                window.listener_for(&view, move |this, _, _window, cx| {
+                                    this.handle_menu_event(WorkspaceSidebarEvent::OpenFolderDetail(item_id), cx);
+                                })
+                            )
+                        );
+                        
                         // Import option
                         if options.can_import {
-                            menu = menu.item(
+                            menu = menu.separator().item(
                                 PopupMenuItem::new("Import OpenAPI").on_click(
                                     window.listener_for(&view, move |this, _, window, cx| {
                                         this.open_import_openapi_dialog(window, cx);
@@ -264,7 +273,8 @@ impl TreeItem {
             can_delete: true,
         };
         
-        let context_menu_button = Some(ContextMenuButton::folder(folder.id, folder_options));
+        let mut context_menu_button = ContextMenuButton::folder(folder.id, folder_options);
+        context_menu_button.set_visible(true); // Always set visible, we control visibility at render time
         
         Self {
             item_type: TreeItemType::Folder(folder),
@@ -272,7 +282,7 @@ impl TreeItem {
             is_expanded,
             is_active: false,
             show_menu: false,
-            context_menu_button,
+            context_menu_button: Some(context_menu_button),
         }
     }
 
@@ -282,7 +292,8 @@ impl TreeItem {
             can_delete: true,
         };
         
-        let context_menu_button = Some(ContextMenuButton::service(service.id, service_options));
+        let mut context_menu_button = ContextMenuButton::service(service.id, service_options);
+        context_menu_button.set_visible(true); // Always set visible, we control visibility at render time
         
         Self {
             item_type: TreeItemType::Service(service),
@@ -290,7 +301,7 @@ impl TreeItem {
             is_expanded: false,
             is_active,
             show_menu: false,
-            context_menu_button,
+            context_menu_button: Some(context_menu_button),
         }
     }
 
@@ -300,7 +311,8 @@ impl TreeItem {
             can_delete: true,
         };
         
-        let context_menu_button = Some(ContextMenuButton::schema(schema.id, schema_options));
+        let mut context_menu_button = ContextMenuButton::schema(schema.id, schema_options);
+        context_menu_button.set_visible(true); // Always set visible, we control visibility at render time
         
         Self {
             item_type: TreeItemType::Schema(schema),
@@ -308,7 +320,7 @@ impl TreeItem {
             is_expanded: false,
             is_active: false,
             show_menu: false,
-            context_menu_button,
+            context_menu_button: Some(context_menu_button),
         }
     }
 
@@ -392,6 +404,7 @@ impl TreeItemType {
 pub enum WorkspaceSidebarEvent {
     OpenService(Uuid),
     OpenSchema(Uuid),
+    OpenFolderDetail(Uuid), // New event for opening folder details
     CreateService(String, Option<Uuid>),
     CreateSchema(String, Option<Uuid>),
     CreateFolder(String, Option<Uuid>, FolderType),
@@ -506,10 +519,7 @@ impl WorkspaceSidebar {
 
     /// Safe menu rendering with fallback for errors
     fn safe_render_context_menu(&self, item: &TreeItem, cx: &mut Context<Self>) -> AnyElement {
-        if !item.is_menu_visible() {
-            return div().into_any_element();
-        }
-
+        // Don't check item.is_menu_visible() since we now control visibility at render time
         match self.try_render_context_menu(item, cx) {
             Ok(menu_element) => menu_element,
             Err(error) => {
@@ -525,9 +535,7 @@ impl WorkspaceSidebar {
             return Err("No context menu button available".to_string());
         };
 
-        if !menu_button.is_visible() {
-            return Ok(div().into_any_element());
-        }
+        // Don't check menu_button.is_visible() since we control visibility at render time
 
         // Validate the item ID exists
         self.validate_project_id(item.id())?;
@@ -876,12 +884,7 @@ impl WorkspaceSidebar {
             }
 
             let is_expanded = self.expanded_folders.contains(&folder.id);
-            let mut item = TreeItem::folder(folder.clone(), safe_depth, is_expanded);
-            
-            // Set menu visibility based on hover state
-            if self.hovered_item == Some(folder.id) {
-                item.set_menu_visible(true);
-            }
+            let item = TreeItem::folder(folder.clone(), safe_depth, is_expanded);
             
             items.push(item);
             
@@ -895,12 +898,7 @@ impl WorkspaceSidebar {
         for service in workspace.services.iter()
             .filter(|s| s.folder_id == parent_id) {
             let is_active = active_service == Some(service.id);
-            let mut item = TreeItem::service(service.clone(), safe_depth, is_active);
-            
-            // Set menu visibility based on hover state
-            if self.hovered_item == Some(service.id) {
-                item.set_menu_visible(true);
-            }
+            let item = TreeItem::service(service.clone(), safe_depth, is_active);
             
             items.push(item);
         }
@@ -931,12 +929,7 @@ impl WorkspaceSidebar {
             }
 
             let is_expanded = self.expanded_folders.contains(&folder.id);
-            let mut item = TreeItem::folder(folder.clone(), safe_depth, is_expanded);
-            
-            // Set menu visibility based on hover state
-            if self.hovered_item == Some(folder.id) {
-                item.set_menu_visible(true);
-            }
+            let item = TreeItem::folder(folder.clone(), safe_depth, is_expanded);
             
             items.push(item);
             
@@ -949,12 +942,7 @@ impl WorkspaceSidebar {
         // Add schemas
         for schema in workspace.schemas.iter()
             .filter(|s| s.folder_id == parent_id) {
-            let mut item = TreeItem::schema(schema.clone(), safe_depth);
-            
-            // Set menu visibility based on hover state
-            if self.hovered_item == Some(schema.id) {
-                item.set_menu_visible(true);
-            }
+            let item = TreeItem::schema(schema.clone(), safe_depth);
             
             items.push(item);
         }
@@ -967,7 +955,6 @@ impl WorkspaceSidebar {
         let item_id = item.id();
         let indentation = item.calculate_indentation();
         let item_name = item.name().to_string();
-        let show_menu = item.show_menu;
         let item_type = &item.item_type;
 
         // Calculate responsive layout values
@@ -1000,8 +987,9 @@ impl WorkspaceSidebar {
             .py_1()
             .rounded_md()
             .bg(background_color)
-            .on_mouse_move(cx.listener(move |this, _, _, _cx| {
+            .on_mouse_move(cx.listener(move |this, _, _, cx| {
                 this.set_hovered_item(Some(item_id));
+                cx.notify(); // Trigger re-render to show menu
             }))
             .on_mouse_down(MouseButton::Left, cx.listener(move |this, _, _, _cx| {
                 this.set_pressed_item(Some(item_id));
@@ -1068,7 +1056,7 @@ impl WorkspaceSidebar {
                             .h_flex()
                             .justify_end()
                             .items_center()
-                            .when(show_menu, |container| {
+                            .when(self.is_item_hovered(item_id), |container| {
                                 container.child(self.safe_render_context_menu(item, cx))
                             })
                     )
@@ -1150,7 +1138,7 @@ impl WorkspaceSidebar {
                             .h_flex()
                             .justify_end()
                             .items_center()
-                            .when(show_menu, |container| {
+                            .when(self.is_item_hovered(item_id), |container| {
                                 container.child(self.safe_render_context_menu(item, cx))
                             })
                     )
@@ -1202,7 +1190,7 @@ impl WorkspaceSidebar {
                             .h_flex()
                             .justify_end()
                             .items_center()
-                            .when(show_menu, |container| {
+                            .when(self.is_item_hovered(item_id), |container| {
                                 container.child(self.safe_render_context_menu(item, cx))
                             })
                     )
@@ -1382,21 +1370,25 @@ impl Render for WorkspaceSidebar {
         // Determine responsive sidebar width with validation
         let validated_width = self.validate_sidebar_width(self.sidebar_width);
         let is_minimum_width = validated_width <= MIN_SIDEBAR_WIDTH;
-        let sidebar_width = if is_minimum_width {
-            px(MIN_SIDEBAR_WIDTH) // Use minimum width for basic usability
-        } else {
-            px(validated_width)
-        };
 
         div()
-            .w(sidebar_width)
-            .min_w(px(MIN_SIDEBAR_WIDTH)) // Ensure minimum width
-            .max_w(px(MAX_SIDEBAR_WIDTH)) // Prevent excessive width
+            // .w(sidebar_width)
+            // .min_w(px(MIN_SIDEBAR_WIDTH)) // Ensure minimum width
+            // .max_w(px(MAX_SIDEBAR_WIDTH)) // Prevent excessive width
             .h_full()
             .bg(rgb(0xf8f9fa))
             .border_r_1()
             .border_color(rgb(0xe0e0e0))
             .v_flex()
+            .on_mouse_move(cx.listener(|this, _event, _, cx| {
+                // Clear hovered item if mouse is not over any specific item
+                // This helps ensure menu disappears when mouse moves to empty areas
+                if this.hovered_item.is_some() {
+                    // Only clear if we're in an empty area (this is a simple heuristic)
+                    // In a more sophisticated implementation, you might track mouse coordinates
+                    cx.notify();
+                }
+            }))
             .child(
                 div()
                     .p_2()

@@ -1,4 +1,4 @@
-use crate::{EnvironmentSelector, EnvironmentSelectorEvent, HttpService, ServiceTabs, ServiceTabsEvent, WorkspaceSidebar, WorkspaceSidebarEvent, ImportConfig};
+use crate::{EnvironmentSelector, EnvironmentSelectorEvent, FolderDetailPage, FolderDetailPageEvent, HttpService, ServiceTabs, ServiceTabsEvent, WorkspaceSidebar, WorkspaceSidebarEvent, ImportConfig};
 use gpui::*;
 use gpui_component::StyledExt;
 use models::{ServiceType, Workspace, WorkspaceView};
@@ -11,6 +11,7 @@ pub struct WorkspaceContent {
     service_tabs: Option<Entity<ServiceTabs>>,
     sidebar: Option<Entity<WorkspaceSidebar>>,
     env_selector: Option<Entity<EnvironmentSelector>>,
+    folder_detail_page: Option<Entity<FolderDetailPage>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -23,6 +24,7 @@ impl WorkspaceContent {
             service_tabs: None,
             sidebar: None,
             env_selector: None,
+            folder_detail_page: None,
             _subscriptions: vec![],
         }
     }
@@ -31,6 +33,7 @@ impl WorkspaceContent {
         let service_tabs = cx.new(|_| ServiceTabs::new());
         let sidebar = cx.new(|_| WorkspaceSidebar::new());
         let env_selector = cx.new(|_| EnvironmentSelector::new());
+        let folder_detail_page = cx.new(|cx| FolderDetailPage::new(cx));
 
         let tabs_sub = cx.subscribe(&service_tabs, |this, _, event, cx| match event {
             ServiceTabsEvent::Select(id) => this.set_active_service(*id, cx),
@@ -40,6 +43,7 @@ impl WorkspaceContent {
         let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
             WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
             WorkspaceSidebarEvent::OpenSchema(_id) => {}
+            WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
             WorkspaceSidebarEvent::CreateService(name, folder_id) => this.create_service(name.clone(), *folder_id, cx),
             WorkspaceSidebarEvent::CreateSchema(name, folder_id) => this.create_schema(name.clone(), *folder_id, cx),
             WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx),
@@ -77,13 +81,21 @@ impl WorkspaceContent {
             EnvironmentSelectorEvent::DeleteVariable(id) => this.delete_variable(*id, cx),
         });
 
+        let folder_detail_sub = cx.subscribe(&folder_detail_page, |this, _, event, cx| match event {
+            FolderDetailPageEvent::NavigateBack => this.navigate_back_from_folder_detail(cx),
+            FolderDetailPageEvent::NavigateToFolder(folder_id) => this.open_folder_detail(*folder_id, cx),
+            FolderDetailPageEvent::UpdateCommonHeaders(folder_id, headers) => this.update_folder_common_headers(*folder_id, headers.clone(), cx),
+            FolderDetailPageEvent::UpdateSearchParams(folder_id, params) => this.update_folder_search_params(*folder_id, params.clone(), cx),
+        });
+
         let registry = workspace::WorkspaceRegistry::global(cx);
         let registry_sub = cx.observe(&registry, |_, _, cx| cx.notify());
 
         self.service_tabs = Some(service_tabs);
         self.sidebar = Some(sidebar);
         self.env_selector = Some(env_selector);
-        self._subscriptions = vec![tabs_sub, sidebar_sub, env_sub, registry_sub];
+        self.folder_detail_page = Some(folder_detail_page);
+        self._subscriptions = vec![tabs_sub, sidebar_sub, env_sub, folder_detail_sub, registry_sub];
     }
 
     pub fn set_view(&mut self, view: WorkspaceView, workspace_id: Option<Uuid>, cx: &mut Context<Self>) {
@@ -323,6 +335,69 @@ impl WorkspaceContent {
         cx.notify();
     }
 
+    fn open_folder_detail(&mut self, folder_id: Uuid, cx: &mut Context<Self>) {
+        // Set the view to FolderDetail
+        self.view = WorkspaceView::FolderDetail(folder_id);
+        println!("DEBUG: View set to FolderDetail({})", folder_id);
+        
+        // Update the workspace's current_view as well to prevent it from being reset
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            if let Some(workspace) = registry.get_active_workspace_mut() {
+                workspace.current_view = WorkspaceView::FolderDetail(folder_id);
+                println!("DEBUG: Updated workspace current_view to FolderDetail({})", folder_id);
+                cx.notify();
+            }
+        });
+        
+        // Get the folder data and update the folder detail page
+        let workspace = registry.read(cx).get_active_workspace().cloned();
+        
+        if let Some(workspace) = workspace {
+            println!("DEBUG: Found workspace with {} folders", workspace.folders.len());
+            if let Some(folder) = workspace.folders.iter().find(|f| f.id == folder_id) {
+                println!("DEBUG: Found folder: {}", folder.name);
+                if let Some(folder_detail_page) = &self.folder_detail_page {
+                    folder_detail_page.update(cx, |page, cx| {
+                        page.set_workspace(Some(workspace.clone()));
+                        page.set_folder(Some(folder.clone()), cx);
+                    });
+                    println!("DEBUG: Updated folder detail page");
+                } else {
+                    println!("DEBUG: folder_detail_page is None");
+                }
+            } else {
+                println!("DEBUG: Folder with id {} not found", folder_id);
+            }
+        } else {
+            println!("DEBUG: No workspace found");
+        }
+        
+        println!("DEBUG: Calling cx.notify()");
+        cx.notify();
+        println!("DEBUG: open_folder_detail completed");
+    }
+
+    fn navigate_back_from_folder_detail(&mut self, cx: &mut Context<Self>) {
+        // Navigate back to services view
+        self.view = WorkspaceView::Services;
+        cx.notify();
+    }
+
+    fn update_folder_common_headers(&mut self, folder_id: Uuid, headers: Vec<models::Header>, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.update_folder_common_headers(folder_id, headers, cx);
+        });
+    }
+
+    fn update_folder_search_params(&mut self, folder_id: Uuid, params: Vec<models::SearchParameter>, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.update_folder_search_params(folder_id, params, cx);
+        });
+    }
+
     fn render_service_content(
         &mut self,
         workspace: &Workspace,
@@ -340,7 +415,7 @@ impl WorkspaceContent {
                     ServiceType::Http(config) => {
                         if !self.http_services.contains_key(&service.id) {
                             let http_service =
-                                cx.new(|cx| HttpService::new(config.clone(), base_url.clone(), window, cx));
+                                cx.new(|cx| HttpService::new(config.clone(), base_url.clone(), service.folder_id, window, cx));
                             self.http_services.insert(service.id, http_service);
                         }
                         self.http_services
@@ -422,15 +497,51 @@ impl WorkspaceContent {
             div().p_4().child("No workspace selected")
         }
     }
+
+    fn render_folder_detail(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        let workspace = registry.read(cx).get_active_workspace().cloned();
+
+        if let Some(workspace) = workspace {
+            if let Some(sidebar) = &self.sidebar {
+                sidebar.update(cx, |s, _| s.set_workspace(workspace.clone()));
+            }
+
+            // Ensure the folder detail page has the current workspace
+            if let Some(folder_detail_page) = &self.folder_detail_page {
+                folder_detail_page.update(cx, |page, _| {
+                    page.set_workspace(Some(workspace.clone()));
+                });
+            }
+
+            div()
+                .h_flex()
+                .size_full()
+                .children(self.sidebar.clone())
+                .child(
+                    div()
+                        .flex_1()
+                        .h_full()
+                        .children(self.folder_detail_page.clone())
+                )
+        } else {
+            div().p_4().child("No workspace selected")
+        }
+    }
 }
 
 impl Render for WorkspaceContent {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        match self.view {
+        println!("DEBUG: WorkspaceContent::render called with view: {:?}", self.view);
+        match &self.view {
             WorkspaceView::Services => self.render_services(window, cx).into_any_element(),
             WorkspaceView::Docs => div().p_4().child("Documentation - coming soon").into_any_element(),
             WorkspaceView::History => div().p_4().child("History - coming soon").into_any_element(),
             WorkspaceView::Settings => div().p_4().child("Settings - coming soon").into_any_element(),
+            WorkspaceView::FolderDetail(_folder_id) => {
+                println!("DEBUG: Rendering FolderDetail view for folder_id: {}", _folder_id);
+                self.render_folder_detail(window, cx).into_any_element()
+            },
         }
     }
 }

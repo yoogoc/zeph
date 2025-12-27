@@ -1073,4 +1073,38 @@ impl WorkspaceRegistry {
         }
         cx.emit(WorkspaceEvent);
     }
+
+    // === Folder Operations ===
+
+    pub fn update_folder_common_headers(&mut self, folder_id: Uuid, headers: Vec<models::Header>, cx: &mut Context<Self>) {
+        let folder_store = FolderStore::new(self.db.conn());
+        if let Err(e) = folder_store.update_common_headers(folder_id, headers.clone()) {
+            error!("Failed to update folder common headers: {}", e);
+            return;
+        }
+
+        // Update the in-memory workspace data
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            if let Some(folder) = workspace.folders.iter_mut().find(|f| f.id == folder_id) {
+                folder.common_headers = headers;
+            }
+        }
+        cx.emit(WorkspaceEvent);
+    }
+
+    pub fn update_folder_search_params(&mut self, folder_id: Uuid, params: Vec<models::SearchParameter>, cx: &mut Context<Self>) {
+        let folder_store = FolderStore::new(self.db.conn());
+        if let Err(e) = folder_store.update_search_params(folder_id, params.clone()) {
+            error!("Failed to update folder search parameters: {}", e);
+            return;
+        }
+
+        // Update the in-memory workspace data
+        if let Some(workspace) = self.get_active_workspace_mut() {
+            if let Some(folder) = workspace.folders.iter_mut().find(|f| f.id == folder_id) {
+                folder.common_search_params = params;
+            }
+        }
+        cx.emit(WorkspaceEvent);
+    }
 }

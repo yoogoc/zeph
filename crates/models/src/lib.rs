@@ -186,6 +186,7 @@ pub enum WorkspaceView {
     Docs,
     History,
     Settings,
+    FolderDetail(Uuid), // New view for folder details
 }
 
 // === Folder ===
@@ -215,6 +216,12 @@ pub struct Folder {
     #[serde(default)]
     pub sync: SyncMeta,
 
+    // New fields for common headers functionality
+    #[serde(default)]
+    pub common_headers: Vec<Header>,
+    #[serde(default)]
+    pub common_search_params: Vec<SearchParameter>,
+
     #[serde(skip)]
     pub is_expanded: bool,
 }
@@ -237,6 +244,8 @@ impl Folder {
             created_at: now,
             updated_at: now,
             sync: SyncMeta::default(),
+            common_headers: Vec::new(),
+            common_search_params: Vec::new(),
             is_expanded: true,
         }
     }
@@ -385,6 +394,21 @@ pub struct Response {
 pub struct Header {
     pub key: SharedString,
     pub value: SharedString,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SearchParameter {
+    pub key: SharedString,
+    pub value: SharedString,
+}
+
+impl SearchParameter {
+    pub fn new(key: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+        }
+    }
 }
 
 // === gRPC ===
