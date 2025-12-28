@@ -11,10 +11,10 @@ pub struct WorkspaceArea {
 }
 
 impl WorkspaceArea {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar = cx.new(|_| Sidebar::new(None, WorkspaceView::Services));
         let content = cx.new(|cx| {
-            let mut c = WorkspaceContent::new(None, WorkspaceView::Services);
+            let mut c = WorkspaceContent::new(None, window, cx);
             c.init(cx);
             c
         });

@@ -6771,6 +6771,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui_tokio",
+ "log",
  "models",
  "reqwest",
  "smallvec",

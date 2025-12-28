@@ -3,7 +3,6 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
-use gpui_component::scroll::ScrollableElement;
 use gpui_component::{h_flex, v_flex, IconName, StyledExt, WindowExt};
 use models::{Folder, FolderType, Schema, Service, ServiceType, Workspace};
 use std::collections::{HashMap, HashSet};
@@ -1500,7 +1499,7 @@ impl Render for WorkspaceSidebar {
         let validated_width = self.validate_sidebar_width(self.sidebar_width);
         let is_minimum_width = validated_width <= MIN_SIDEBAR_WIDTH;
 
-        div()
+        v_flex()
             // .w(sidebar_width)
             // .min_w(px(MIN_SIDEBAR_WIDTH)) // Ensure minimum width
             // .max_w(px(MAX_SIDEBAR_WIDTH)) // Prevent excessive width
@@ -1508,7 +1507,6 @@ impl Render for WorkspaceSidebar {
             .bg(rgb(0xf8f9fa))
             .border_r_1()
             .border_color(rgb(0xe0e0e0))
-            .v_flex()
             .on_mouse_move(cx.listener(|this, _event, _, cx| {
                 // Clear hovered item if mouse is not over any specific item
                 // This helps ensure menu disappears when mouse moves to empty areas

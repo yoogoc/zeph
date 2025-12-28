@@ -3,6 +3,7 @@ use gpui::*;
 use gpui_component::StyledExt;
 use models::{ServiceType, Workspace, WorkspaceView};
 use uuid::Uuid;
+use crate::ws_sidebar::WorkspaceSidebar as WsSidebar;
 
 pub struct WorkspaceContent {
     workspace_id: Option<Uuid>,
@@ -10,19 +11,21 @@ pub struct WorkspaceContent {
     http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
     service_tabs: Option<Entity<ServiceTabs>>,
     sidebar: Option<Entity<WorkspaceSidebar>>,
+    sidebar_next: Entity<WsSidebar>,
     env_selector: Option<Entity<EnvironmentSelector>>,
     folder_detail_page: Option<Entity<FolderDetailPage>>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl WorkspaceContent {
-    pub fn new(_workspace_id: Option<Uuid>, _view: WorkspaceView) -> Self {
+    pub fn new(_workspace_id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         Self {
             workspace_id: None,
             view: WorkspaceView::Services,
             http_services: std::collections::HashMap::new(),
             service_tabs: None,
             sidebar: None,
+            sidebar_next: cx.new(|cx| WsSidebar::new(Workspace::new("default"), window, cx)),
             env_selector: None,
             folder_detail_page: None,
             _subscriptions: vec![],
@@ -470,7 +473,8 @@ impl WorkspaceContent {
             div()
                 .h_flex()
                 .size_full()
-                .children(self.sidebar.clone())
+                // .children(self.sidebar.clone())
+                .child(self.sidebar_next.clone())
                 .child(
                     div()
                         .flex_1()

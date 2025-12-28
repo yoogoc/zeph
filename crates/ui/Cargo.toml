@@ -16,3 +16,4 @@ reqwest.workspace = true
 futures.workspace = true
 chrono.workspace = true
 urlencoding.workspace = true
+log = "0.4.29"
