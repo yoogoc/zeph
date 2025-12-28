@@ -13,11 +13,7 @@ pub struct WorkspaceArea {
 impl WorkspaceArea {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar = cx.new(|_| Sidebar::new(None, WorkspaceView::Services));
-        let content = cx.new(|cx| {
-            let mut c = WorkspaceContent::new(None, window, cx);
-            c.init(cx);
-            c
-        });
+        let content = cx.new(|cx| WorkspaceContent::new(None, window, cx));
 
         let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| {
             let SidebarEvent::SwitchView(view) = event;
@@ -25,10 +21,13 @@ impl WorkspaceArea {
         });
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        let registry_sub = cx.subscribe(&workspace_registry, |this, registry, _event: &workspace::WorkspaceEvent, cx| {
-            let workspace = registry.read(cx).get_active_workspace().cloned();
-            this.set_workspace(workspace, cx);
-        });
+        let registry_sub = cx.subscribe(
+            &workspace_registry,
+            |this, registry, _event: &workspace::WorkspaceEvent, cx| {
+                let workspace = registry.read(cx).get_active_workspace().cloned();
+                this.set_workspace(workspace, cx);
+            },
+        );
 
         Self {
             sidebar,
