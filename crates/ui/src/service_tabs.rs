@@ -1,6 +1,7 @@
 use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::tab::{Tab, TabBar};
+use gpui_component::Sizable;
 use models::Workspace;
 use uuid::Uuid;
 
@@ -50,14 +51,13 @@ impl Render for ServiceTabs {
                     .iter()
                     .find(|s| s.id == service_id)
                     .map(|service| {
-                        Tab::new().label(service.name.clone()).suffix(
+                        Tab::new().pr_1().label(service.name.clone()).suffix(
                             Button::new(format!("close_{}", service_id))
-                                .w(px(24.0))
-                                .h(px(24.0))
-                                .flex_shrink_0()
+                                .small()
                                 .label("×")
                                 .on_click(cx.listener(move |_this, _, _, cx| {
                                     cx.emit(ServiceTabsEvent::Close(service_id));
+                                    cx.stop_propagation();
                                 })),
                         )
                     })

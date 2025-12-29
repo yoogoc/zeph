@@ -87,7 +87,7 @@ impl Render for TitleBar {
                     let workspace_id = workspace.id;
                     Tab::new()
                         .label(workspace.name.clone())
-                        .px_1()
+                        .pr_1()
                         .suffix(
                             Button::new(format!("close_{}", workspace_id))
                                 .small()

@@ -27,6 +27,11 @@ pub enum WorkspaceEvent {
     Reload,
 }
 
+#[derive(Clone, Debug)]
+pub enum WorkspaceServiceEvent {
+    Open(Workspace),
+}
+
 pub fn init(cx: &mut App) {
     WorkspaceRegistry::set_global(cx.new(WorkspaceRegistry::new), cx);
 }

@@ -28,7 +28,7 @@ pub enum WorkspaceSidebarEvent {
     CreateService(SharedString, Option<Uuid>),
     CreateSchema(SharedString, Option<Uuid>),
     CreateFolder(SharedString, Option<Uuid>, FolderType),
-    ToggleFolder(Uuid),
+    // ToggleFolder(Uuid),
     ImportOpenApi(ImportConfig),
     PreviewImport(ImportConfig),
     RequestImportPreview(ImportConfig),

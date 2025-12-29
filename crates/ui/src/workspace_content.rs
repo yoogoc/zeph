@@ -13,9 +13,9 @@ pub struct WorkspaceContent {
     workspace_id: Option<Uuid>,
     view: WorkspaceView,
     http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
-    service_tabs: Option<Entity<ServiceTabs>>,
+    service_tabs: Entity<ServiceTabs>,
     sidebar: Entity<WsSidebar>,
-    env_selector: Option<Entity<EnvironmentSelector>>,
+    env_selector: Entity<EnvironmentSelector>,
     folder_detail_page: Option<Entity<FolderDetailPage>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -118,9 +118,9 @@ impl WorkspaceContent {
             workspace_id: None,
             view: WorkspaceView::Services,
             http_services: std::collections::HashMap::new(),
-            service_tabs: Some(service_tabs),
-            sidebar: sidebar,
-            env_selector: Some(env_selector),
+            service_tabs,
+            sidebar,
+            env_selector,
             folder_detail_page: Some(folder_detail_page),
             _subscriptions: vec![
                 registry_sub,
@@ -541,20 +541,12 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            if let Some(tabs) = &self.service_tabs {
-                tabs.update(cx, |t, _| t.set_workspace(workspace.clone()));
-            }
-            if let Some(env_sel) = &self.env_selector {
-                env_sel.update(cx, |e, _| e.set_workspace(workspace.clone()));
-            }
-
-            // self.sidebar
-            //     .update(cx, |s, cx| s.set_workspace(workspace.clone(), cx));
+            self.service_tabs.update(cx, |t, _| t.set_workspace(workspace.clone()));
+            self.env_selector.update(cx, |e, _| e.set_workspace(workspace.clone()));
 
             div()
                 .h_flex()
                 .size_full()
-                // .children(self.sidebar.clone())
                 .child(self.sidebar.clone())
                 .child(
                     div()
@@ -569,8 +561,8 @@ impl WorkspaceContent {
                                 .justify_between()
                                 .border_b_1()
                                 .border_color(rgb(0xe0e0e0))
-                                .child(div().flex_1().children(self.service_tabs.clone()))
-                                .child(div().px_2().children(self.env_selector.clone())),
+                                .child(div().flex_1().child(self.service_tabs.clone()))
+                                .child(div().px_2().child(self.env_selector.clone())),
                         )
                         .child(self.render_service_content(&workspace, window, cx)),
                 )
