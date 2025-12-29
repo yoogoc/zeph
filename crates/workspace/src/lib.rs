@@ -1,4 +1,4 @@
-use gpui::{App, AppContext, Context, Entity, EventEmitter, Global};
+use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use log::error;
 use models::{
     CreateWorkspace, Environment, EnvironmentVariable, HttpConfig, HttpMethod, Service,
@@ -277,7 +277,7 @@ impl WorkspaceRegistry {
 
     pub fn create_service(
         &mut self,
-        name: String,
+        name: SharedString,
         folder_id: Option<Uuid>,
         cx: &mut Context<Self>,
     ) {
@@ -302,7 +302,7 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent::Reload);
     }
 
-    pub fn create_schema(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+    pub fn create_schema(&mut self, name: SharedString, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
         let workspace_id = match self.get_active_workspace() {
             Some(w) => w.id,
             None => return,
@@ -322,7 +322,7 @@ impl WorkspaceRegistry {
 
     pub fn create_folder(
         &mut self,
-        name: String,
+        name: SharedString,
         parent_id: Option<Uuid>,
         folder_type: models::FolderType,
         cx: &mut Context<Self>,

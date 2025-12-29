@@ -12,6 +12,7 @@ use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
 // Performance optimization: Pre-compiled regex for validation
+use gpui::SharedString;
 use std::sync::OnceLock;
 
 /// Performance optimization: Cache for parsed OpenAPI specs to avoid re-parsing
@@ -24,22 +25,22 @@ fn get_spec_cache() -> &'static std::sync::Mutex<HashMap<u64, OpenApiSpec>> {
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OpenApiSpec {
-    pub openapi: Option<String>,
-    pub swagger: Option<String>,
+    pub openapi: Option<SharedString>,
+    pub swagger: Option<SharedString>,
     pub info: OpenApiInfo,
     #[serde(default)]
-    pub paths: HashMap<String, PathItem>,
+    pub paths: HashMap<SharedString, PathItem>,
     #[serde(default)]
     pub components: Option<Components>,
     #[serde(default)]
-    pub definitions: Option<HashMap<String, SchemaObject>>, // Swagger 2.0
+    pub definitions: Option<HashMap<SharedString, SchemaObject>>, // Swagger 2.0
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OpenApiInfo {
-    pub title: String,
+    pub title: SharedString,
     #[serde(default)]
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -60,27 +61,27 @@ pub struct PathItem {
 #[serde(rename_all = "camelCase")]
 pub struct Operation {
     #[serde(default)]
-    pub tags: Vec<String>,
+    pub tags: Vec<SharedString>,
     #[serde(default)]
-    pub summary: Option<String>,
+    pub summary: Option<SharedString>,
     #[serde(default)]
-    pub description: Option<String>,
-    pub operation_id: Option<String>,
+    pub description: Option<SharedString>,
+    pub operation_id: Option<SharedString>,
     #[serde(default)]
     pub parameters: Vec<ParameterObject>,
     #[serde(default)]
     pub request_body: Option<RequestBodyObject>,
     #[serde(default)]
-    pub responses: HashMap<String, ResponseObject>,
+    pub responses: HashMap<SharedString, ResponseObject>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ParameterObject {
-    pub name: String,
+    pub name: SharedString,
     #[serde(rename = "in")]
-    pub location: String,
+    pub location: SharedString,
     #[serde(default)]
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
@@ -90,19 +91,19 @@ pub struct ParameterObject {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct RequestBodyObject {
     #[serde(default)]
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     #[serde(default)]
     pub required: bool,
     #[serde(default)]
-    pub content: HashMap<String, MediaTypeObject>,
+    pub content: HashMap<SharedString, MediaTypeObject>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct ResponseObject {
     #[serde(default)]
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     #[serde(default)]
-    pub content: Option<HashMap<String, MediaTypeObject>>,
+    pub content: Option<HashMap<SharedString, MediaTypeObject>>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -117,19 +118,19 @@ pub struct MediaTypeObject {
 #[serde(rename_all = "camelCase")]
 pub struct SchemaObject {
     #[serde(rename = "type")]
-    pub schema_type: Option<String>,
+    pub schema_type: Option<SharedString>,
     #[serde(default)]
-    pub properties: Option<HashMap<String, SchemaObject>>,
+    pub properties: Option<HashMap<SharedString, SchemaObject>>,
     #[serde(default)]
-    pub required: Option<Vec<String>>,
+    pub required: Option<Vec<SharedString>>,
     #[serde(default)]
     pub items: Option<Box<SchemaObject>>,
     #[serde(rename = "$ref")]
-    pub ref_path: Option<String>,
+    pub ref_path: Option<SharedString>,
     #[serde(default)]
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     #[serde(rename = "enum")]
-    pub enum_values: Option<Vec<String>>,
+    pub enum_values: Option<Vec<SharedString>>,
     #[serde(default)]
     pub nullable: Option<bool>,
     #[serde(default)]
@@ -139,7 +140,7 @@ pub struct SchemaObject {
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct Components {
     #[serde(default)]
-    pub schemas: HashMap<String, SchemaObject>,
+    pub schemas: HashMap<SharedString, SchemaObject>,
 }
 
 #[derive(Debug)]
@@ -177,23 +178,23 @@ pub enum SchemaFolderStrategy {
 pub struct ImportPreview {
     pub services: Vec<ServicePreview>,
     pub schemas: Vec<SchemaPreview>,
-    pub folders_to_create: Vec<String>,
+    pub folders_to_create: Vec<SharedString>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ServicePreview {
-    pub name: String,
-    pub method: String,
-    pub path: String,
-    pub tag: Option<String>,
-    pub target_folder: String,
+    pub name: SharedString,
+    pub method: SharedString,
+    pub path: SharedString,
+    pub tag: Option<SharedString>,
+    pub target_folder: SharedString,
 }
 
 #[derive(Debug, Clone)]
 pub struct SchemaPreview {
-    pub name: String,
-    pub schema_type: String,
-    pub target_folder: String,
+    pub name: SharedString,
+    pub schema_type: SharedString,
+    pub target_folder: SharedString,
 }
 
 pub fn parse_openapi(content: &str) -> Result<OpenApiSpec> {
@@ -338,7 +339,7 @@ pub fn check_name_conflicts(
                     .summary
                     .clone()
                     .or_else(|| op.operation_id.clone())
-                    .unwrap_or_else(|| format!("{} {}", method.as_str(), path));
+                    .unwrap_or_else(|| format!("{} {}", method.as_str(), path).into());
 
                 let target_folder_id =
                     determine_service_folder_id(options, &HashMap::new(), &op.tags);
@@ -346,14 +347,14 @@ pub fn check_name_conflicts(
                 // Check if service with same name exists in target folder
                 if let Some(existing_service) = existing_services
                     .iter()
-                    .find(|s| s.name.as_ref() == name && s.folder_id == target_folder_id)
+                    .find(|s| s.name == name && s.folder_id == target_folder_id)
                 {
                     conflicts.push(NameConflict {
                         conflict_type: ConflictType::Service,
                         name: name.clone(),
                         existing_id: Some(existing_service.id),
                         suggested_name: generate_unique_service_name(
-                            &name,
+                            name,
                             existing_services,
                             target_folder_id,
                         ),
@@ -377,7 +378,7 @@ pub fn check_name_conflicts(
         for (name, _) in defs {
             if let Some(existing_schema) = existing_schemas
                 .iter()
-                .find(|s| s.name.as_ref() == name && s.folder_id == schema_folder_id)
+                .find(|s| s.name.eq(name) && s.folder_id == schema_folder_id)
             {
                 conflicts.push(NameConflict {
                     conflict_type: ConflictType::Schema,
@@ -402,9 +403,9 @@ pub fn check_name_conflicts(
 #[derive(Debug, Clone)]
 pub struct NameConflict {
     pub conflict_type: ConflictType,
-    pub name: String,
+    pub name: SharedString,
     pub existing_id: Option<Uuid>,
-    pub suggested_name: String,
+    pub suggested_name: SharedString,
     pub target_folder_id: Option<Uuid>,
 }
 
@@ -416,10 +417,10 @@ pub enum ConflictType {
 
 /// Generates a unique service name by appending a number
 fn generate_unique_service_name(
-    base_name: &str,
+    base_name: SharedString,
     existing_services: &[Service],
     target_folder_id: Option<Uuid>,
-) -> String {
+) -> SharedString {
     let mut counter = 1;
     loop {
         let candidate = format!("{} ({})", base_name, counter);
@@ -427,7 +428,7 @@ fn generate_unique_service_name(
             .iter()
             .any(|s| s.name.as_ref() == candidate && s.folder_id == target_folder_id)
         {
-            return candidate;
+            return candidate.into();
         }
         counter += 1;
 
@@ -437,7 +438,8 @@ fn generate_unique_service_name(
                 "{} ({})",
                 base_name,
                 uuid::Uuid::new_v4().to_string()[..8].to_string()
-            );
+            )
+            .into();
         }
     }
 }
@@ -447,7 +449,7 @@ fn generate_unique_schema_name(
     base_name: &str,
     existing_schemas: &[Schema],
     target_folder_id: Option<Uuid>,
-) -> String {
+) -> SharedString {
     let mut counter = 1;
     loop {
         let candidate = format!("{}{}", base_name, counter);
@@ -455,7 +457,7 @@ fn generate_unique_schema_name(
             .iter()
             .any(|s| s.name.as_ref() == candidate && s.folder_id == target_folder_id)
         {
-            return candidate;
+            return candidate.into();
         }
         counter += 1;
 
@@ -465,7 +467,8 @@ fn generate_unique_schema_name(
                 "{}{}",
                 base_name,
                 uuid::Uuid::new_v4().to_string()[..8].to_string()
-            );
+            )
+            .into();
         }
     }
 }
@@ -475,7 +478,7 @@ fn generate_unique_schema_name(
 #[derive(Debug, Clone)]
 pub enum ConflictResolution {
     Skip,           // Skip importing the conflicting item
-    Rename(String), // Rename to the provided name
+    Rename(SharedString), // Rename to the provided name
     Replace,        // Replace the existing item
 }
 
@@ -483,7 +486,7 @@ pub enum ConflictResolution {
 /// Implements Requirement 6.4 for conflict handling
 pub fn resolve_conflicts(
     conflicts: &[NameConflict],
-    resolutions: &HashMap<String, ConflictResolution>,
+    resolutions: &HashMap<SharedString, ConflictResolution>,
 ) -> Result<()> {
     for conflict in conflicts {
         if !resolutions.contains_key(&conflict.name) {
@@ -527,7 +530,7 @@ pub fn import_openapi_with_validation(
     existing_folders: &[Folder],
     existing_services: &[Service],
     existing_schemas: &[Schema],
-    conflict_resolutions: Option<&HashMap<String, ConflictResolution>>,
+    conflict_resolutions: Option<&HashMap<SharedString, ConflictResolution>>,
 ) -> Result<ImportResult> {
     // Step 1: Validate content and options
     let spec = validate_import_request(content, &options, existing_folders)?;
@@ -539,7 +542,7 @@ pub fn import_openapi_with_validation(
     if !conflicts.is_empty() {
         if let Some(resolutions) = conflict_resolutions {
             // Convert conflicts to string keys for resolution lookup
-            let conflict_map: HashMap<String, ConflictResolution> = conflicts
+            let conflict_map: HashMap<SharedString, ConflictResolution> = conflicts
                 .iter()
                 .filter_map(|c| {
                     resolutions
@@ -604,7 +607,7 @@ pub fn import_openapi_with_options_and_existing_folders(
     let mut folders: Vec<Folder> = vec![];
     let mut services: Vec<Service> = vec![];
     let mut schemas: Vec<Schema> = vec![];
-    let mut tag_folder_map: HashMap<String, Uuid> = HashMap::new();
+    let mut tag_folder_map: HashMap<SharedString, Uuid> = HashMap::new();
 
     // Handle folder creation based on options
     match options.target_folder {
@@ -688,7 +691,7 @@ pub fn import_openapi_with_options_and_existing_folders(
                     .summary
                     .clone()
                     .or_else(|| op.operation_id.clone())
-                    .unwrap_or_else(|| format!("{} {}", method.as_str(), path));
+                    .unwrap_or_else(|| format!("{} {}", method.as_str(), path).into());
 
                 let folder_id = determine_service_folder_id(&options, &tag_folder_map, &op.tags);
 
@@ -710,7 +713,7 @@ pub fn import_openapi_with_options_and_existing_folders(
                         example: p
                             .schema
                             .as_ref()
-                            .and_then(|s| s.example.as_ref().map(|e| e.to_string())),
+                            .and_then(|s| s.example.as_ref().map(|e| e.to_string().into())),
                     })
                     .collect();
 
@@ -726,7 +729,7 @@ pub fn import_openapi_with_options_and_existing_folders(
                                 .schema
                                 .as_ref()
                                 .and_then(|s| s.ref_path.clone().or_else(|| s.schema_type.clone())),
-                            example: mt.example.as_ref().map(|e| e.to_string()),
+                            example: mt.example.as_ref().map(|e| e.to_string().into()),
                         })
                         .collect(),
                 });
@@ -747,7 +750,7 @@ pub fn import_openapi_with_options_and_existing_folders(
                                         schema: mt.schema.as_ref().and_then(|s| {
                                             s.ref_path.clone().or_else(|| s.schema_type.clone())
                                         }),
-                                        example: mt.example.as_ref().map(|e| e.to_string()),
+                                        example: mt.example.as_ref().map(|e| e.to_string().into()),
                                     })
                                     .collect()
                             })
@@ -837,8 +840,8 @@ pub fn import_openapi_with_options_and_existing_folders(
 
 fn determine_service_folder_id(
     options: &ImportOptions,
-    tag_folder_map: &HashMap<String, Uuid>,
-    tags: &[String],
+    tag_folder_map: &HashMap<SharedString, Uuid>,
+    tags: &[SharedString],
 ) -> Option<Uuid> {
     match options.target_folder {
         Some(target_folder_id) => {
@@ -1017,11 +1020,11 @@ pub fn generate_import_preview(
                         .filter(|tag| {
                             !existing_folders.iter().any(|f| {
                                 f.parent_id == Some(target_folder_id)
-                                    && f.name.as_ref() == *tag
+                                    && f.name.eq(*tag)
                                     && f.folder_type == FolderType::Service
                             })
                         })
-                        .map(|tag| format!("{}/{}", target_folder_name, tag)),
+                        .map(|tag| format!("{}/{}", target_folder_name, tag).into()),
                 );
             }
         }
@@ -1033,7 +1036,7 @@ pub fn generate_import_preview(
                     .filter(|tag| {
                         !existing_folders.iter().any(|f| {
                             f.parent_id.is_none()
-                                && f.name.as_ref() == *tag
+                                && f.name.eq(*tag)
                                 && f.folder_type == FolderType::Service
                         })
                     })
@@ -1058,7 +1061,7 @@ pub fn generate_import_preview(
                     .summary
                     .clone()
                     .or_else(|| op.operation_id.clone())
-                    .unwrap_or_else(|| format!("{} {}", method.as_str(), path));
+                    .unwrap_or_else(|| format!("{} {}", method.as_str(), path).into());
 
                 let tag = op.tags.first().cloned();
                 let target_folder =
@@ -1066,7 +1069,7 @@ pub fn generate_import_preview(
 
                 services.push(ServicePreview {
                     name,
-                    method: method.as_str().to_string(),
+                    method: method.as_str().into(),
                     path: path.clone(),
                     tag,
                     target_folder,
@@ -1088,11 +1091,7 @@ pub fn generate_import_preview(
 
         // Performance optimization: Use iterator and collect
         schemas.extend(defs.iter().map(|(name, schema_obj)| {
-            let schema_type = schema_obj
-                .schema_type
-                .as_deref()
-                .unwrap_or("object")
-                .to_string();
+            let schema_type = schema_obj.schema_type.clone().unwrap_or("object".into());
             SchemaPreview {
                 name: name.clone(),
                 schema_type,
@@ -1130,19 +1129,19 @@ pub fn generate_import_preview(
 fn determine_enhanced_target_folder_name_optimized(
     options: &ImportOptions,
     folder_lookup: &HashMap<Uuid, &Folder>,
-    tag: &Option<String>,
-) -> String {
+    tag: &Option<SharedString>,
+) -> SharedString {
     match options.target_folder {
         Some(target_folder_id) => {
             let target_folder_path = if let Some(folder) = folder_lookup.get(&target_folder_id) {
                 build_folder_path_optimized(folder, folder_lookup)
             } else {
-                "Selected Folder".to_string()
+                "Selected Folder".into()
             };
 
             if options.create_subfolders {
                 if let Some(tag) = tag {
-                    format!("{}/{}", target_folder_path, tag)
+                    format!("{}/{}", target_folder_path, tag).into()
                 } else {
                     target_folder_path
                 }
@@ -1150,7 +1149,7 @@ fn determine_enhanced_target_folder_name_optimized(
                 target_folder_path
             }
         }
-        None => tag.clone().unwrap_or_else(|| "Workspace Root".to_string()),
+        None => tag.clone().unwrap_or_else(|| "Workspace Root".into()),
     }
 }
 
@@ -1159,24 +1158,24 @@ fn determine_enhanced_target_folder_name_optimized(
 fn determine_enhanced_schema_target_folder_name_optimized(
     options: &ImportOptions,
     folder_lookup: &HashMap<Uuid, &Folder>,
-) -> String {
+) -> SharedString {
     match &options.schema_folder_strategy {
         SchemaFolderStrategy::SameAsServices => {
             if let Some(target_folder_id) = options.target_folder {
                 if let Some(folder) = folder_lookup.get(&target_folder_id) {
                     build_folder_path_optimized(folder, folder_lookup)
                 } else {
-                    "Selected Folder".to_string()
+                    "Selected Folder".into()
                 }
             } else {
-                "Workspace Root".to_string()
+                "Workspace Root".into()
             }
         }
         SchemaFolderStrategy::ExistingSchemaFolder(folder_id) => {
             if let Some(folder) = folder_lookup.get(folder_id) {
                 build_folder_path_optimized(folder, folder_lookup)
             } else {
-                "Existing Schema Folder".to_string()
+                "Existing Schema Folder".into()
             }
         }
         SchemaFolderStrategy::SeparateFolder => {
@@ -1187,22 +1186,22 @@ fn determine_enhanced_schema_target_folder_name_optimized(
                         if let Some(parent) = folder_lookup.get(&parent_id) {
                             build_folder_path_optimized(parent, folder_lookup)
                         } else {
-                            "Workspace Root".to_string()
+                            "Workspace Root".into()
                         }
                     } else {
-                        "Workspace Root".to_string()
+                        "Workspace Root".into()
                     }
                 } else {
-                    "Workspace Root".to_string()
+                    "Workspace Root".into()
                 }
             } else {
-                "Workspace Root".to_string()
+                "Workspace Root".into()
             };
 
             if base_path == "Workspace Root" {
-                "Schemas".to_string()
+                "Schemas".into()
             } else {
-                format!("{}/Schemas", base_path)
+                format!("{}/Schemas", base_path).into()
             }
         }
     }
@@ -1210,7 +1209,10 @@ fn determine_enhanced_schema_target_folder_name_optimized(
 
 /// Performance-optimized folder path building with lookup map
 /// Implements Requirement 5.4 for complete folder path display
-fn build_folder_path_optimized(folder: &Folder, folder_lookup: &HashMap<Uuid, &Folder>) -> String {
+fn build_folder_path_optimized(
+    folder: &Folder,
+    folder_lookup: &HashMap<Uuid, &Folder>,
+) -> SharedString {
     let mut path_parts = Vec::new();
     let mut current_folder = Some(folder);
 
@@ -1227,9 +1229,9 @@ fn build_folder_path_optimized(folder: &Folder, folder_lookup: &HashMap<Uuid, &F
     path_parts.reverse();
 
     if path_parts.is_empty() {
-        "Workspace Root".to_string()
+        "Workspace Root".into()
     } else {
-        path_parts.join("/")
+        path_parts.join("/").into()
     }
 }
 
@@ -1268,7 +1270,7 @@ fn check_schema_folder_exists_optimized(
 fn get_schema_folder_creation_path_optimized(
     options: &ImportOptions,
     folder_lookup: &HashMap<Uuid, &Folder>,
-) -> String {
+) -> SharedString {
     match options.target_folder {
         Some(target_folder_id) => {
             if let Some(folder) = folder_lookup.get(&target_folder_id) {
@@ -1279,22 +1281,23 @@ fn get_schema_folder_creation_path_optimized(
                             "{}/Schemas",
                             build_folder_path_optimized(parent, folder_lookup)
                         )
+                        .into()
                     } else {
-                        "Schemas".to_string()
+                        "Schemas".into()
                     }
                 } else {
-                    "Schemas".to_string()
+                    "Schemas".into()
                 }
             } else {
-                "Schemas".to_string()
+                "Schemas".into()
             }
         }
-        None => "Schemas".to_string(),
+        None => "Schemas".into(),
     }
 }
 
 fn convert_schema_object(workspace_id: Uuid, name: &str, obj: &SchemaObject) -> Schema {
-    let schema_type = match obj.schema_type.as_deref() {
+    let schema_type = match obj.schema_type.as_ref().map(|x| x.as_str()).as_deref() {
         Some("object") => SchemaType::Object,
         Some("array") => SchemaType::Array,
         Some("string") => {
@@ -1322,7 +1325,7 @@ fn convert_schema_object(workspace_id: Uuid, name: &str, obj: &SchemaObject) -> 
                     description: prop_obj.description.clone(),
                     nullable: prop_obj.nullable.unwrap_or(false),
                     default: None,
-                    example: prop_obj.example.as_ref().map(|e| e.to_string()),
+                    example: prop_obj.example.as_ref().map(|e| e.to_string().into()),
                 })
                 .collect()
         })
@@ -1339,12 +1342,16 @@ fn convert_schema_object(workspace_id: Uuid, name: &str, obj: &SchemaObject) -> 
 }
 
 fn convert_property_type(obj: &SchemaObject) -> PropertyType {
-    if let Some(ref_path) = &obj.ref_path {
-        let ref_name = ref_path.split('/').last().unwrap_or(ref_path).to_string();
-        return PropertyType::Ref(ref_name);
+    if let Some(ref_path) = obj.ref_path.clone() {
+        return if ref_path.contains("/") {
+            let last_part = ref_path.split('/').last().unwrap().to_string();
+            PropertyType::Ref(last_part.into())
+        } else {
+            PropertyType::Ref(ref_path.into())
+        };
     }
 
-    match obj.schema_type.as_deref() {
+    match obj.schema_type.as_ref().map(|x| x.as_str()).as_deref() {
         Some("string") => PropertyType::String,
         Some("integer") => PropertyType::Integer,
         Some("number") => PropertyType::Number,

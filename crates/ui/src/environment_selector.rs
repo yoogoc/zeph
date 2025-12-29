@@ -290,9 +290,9 @@ impl EnvironmentManager {
         for var in &variables {
             if !self.var_inputs.contains_key(&var.id) {
                 let var_name = var.name.to_string();
-                let var_value = var.value().unwrap_or("").to_string();
+                let var_value = var.value().unwrap_or("".into());
                 let name_input = cx.new(|cx| InputState::new(window, cx).default_value(&var_name));
-                let value_input = cx.new(|cx| InputState::new(window, cx).default_value(&var_value));
+                let value_input = cx.new(|cx| InputState::new(window, cx).default_value(var_value));
                 self.var_inputs.insert(var.id, VarInputs { name: name_input, value: value_input });
             }
         }
@@ -351,7 +351,7 @@ impl EnvironmentManager {
                                             .primary()
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if let Some(input) = &this.base_url_input {
-                                                    let url = input.read(cx).value().to_string();
+                                                    let url = input.read(cx).value();
                                                     if let Some(e) = this.environments.iter_mut().find(|e| e.id == env_id) {
                                                         e.base_url = url;
                                                         cx.emit(EnvironmentManagerEvent::Update(e.clone()));
@@ -427,7 +427,7 @@ impl EnvironmentManager {
                 let var_id = var.id;
                 let var_clone = var.clone();
                 let var_name = var.name.clone();
-                let var_value = var.value().unwrap_or("").to_string();
+                let var_value = var.value().unwrap_or("".into());
 
                 let inputs = self.var_inputs.get(&var_id);
 
@@ -462,10 +462,10 @@ impl EnvironmentManager {
                                     .icon(IconName::Check)
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         if let Some(inputs) = this.var_inputs.get(&var_id) {
-                                            let name = inputs.name.read(cx).value().to_string();
-                                            let value = inputs.value.read(cx).value().to_string();
+                                            let name = inputs.name.read(cx).value();
+                                            let value = inputs.value.read(cx).value();
                                             let mut updated = var_clone.clone();
-                                            updated.name = name.into();
+                                            updated.name = name;
                                             updated.local_value = Some(value);
                                             cx.emit(EnvironmentManagerEvent::UpdateVariable(updated.clone()));
                                             for e in &mut this.environments {

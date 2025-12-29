@@ -15,7 +15,7 @@ pub enum ImportDialogEvent {
     Import(ImportConfig),
     Cancel,
     RequestPreview(ImportConfig),
-    ResolveConflicts(ImportConfig, HashMap<String, ConflictResolution>),
+    ResolveConflicts(ImportConfig, HashMap<SharedString, ConflictResolution>),
 }
 
 #[derive(Debug, Clone)]
@@ -85,7 +85,7 @@ pub struct ImportDialog {
     // Enhanced error handling
     current_error: Option<ImportError>,
     pending_conflicts: Option<Vec<NameConflict>>,
-    conflict_resolutions: HashMap<String, ConflictResolution>,
+    conflict_resolutions: HashMap<SharedString, ConflictResolution>,
     
     // State
     is_loading: bool,
@@ -218,7 +218,7 @@ impl ImportDialog {
     
     /// Handle conflict resolution selection
     /// Implements Requirement 6.4 for conflict resolution
-    fn handle_conflict_resolution(&mut self, conflict_name: String, resolution: ConflictResolution) {
+    fn handle_conflict_resolution(&mut self, conflict_name: SharedString, resolution: ConflictResolution) {
         self.conflict_resolutions.insert(conflict_name, resolution);
     }
     
@@ -770,7 +770,7 @@ impl ImportDialog {
     }
     
     /// Get unique target folders from preview data
-    fn get_unique_target_folders(&self, preview: &ImportPreview) -> Vec<String> {
+    fn get_unique_target_folders(&self, preview: &ImportPreview) -> Vec<SharedString> {
         let mut folders = std::collections::HashSet::new();
         
         // Add service target folders
@@ -783,7 +783,7 @@ impl ImportDialog {
             folders.insert(schema.target_folder.clone());
         }
         
-        let mut folder_list: Vec<String> = folders.into_iter().collect();
+        let mut folder_list: Vec<SharedString> = folders.into_iter().collect();
         folder_list.sort();
         folder_list
     }

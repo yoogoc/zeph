@@ -9,6 +9,8 @@ pub const SCHEMA_ID: &str = "schemas";
 
 #[derive(Debug)]
 pub enum TreeId {
+    ServiceRoot,
+    SchemaRoot,
     Service(Uuid),
     Schema(Uuid),
 }
@@ -17,10 +19,18 @@ impl TreeId {
     pub fn new(value: SharedString) -> Self {
         let parts: Vec<&str> = value.split("/").collect();
         let x = parts[0];
-        match x {
-            SERVICE_ID => TreeId::Service(Uuid::parse_str(&parts[1]).unwrap()),
-            SCHEMA_ID => TreeId::Schema(Uuid::parse_str(&parts[1]).unwrap()),
-            _ => panic!("Invalid tree id"),
+        if parts.len() == 1 {
+            match x {
+                SERVICE_ID => TreeId::ServiceRoot,
+                SCHEMA_ID => TreeId::SchemaRoot,
+                _ => unreachable!(),
+            }
+        } else {
+            match x {
+                SERVICE_ID => TreeId::Service(Uuid::parse_str(&parts[1]).unwrap()),
+                SCHEMA_ID => TreeId::Schema(Uuid::parse_str(&parts[1]).unwrap()),
+                _ => unreachable!(),
+            }
         }
     }
 }

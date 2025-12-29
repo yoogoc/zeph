@@ -81,7 +81,7 @@ pub struct Environment {
     pub id: Uuid,
     pub workspace_id: Uuid,
     pub name: SharedString,
-    pub base_url: String,
+    pub base_url: SharedString,
     pub is_default: bool,
     pub sort_order: i32,
     pub created_at: i64,
@@ -99,7 +99,7 @@ impl Environment {
             id: Uuid::new_v4(),
             workspace_id,
             name: name.into(),
-            base_url: String::new(),
+            base_url: "".into(),
             is_default: false,
             sort_order: 0,
             created_at: now,
@@ -116,9 +116,9 @@ pub struct EnvironmentVariable {
     pub environment_id: Uuid,
     pub name: SharedString,
     pub var_type: VariableType,
-    pub remote_value: Option<String>,
-    pub local_value: Option<String>,
-    pub description: Option<String>,
+    pub remote_value: Option<SharedString>,
+    pub local_value: Option<SharedString>,
+    pub description: Option<SharedString>,
     pub created_at: i64,
     pub updated_at: i64,
 }
@@ -139,8 +139,8 @@ impl EnvironmentVariable {
         }
     }
 
-    pub fn value(&self) -> Option<&str> {
-        self.local_value.as_deref().or(self.remote_value.as_deref())
+    pub fn value(&self) -> Option<SharedString> {
+        self.local_value.clone().or(self.remote_value.clone())
     }
 }
 
@@ -209,7 +209,7 @@ pub struct Folder {
     pub parent_id: Option<Uuid>,
     pub folder_type: FolderType,
     pub name: SharedString,
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     pub sort_order: i32,
     pub created_at: i64,
     pub updated_at: i64,
@@ -258,7 +258,7 @@ pub struct Service {
     pub workspace_id: Uuid,
     pub folder_id: Option<Uuid>,
     pub name: SharedString,
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     pub service_type: ServiceType,
     pub deprecated: bool,
     pub sort_order: i32,
@@ -299,11 +299,11 @@ pub enum ServiceType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct HttpConfig {
     pub method: HttpMethod,
-    pub path: String,
+    pub path: SharedString,
     pub parameters: Vec<Parameter>,
     pub request_body: Option<RequestBody>,
     pub responses: Vec<Response>,
-    pub security: Vec<String>,
+    pub security: Vec<SharedString>,
     #[serde(default = "default_use_base_url")]
     pub use_base_url: bool,
 }
@@ -316,7 +316,7 @@ impl Default for HttpConfig {
     fn default() -> Self {
         Self {
             method: HttpMethod::Get,
-            path: String::new(),
+            path: "".into(),
             parameters: vec![],
             request_body: None,
             responses: vec![],
@@ -353,12 +353,12 @@ impl HttpMethod {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Parameter {
-    pub name: String,
+    pub name: SharedString,
     pub location: ParameterLocation,
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     pub required: bool,
-    pub schema: Option<String>,
-    pub example: Option<String>,
+    pub schema: Option<SharedString>,
+    pub example: Option<SharedString>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -371,22 +371,22 @@ pub enum ParameterLocation {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RequestBody {
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     pub required: bool,
     pub content: Vec<MediaContent>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MediaContent {
-    pub media_type: String,
-    pub schema: Option<String>,
-    pub example: Option<String>,
+    pub media_type: SharedString,
+    pub schema: Option<SharedString>,
+    pub example: Option<SharedString>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Response {
-    pub status_code: String,
-    pub description: String,
+    pub status_code: SharedString,
+    pub description: SharedString,
     pub content: Vec<MediaContent>,
 }
 
@@ -493,10 +493,10 @@ pub struct Schema {
     pub workspace_id: Uuid,
     pub folder_id: Option<Uuid>,
     pub name: SharedString,
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     pub schema_type: SchemaType,
     pub properties: Vec<SchemaProperty>,
-    pub required: Vec<String>,
+    pub required: Vec<SharedString>,
     pub sort_order: i32,
     pub created_at: i64,
     pub updated_at: i64,
@@ -533,17 +533,17 @@ pub enum SchemaType {
     Integer,
     Number,
     Boolean,
-    Enum(Vec<String>),
+    Enum(Vec<SharedString>),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SchemaProperty {
-    pub name: String,
+    pub name: SharedString,
     pub property_type: PropertyType,
-    pub description: Option<String>,
+    pub description: Option<SharedString>,
     pub nullable: bool,
-    pub default: Option<String>,
-    pub example: Option<String>,
+    pub default: Option<SharedString>,
+    pub example: Option<SharedString>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -553,6 +553,6 @@ pub enum PropertyType {
     Number,
     Boolean,
     Array(Box<PropertyType>),
-    Ref(String), // Reference to another schema by name
+    Ref(SharedString), // Reference to another schema by name
     Object,
 }

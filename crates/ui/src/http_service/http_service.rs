@@ -22,14 +22,14 @@ pub struct HttpService {
     request_panel: Entity<RequestPanel>,
     response_panel: Entity<ResponsePanel>,
     is_loading: bool,
-    base_url: String,
+    base_url: SharedString,
     use_base_url: bool,
     folder_id: Option<Uuid>,
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
 
 impl HttpService {
-    pub fn new(config: HttpConfig, base_url: Option<String>, folder_id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(config: HttpConfig, base_url: Option<SharedString>, folder_id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let url = config.path.clone();
         let use_base_url = config.use_base_url;
         let url = cx.new(|cx| InputState::new(window, cx).default_value(&url));
@@ -96,7 +96,7 @@ impl HttpService {
     }
 
     /// Updates the base_url when the environment changes
-    pub fn set_base_url(&mut self, base_url: String, cx: &mut Context<Self>) {
+    pub fn set_base_url(&mut self, base_url: SharedString, cx: &mut Context<Self>) {
         self.base_url = base_url.clone();
         self.request_panel.update(cx, |panel, _cx| {
             panel.set_base_url(base_url);

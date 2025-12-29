@@ -301,7 +301,7 @@ impl WorkspaceContent {
     fn resolve_import_conflicts(
         &mut self,
         config: ImportConfig,
-        resolutions: std::collections::HashMap<String, workspace::ConflictResolution>,
+        resolutions: std::collections::HashMap<SharedString, workspace::ConflictResolution>,
         cx: &mut Context<Self>,
     ) {
         let registry = workspace::WorkspaceRegistry::global(cx);
@@ -342,14 +342,14 @@ impl WorkspaceContent {
         });
     }
 
-    fn create_service(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+    fn create_service(&mut self, name: SharedString, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
             registry.create_service(name, folder_id, cx);
         });
     }
 
-    fn create_schema(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+    fn create_schema(&mut self, name: SharedString, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
             registry.create_schema(name, folder_id, cx);
@@ -358,7 +358,7 @@ impl WorkspaceContent {
 
     fn create_folder(
         &mut self,
-        name: String,
+        name: SharedString,
         parent_id: Option<Uuid>,
         folder_type: models::FolderType,
         cx: &mut Context<Self>,

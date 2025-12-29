@@ -34,7 +34,7 @@ pub struct RequestPanel {
     active_tab: RequestTab,
     is_loading: bool,
     use_base_url: bool,
-    base_url: String,
+    base_url: SharedString,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -45,7 +45,7 @@ impl RequestPanel {
         method: HttpMethod,
         url: Entity<InputState>,
         use_base_url: bool,
-        base_url: String,
+        base_url: SharedString,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -89,7 +89,7 @@ impl RequestPanel {
         self.use_base_url = use_base_url;
     }
 
-    pub fn set_base_url(&mut self, base_url: String) {
+    pub fn set_base_url(&mut self, base_url: SharedString) {
         self.base_url = base_url;
     }
 

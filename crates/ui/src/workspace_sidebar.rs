@@ -133,7 +133,7 @@ impl ContextMenuButton {
                                 window.listener_for(&view, move |this, _, _window, cx| {
                                     this.handle_menu_event(
                                         WorkspaceSidebarEvent::CreateService(
-                                            "New Service".to_string(),
+                                            "New Service".into(),
                                             Some(item_id),
                                         ),
                                         cx,
@@ -147,7 +147,7 @@ impl ContextMenuButton {
                                 window.listener_for(&view, move |this, _, _window, cx| {
                                     this.handle_menu_event(
                                         WorkspaceSidebarEvent::CreateSchema(
-                                            "New Schema".to_string(),
+                                            "New Schema".into(),
                                             Some(item_id),
                                         ),
                                         cx,
@@ -172,7 +172,7 @@ impl ContextMenuButton {
                                     };
                                     this.handle_menu_event(
                                         WorkspaceSidebarEvent::CreateFolder(
-                                            "New Folder".to_string(),
+                                            "New Folder".into(),
                                             Some(item_id),
                                             folder_type,
                                         ),
@@ -418,19 +418,19 @@ impl TreeItemType {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum WorkspaceSidebarEvent {
     OpenService(Uuid),
     OpenSchema(Uuid),
     OpenFolderDetail(Uuid), // New event for opening folder details
-    CreateService(String, Option<Uuid>),
-    CreateSchema(String, Option<Uuid>),
-    CreateFolder(String, Option<Uuid>, FolderType),
+    CreateService(SharedString, Option<Uuid>),
+    CreateSchema(SharedString, Option<Uuid>),
+    CreateFolder(SharedString, Option<Uuid>, FolderType),
     ToggleFolder(Uuid),
     ImportOpenApi(ImportConfig),
     PreviewImport(ImportConfig),
     RequestImportPreview(ImportConfig),
-    ResolveImportConflicts(ImportConfig, HashMap<String, ConflictResolution>),
+    ResolveImportConflicts(ImportConfig, HashMap<SharedString, ConflictResolution>),
     // New menu events
     DeleteService(Uuid),
     DeleteSchema(Uuid),
@@ -1326,7 +1326,7 @@ impl WorkspaceSidebar {
                 .confirm()
                 .child(Input::new(&input).w_full())
                 .on_ok(move |_, window, cx| {
-                    let name = input_clone.read(cx).value().to_string();
+                    let name = input_clone.read(cx).value();
                     if !name.trim().is_empty() {
                         if let Some(this) = this_clone.upgrade() {
                             this.update(cx, |_, cx| {
@@ -1354,7 +1354,7 @@ impl WorkspaceSidebar {
                 .confirm()
                 .child(Input::new(&input).w_full())
                 .on_ok(move |_, window, cx| {
-                    let name = input_clone.read(cx).value().to_string();
+                    let name = input_clone.read(cx).value();
                     if !name.trim().is_empty() {
                         if let Some(this) = this_clone.upgrade() {
                             this.update(cx, |_, cx| {
@@ -1388,7 +1388,7 @@ impl WorkspaceSidebar {
                 .confirm()
                 .child(Input::new(&input).w_full())
                 .on_ok(move |_, window, cx| {
-                    let name = input_clone.read(cx).value().to_string();
+                    let name = input_clone.read(cx).value();
                     if !name.trim().is_empty() {
                         if let Some(this) = this_clone.upgrade() {
                             this.update(cx, |_, cx| {
