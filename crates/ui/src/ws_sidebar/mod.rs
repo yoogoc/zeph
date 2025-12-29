@@ -1,7 +1,7 @@
 mod utils;
 
+use std::collections::HashMap;
 use crate::ws_sidebar::utils::{cal_icon, TreeId};
-use crate::WorkspaceSidebarEvent;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
@@ -9,12 +9,34 @@ use gpui_component::list::ListItem;
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
 use gpui_component::{h_flex, v_flex, IconName, Sizable};
+use uuid::Uuid;
 use models::{FolderType, Workspace};
 use utils::build_tree;
+use workspace::ConflictResolution;
+use crate::ImportConfig;
 
 pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
     hovered: Option<SharedString>,
+}
+
+#[derive(Debug, Clone)]
+pub enum WorkspaceSidebarEvent {
+    OpenService(Uuid),
+    OpenSchema(Uuid),
+    OpenFolderDetail(Uuid), // New event for opening folder details
+    CreateService(SharedString, Option<Uuid>),
+    CreateSchema(SharedString, Option<Uuid>),
+    CreateFolder(SharedString, Option<Uuid>, FolderType),
+    ToggleFolder(Uuid),
+    ImportOpenApi(ImportConfig),
+    PreviewImport(ImportConfig),
+    RequestImportPreview(ImportConfig),
+    ResolveImportConflicts(ImportConfig, HashMap<SharedString, ConflictResolution>),
+    // New menu events
+    DeleteService(Uuid),
+    DeleteSchema(Uuid),
+    DeleteFolder(Uuid),
 }
 
 impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}

@@ -9,7 +9,6 @@ mod sidebar;
 mod title_bar;
 mod workspace_area;
 mod workspace_content;
-mod workspace_sidebar;
 mod ws_sidebar;
 
 pub use environment_selector::*;
@@ -23,4 +22,3 @@ pub use sidebar::*;
 pub use title_bar::*;
 pub use workspace_area::*;
 pub use workspace_content::*;
-pub use workspace_sidebar::*;

@@ -1,8 +1,7 @@
-use crate::ws_sidebar::WorkspaceSidebar as WsSidebar;
+use crate::ws_sidebar::{WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
 use crate::{
     EnvironmentSelector, EnvironmentSelectorEvent, FolderDetailPage, FolderDetailPageEvent,
     HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent,
-    WorkspaceSidebarEvent,
 };
 use gpui::*;
 use gpui_component::StyledExt;
@@ -15,7 +14,7 @@ pub struct WorkspaceContent {
     view: WorkspaceView,
     http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
     service_tabs: Option<Entity<ServiceTabs>>,
-    sidebar_next: Entity<WsSidebar>,
+    sidebar: Entity<WsSidebar>,
     env_selector: Option<Entity<EnvironmentSelector>>,
     folder_detail_page: Option<Entity<FolderDetailPage>>,
     _subscriptions: Vec<Subscription>,
@@ -23,12 +22,12 @@ pub struct WorkspaceContent {
 
 impl WorkspaceContent {
     pub fn new(_workspace_id: Option<Uuid>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let sidebar_next = cx.new(|cx| WsSidebar::new(cx));
+        let sidebar = cx.new(|cx| WsSidebar::new(cx));
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
 
         let registry_sub = cx.subscribe(&workspace_registry, {
-            let sidebar = sidebar_next.clone();
+            let sidebar = sidebar.clone();
             move |_this, _registry, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
                     sidebar.update(cx, |s, cx| {
@@ -48,7 +47,7 @@ impl WorkspaceContent {
             ServiceTabsEvent::Close(id) => this.close_service(*id, cx),
         });
 
-        let sidebar_sub = cx.subscribe(&sidebar_next, |this, _, event, cx| match event {
+        let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
             WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
             WorkspaceSidebarEvent::OpenSchema(_id) => {}
             WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
@@ -81,13 +80,6 @@ impl WorkspaceContent {
             WorkspaceSidebarEvent::DeleteFolder(id) => {
                 // TODO: Implement folder deletion
                 eprintln!("Delete folder requested: {}", id);
-            }
-            WorkspaceSidebarEvent::ShowContextMenu(id, menu_type) => {
-                // TODO: Implement context menu display
-                eprintln!(
-                    "Show context menu requested for item: {} with type: {:?}",
-                    id, menu_type
-                );
             }
             _ => {}
         });
@@ -127,7 +119,7 @@ impl WorkspaceContent {
             view: WorkspaceView::Services,
             http_services: std::collections::HashMap::new(),
             service_tabs: Some(service_tabs),
-            sidebar_next,
+            sidebar: sidebar,
             env_selector: Some(env_selector),
             folder_detail_page: Some(folder_detail_page),
             _subscriptions: vec![
@@ -479,7 +471,7 @@ impl WorkspaceContent {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // Get base_url from active environment
+        // Get base_url from an active environment
         let base_url = workspace
             .active_environment_id
             .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
@@ -556,14 +548,14 @@ impl WorkspaceContent {
                 env_sel.update(cx, |e, _| e.set_workspace(workspace.clone()));
             }
 
-            // self.sidebar_next
+            // self.sidebar
             //     .update(cx, |s, cx| s.set_workspace(workspace.clone(), cx));
 
             div()
                 .h_flex()
                 .size_full()
                 // .children(self.sidebar.clone())
-                .child(self.sidebar_next.clone())
+                .child(self.sidebar.clone())
                 .child(
                     div()
                         .flex_1()
@@ -576,7 +568,7 @@ impl WorkspaceContent {
                                 .items_center()
                                 .justify_between()
                                 .border_b_1()
-                                .border_color(gpui::rgb(0xe0e0e0))
+                                .border_color(rgb(0xe0e0e0))
                                 .child(div().flex_1().children(self.service_tabs.clone()))
                                 .child(div().px_2().children(self.env_selector.clone())),
                         )
@@ -606,7 +598,7 @@ impl WorkspaceContent {
             div()
                 .h_flex()
                 .size_full()
-                .child(self.sidebar_next.clone())
+                .child(self.sidebar.clone())
                 .child(
                     div()
                         .flex_1()
@@ -636,10 +628,6 @@ impl Render for WorkspaceContent {
                 .child("Settings - coming soon")
                 .into_any_element(),
             WorkspaceView::FolderDetail(_folder_id) => {
-                println!(
-                    "DEBUG: Rendering FolderDetail view for folder_id: {}",
-                    _folder_id
-                );
                 self.render_folder_detail(window, cx).into_any_element()
             }
         }
