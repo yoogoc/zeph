@@ -8,7 +8,7 @@ use gpui::*;
 use gpui_component::StyledExt;
 use models::{ServiceType, Workspace, WorkspaceView};
 use uuid::Uuid;
-use workspace::WorkspaceEventNext;
+use workspace::WorkspaceEvent;
 
 pub struct WorkspaceContent {
     workspace_id: Option<Uuid>,
@@ -23,19 +23,20 @@ pub struct WorkspaceContent {
 }
 
 impl WorkspaceContent {
-    pub fn new(_workspace_id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(_workspace_id: Option<Uuid>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar_next = cx.new(|cx| WsSidebar::new(cx));
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
 
         let registry_sub = cx.subscribe(&workspace_registry, {
             let sidebar = sidebar_next.clone();
-            move |_this, _registry, event: &WorkspaceEventNext, cx| match event {
-                WorkspaceEventNext::Open(workspace) => {
+            move |_this, _registry, event: &WorkspaceEvent, cx| match event {
+                WorkspaceEvent::Open(workspace) => {
                     sidebar.update(cx, |s, cx| {
                         s.set_workspace(workspace.clone(), cx);
                     });
                 }
+                _ => cx.notify()
             }
         });
 
@@ -123,9 +124,6 @@ impl WorkspaceContent {
                 }
             });
 
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        let registry_sub2 = cx.observe(&registry, |_, _, cx| cx.notify());
-
         Self {
             workspace_id: None,
             view: WorkspaceView::Services,
@@ -141,7 +139,6 @@ impl WorkspaceContent {
                 sidebar_sub,
                 env_sub,
                 folder_detail_sub,
-                registry_sub2,
             ],
         }
     }

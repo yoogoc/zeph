@@ -2,6 +2,7 @@ use crate::{Sidebar, SidebarEvent, WorkspaceContent};
 use gpui::*;
 use gpui_component::StyledExt;
 use models::{Workspace, WorkspaceView};
+use workspace::WorkspaceEvent;
 
 pub struct WorkspaceArea {
     sidebar: Entity<Sidebar>,
@@ -23,9 +24,12 @@ impl WorkspaceArea {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let registry_sub = cx.subscribe(
             &workspace_registry,
-            |this, registry, _event: &workspace::WorkspaceEvent, cx| {
-                let workspace = registry.read(cx).get_active_workspace().cloned();
-                this.set_workspace(workspace, cx);
+            |this, _registry, event: &workspace::WorkspaceEvent, cx| {
+                match event {
+                    WorkspaceEvent::Open(workspace) => this.set_workspace(Some(workspace.clone()), cx),
+                    WorkspaceEvent::Close => this.set_workspace(None, cx),
+                    _ => {}
+                }
             },
         );
 

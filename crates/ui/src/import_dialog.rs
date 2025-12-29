@@ -162,6 +162,7 @@ impl ImportDialog {
         self.show_conflict_resolution = false;
     }
     
+    #[allow(unused)]
     fn get_import_options(&self) -> ImportOptions {
         ImportOptions {
             target_folder: self.selected_folder,

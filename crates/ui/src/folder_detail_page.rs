@@ -203,6 +203,7 @@ impl FolderDetailPage {
     }
 
     /// Validate folder data before operations
+    #[allow(unused)]
     fn validate_folder_data(&self) -> Result<(), FolderDetailError> {
         if self.folder.is_none() {
             return Err(FolderDetailError::NotFound("No folder selected".to_string()));
@@ -764,6 +765,7 @@ impl CommonHeadersPanel {
         cx.notify();
     }
 
+    #[allow(unused)]
     fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_row = HeaderInputRow::new(None, window, cx);
         self.header_rows.push(new_row);
@@ -1169,6 +1171,7 @@ impl SearchParamsPanel {
         cx.notify();
     }
 
+    #[allow(unused)]
     fn add_param(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let new_row = ParamInputRow::new(None, window, cx);
         self.param_rows.push(new_row);

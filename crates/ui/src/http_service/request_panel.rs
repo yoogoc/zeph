@@ -94,6 +94,7 @@ impl RequestPanel {
     }
 
     /// Gets the final URL by resolving base_url and user-entered path
+    #[allow(unused)]
     pub fn final_url(&self, cx: &App) -> String {
         let path = self.url.read(cx).value().to_string();
         url_utils::resolve_url(&self.base_url, &path, self.use_base_url)

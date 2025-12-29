@@ -21,11 +21,10 @@ pub use openapi::{
 };
 
 #[derive(Clone, Debug)]
-pub struct WorkspaceEvent;
-
-#[derive(Clone, Debug)]
-pub enum WorkspaceEventNext {
+pub enum WorkspaceEvent {
     Open(Workspace),
+    Close,
+    Reload,
 }
 
 pub fn init(cx: &mut App) {
@@ -41,8 +40,6 @@ pub struct WorkspaceRegistry {
 }
 
 impl EventEmitter<WorkspaceEvent> for WorkspaceRegistry {}
-
-impl EventEmitter<WorkspaceEventNext> for WorkspaceRegistry {}
 
 impl WorkspaceRegistry {
     pub fn global(cx: &App) -> Entity<Self> {
@@ -107,8 +104,8 @@ impl WorkspaceRegistry {
         if param.create_sample_services {
             self.create_sample_services(workspace.id);
         }
-        self.app_state.workspaces.push(workspace);
-        cx.emit(WorkspaceEvent);
+        self.app_state.workspaces.push(workspace.clone());
+        cx.emit(WorkspaceEvent::Open(workspace.clone()));
     }
 
     pub fn open_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
@@ -133,26 +130,25 @@ impl WorkspaceRegistry {
                 return;
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Close);
     }
 
     pub fn set_active_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
         self.app_state.active_workspace_id = Some(workspace_id);
         self.app_state.current_view = models::ApplicationView::Workspace(workspace_id);
-        cx.emit(WorkspaceEvent);
         let workspace = self
             .app_state
             .workspaces
             .iter()
             .find(|w| w.id == workspace_id)
             .unwrap();
-        cx.emit(WorkspaceEventNext::Open(workspace.clone()));
+        cx.emit(WorkspaceEvent::Open(workspace.clone()));
     }
 
     pub fn go_to_home(&mut self, cx: &mut Context<Self>) {
         self.app_state.current_view = models::ApplicationView::Home;
         self.app_state.active_workspace_id = None;
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Close);
     }
 
     pub fn set_workspace_view(
@@ -168,7 +164,7 @@ impl WorkspaceRegistry {
             .find(|w| w.id == workspace_id)
         {
             workspace.current_view = view;
-            cx.emit(WorkspaceEvent);
+            cx.emit(WorkspaceEvent::Open(workspace.clone()));
         }
     }
 
@@ -188,7 +184,7 @@ impl WorkspaceRegistry {
                 self.go_to_home(cx);
             }
         } else {
-            cx.emit(WorkspaceEvent);
+            cx.emit(WorkspaceEvent::Close);
         }
     }
 
@@ -303,7 +299,7 @@ impl WorkspaceRegistry {
         if let Some(workspace) = self.get_active_workspace_mut() {
             workspace.services.push(service);
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn create_schema(&mut self, name: String, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
@@ -321,7 +317,7 @@ impl WorkspaceRegistry {
         if let Some(workspace) = self.get_active_workspace_mut() {
             workspace.schemas.push(schema);
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn create_folder(
@@ -344,7 +340,7 @@ impl WorkspaceRegistry {
         if let Some(workspace) = self.get_active_workspace_mut() {
             workspace.folders.push(folder);
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn open_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
@@ -353,7 +349,7 @@ impl WorkspaceRegistry {
                 workspace.opened_services.push(service_id);
             }
             workspace.active_service = Some(service_id);
-            cx.emit(WorkspaceEvent);
+            cx.emit(WorkspaceEvent::Reload);
         }
     }
 
@@ -363,14 +359,14 @@ impl WorkspaceRegistry {
             if workspace.active_service == Some(service_id) {
                 workspace.active_service = workspace.opened_services.first().copied();
             }
-            cx.emit(WorkspaceEvent);
+            cx.emit(WorkspaceEvent::Reload);
         }
     }
 
     pub fn set_active_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
         if let Some(workspace) = self.get_active_workspace_mut() {
             workspace.active_service = Some(service_id);
-            cx.emit(WorkspaceEvent);
+            cx.emit(WorkspaceEvent::Reload);
         }
     }
 
@@ -440,7 +436,7 @@ impl WorkspaceRegistry {
             workspace.schemas.extend(result.schemas);
         }
 
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
         Ok(())
     }
 
@@ -476,7 +472,7 @@ impl WorkspaceRegistry {
                 workspace.active_environment_id = Some(env.id);
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn update_environment(&mut self, env: Environment, cx: &mut Context<Self>) {
@@ -490,7 +486,7 @@ impl WorkspaceRegistry {
                 existing.is_default = env.is_default;
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn delete_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
@@ -503,13 +499,13 @@ impl WorkspaceRegistry {
                 workspace.active_environment_id = workspace.environments.first().map(|e| e.id);
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn set_active_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
         if let Some(workspace) = self.get_active_workspace_mut() {
             workspace.active_environment_id = Some(env_id);
-            cx.emit(WorkspaceEvent);
+            cx.emit(WorkspaceEvent::Reload);
         }
     }
 
@@ -536,7 +532,7 @@ impl WorkspaceRegistry {
                 env.variables.push(var);
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn update_environment_variable(
@@ -555,7 +551,7 @@ impl WorkspaceRegistry {
                 }
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn delete_environment_variable(&mut self, var_id: Uuid, cx: &mut Context<Self>) {
@@ -567,7 +563,7 @@ impl WorkspaceRegistry {
                 env.variables.retain(|v| v.id != var_id);
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     // === Folder Operations ===
@@ -590,7 +586,7 @@ impl WorkspaceRegistry {
                 folder.common_headers = headers;
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 
     pub fn update_folder_search_params(
@@ -611,6 +607,6 @@ impl WorkspaceRegistry {
                 folder.common_search_params = params;
             }
         }
-        cx.emit(WorkspaceEvent);
+        cx.emit(WorkspaceEvent::Reload);
     }
 }
