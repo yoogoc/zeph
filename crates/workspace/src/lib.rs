@@ -29,7 +29,12 @@ pub enum WorkspaceEvent {
 
 #[derive(Clone, Debug)]
 pub enum WorkspaceServiceEvent {
-    Open(Workspace),
+    Open(Workspace, Service),
+    Switch{
+        workspace: Workspace,
+        old: Service,
+        new: Option<Service>,
+    },
 }
 
 pub fn init(cx: &mut App) {
@@ -45,6 +50,7 @@ pub struct WorkspaceRegistry {
 }
 
 impl EventEmitter<WorkspaceEvent> for WorkspaceRegistry {}
+impl EventEmitter<WorkspaceServiceEvent> for WorkspaceRegistry {}
 
 impl WorkspaceRegistry {
     pub fn global(cx: &App) -> Entity<Self> {
@@ -307,7 +313,12 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent::Reload);
     }
 
-    pub fn create_schema(&mut self, name: SharedString, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+    pub fn create_schema(
+        &mut self,
+        name: SharedString,
+        folder_id: Option<Uuid>,
+        cx: &mut Context<Self>,
+    ) {
         let workspace_id = match self.get_active_workspace() {
             Some(w) => w.id,
             None => return,
@@ -354,7 +365,12 @@ impl WorkspaceRegistry {
                 workspace.opened_services.push(service_id);
             }
             workspace.active_service = Some(service_id);
-            cx.emit(WorkspaceEvent::Reload);
+            if let Some(service) = workspace.services.iter().find(|s| s.id == service_id) {
+                cx.emit(WorkspaceServiceEvent::Open(
+                    workspace.clone(),
+                    service.clone(),
+                ));
+            }
         }
     }
 
@@ -364,14 +380,27 @@ impl WorkspaceRegistry {
             if workspace.active_service == Some(service_id) {
                 workspace.active_service = workspace.opened_services.first().copied();
             }
-            cx.emit(WorkspaceEvent::Reload);
+            if let Some(old) = workspace.services.iter().find(|s| s.id == service_id) {
+                    cx.emit(WorkspaceServiceEvent::Switch{
+                        workspace: workspace.clone(),
+                        old: old.clone(),
+                        new: workspace.active_service.map(|id| self.get_service(id).unwrap().clone()),
+                    });
+                } else {
+                    unreachable!("Service not found")
+                }
         }
     }
 
     pub fn set_active_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
         if let Some(workspace) = self.get_active_workspace_mut() {
             workspace.active_service = Some(service_id);
-            cx.emit(WorkspaceEvent::Reload);
+            if let Some(service) = workspace.services.iter().find(|s| s.id == service_id) {
+                cx.emit(WorkspaceServiceEvent::Open(
+                    workspace.clone(),
+                    service.clone(),
+                ));
+            }
         }
     }
 

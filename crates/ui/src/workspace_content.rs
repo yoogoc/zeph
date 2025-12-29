@@ -5,14 +5,25 @@ use crate::{
 };
 use gpui::*;
 use gpui_component::StyledExt;
-use models::{ServiceType, Workspace, WorkspaceView};
+use models::{Service, ServiceType, Workspace, WorkspaceView};
+use std::collections::HashMap;
 use uuid::Uuid;
-use workspace::WorkspaceEvent;
+use workspace::{WorkspaceEvent, WorkspaceServiceEvent};
+
+enum ServiceContentType {
+    Http(Uuid),
+    Grpc(Uuid),
+    WebSocket(Uuid),
+    Schema(Uuid),
+    ServiceFolder(Uuid),
+    SchemaFolder(Uuid),
+}
 
 pub struct WorkspaceContent {
     workspace_id: Option<Uuid>,
     view: WorkspaceView,
-    http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
+    http_services: HashMap<Uuid, Entity<HttpService>>,
+    current_service: Option<ServiceContentType>,
     service_tabs: Entity<ServiceTabs>,
     sidebar: Entity<WsSidebar>,
     env_selector: Entity<EnvironmentSelector>,
@@ -21,7 +32,7 @@ pub struct WorkspaceContent {
 }
 
 impl WorkspaceContent {
-    pub fn new(_workspace_id: Option<Uuid>, _window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(_workspace_id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar = cx.new(|cx| WsSidebar::new(cx));
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
@@ -34,7 +45,30 @@ impl WorkspaceContent {
                         s.set_workspace(workspace.clone(), cx);
                     });
                 }
-                _ => cx.notify()
+                _ => cx.notify(),
+            }
+        });
+
+        let registry_sub2 = cx.subscribe_in(&workspace_registry, window, {
+            move |this, _registry, event: &WorkspaceServiceEvent, window, cx| {
+                match event {
+                    WorkspaceServiceEvent::Open(workspace, service) => {
+                        this.set_service(workspace, service, window, cx);
+                    }
+                    WorkspaceServiceEvent::Switch {
+                        workspace,
+                        old,
+                        new,
+                    } => {
+                        this.http_services.remove(&old.id);
+                        if let Some(new) = new {
+                            this.set_service(workspace, new, window, cx);
+                        } else {
+                            this.current_service = None;
+                        }
+                    }
+                }
+                cx.notify();
             }
         });
 
@@ -117,18 +151,56 @@ impl WorkspaceContent {
         Self {
             workspace_id: None,
             view: WorkspaceView::Services,
-            http_services: std::collections::HashMap::new(),
+            http_services: HashMap::new(),
+            current_service: None,
             service_tabs,
             sidebar,
             env_selector,
             folder_detail_page: Some(folder_detail_page),
             _subscriptions: vec![
                 registry_sub,
+                registry_sub2,
                 tabs_sub,
                 sidebar_sub,
                 env_sub,
                 folder_detail_sub,
             ],
+        }
+    }
+
+    fn set_service(
+        &mut self,
+        workspace: &Workspace,
+        service: &Service,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let base_url = workspace
+            .active_environment_id
+            .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
+            .map(|env| env.base_url.clone());
+        match &service.service_type {
+            ServiceType::Http(config) => {
+                if !self.http_services.contains_key(&service.id) {
+                    let http_service = cx.new(|cx| {
+                        HttpService::new(
+                            config.clone(),
+                            base_url.clone(),
+                            service.folder_id,
+                            window,
+                            cx,
+                        )
+                    });
+                    self.http_services.insert(service.id, http_service);
+                }
+                self.current_service = Some(ServiceContentType::Http(service.id));
+            }
+            ServiceType::Grpc(_) => {
+                self.current_service = Some(ServiceContentType::Grpc(service.id));
+            }
+            ServiceType::WebSocket(_) => {
+                self.current_service = Some(ServiceContentType::WebSocket(service.id));
+            }
         }
     }
 
@@ -199,7 +271,7 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            // Get base_url from active environment
+            // Get base_url from an active environment
             let base_url = workspace
                 .active_environment_id
                 .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
@@ -334,14 +406,24 @@ impl WorkspaceContent {
         });
     }
 
-    fn create_service(&mut self, name: SharedString, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+    fn create_service(
+        &mut self,
+        name: SharedString,
+        folder_id: Option<Uuid>,
+        cx: &mut Context<Self>,
+    ) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
             registry.create_service(name, folder_id, cx);
         });
     }
 
-    fn create_schema(&mut self, name: SharedString, folder_id: Option<Uuid>, cx: &mut Context<Self>) {
+    fn create_schema(
+        &mut self,
+        name: SharedString,
+        folder_id: Option<Uuid>,
+        cx: &mut Context<Self>,
+    ) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
             registry.create_schema(name, folder_id, cx);
@@ -467,72 +549,31 @@ impl WorkspaceContent {
 
     fn render_service_content(
         &mut self,
-        workspace: &Workspace,
-        window: &mut Window,
-        cx: &mut Context<Self>,
+        _workspace: &Workspace,
+        _window: &mut Window,
+        _cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        // Get base_url from an active environment
-        let base_url = workspace
-            .active_environment_id
-            .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
-            .map(|env| env.base_url.clone());
-
-        if let Some(active_service_id) = workspace.active_service {
-            if let Some(service) = workspace
-                .services
-                .iter()
-                .find(|s| s.id == active_service_id)
-            {
-                match &service.service_type {
-                    ServiceType::Http(config) => {
-                        if !self.http_services.contains_key(&service.id) {
-                            let http_service = cx.new(|cx| {
-                                HttpService::new(
-                                    config.clone(),
-                                    base_url.clone(),
-                                    service.folder_id,
-                                    window,
-                                    cx,
-                                )
-                            });
-                            self.http_services.insert(service.id, http_service);
-                        }
-                        self.http_services
-                            .get(&service.id)
-                            .unwrap()
-                            .clone()
-                            .into_any_element()
-                    }
-                    ServiceType::Grpc(_) => div()
-                        .flex_1()
-                        .h_full()
-                        .p_4()
-                        .child("gRPC service - coming soon")
-                        .into_any_element(),
-                    ServiceType::WebSocket(_) => div()
-                        .flex_1()
-                        .h_full()
-                        .p_4()
-                        .child("WebSocket service - coming soon")
-                        .into_any_element(),
-                }
-            } else {
-                div()
-                    .flex_1()
-                    .h_full()
-                    .p_4()
-                    .child("Service not found")
-                    .into_any_element()
-            }
-        } else {
-            div()
+        match self.current_service {
+            Some(ref service) => match service {
+                ServiceContentType::Http(id) => self
+                    .http_services
+                    .get(id)
+                    .map(|service| service.clone().into_any_element())
+                    .unwrap_or(div().into_any_element()),
+                ServiceContentType::Grpc(_) => div().into_any_element(),
+                ServiceContentType::WebSocket(_) => div().into_any_element(),
+                ServiceContentType::Schema(_) => div().into_any_element(),
+                ServiceContentType::ServiceFolder(_) => div().into_any_element(),
+                ServiceContentType::SchemaFolder(_) => div().into_any_element(),
+            },
+            None => div()
                 .flex_1()
                 .h_full()
                 .p_4()
                 .items_center()
                 .justify_center()
                 .child("Select a service to get started")
-                .into_any_element()
+                .into_any_element(),
         }
     }
 
@@ -541,8 +582,10 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            self.service_tabs.update(cx, |t, _| t.set_workspace(workspace.clone()));
-            self.env_selector.update(cx, |e, _| e.set_workspace(workspace.clone()));
+            self.service_tabs
+                .update(cx, |t, _| t.set_workspace(workspace.clone()));
+            self.env_selector
+                .update(cx, |e, _| e.set_workspace(workspace.clone()));
 
             div()
                 .h_flex()
