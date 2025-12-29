@@ -1,3 +1,4 @@
+use gpui::SharedString;
 use gpui_component::tree::{TreeEntry, TreeItem};
 use gpui_component::IconName;
 use models::{Folder, FolderType, Schema, Service, Workspace};
@@ -5,6 +6,30 @@ use uuid::Uuid;
 
 pub const SERVICE_ID: &str = "services";
 pub const SCHEMA_ID: &str = "schemas";
+
+#[derive(Debug)]
+pub enum TreeId {
+    Service(Uuid),
+    Schema(Uuid),
+}
+
+impl TreeId {
+    pub fn new(value: SharedString) -> Self {
+        let parts: Vec<&str> = value.split("/").collect();
+        let x = parts[0];
+        match x {
+            SERVICE_ID => TreeId::Service(Uuid::parse_str(&parts[1]).unwrap()),
+            SCHEMA_ID => TreeId::Schema(Uuid::parse_str(&parts[1]).unwrap()),
+            _ => panic!("Invalid tree id"),
+        }
+    }
+}
+
+impl From<SharedString> for TreeId {
+    fn from(value: SharedString) -> Self {
+        Self::new(value)
+    }
+}
 
 pub fn build_tree(workspace: Workspace) -> Vec<TreeItem> {
     vec![
@@ -42,7 +67,11 @@ pub fn build_service_tree(
         // TODO Skip if we've reached maximum depth
 
         items.push(
-            TreeItem::new(folder.id.to_string(), folder.name.clone()).children(build_service_tree(
+            TreeItem::new(
+                format!("{}/{}", SERVICE_ID, folder.id.to_string()),
+                folder.name.clone(),
+            )
+            .children(build_service_tree(
                 Some(folder.id),
                 depth + 1,
                 folders,
@@ -53,7 +82,10 @@ pub fn build_service_tree(
 
     // Add services
     for service in services.iter().filter(|s| s.folder_id == parent_id) {
-        items.push(TreeItem::new(service.id.to_string(), service.name.clone()));
+        items.push(TreeItem::new(
+            format!("{}/{}", SERVICE_ID, service.id.to_string()),
+            service.name.clone(),
+        ));
     }
 
     items
@@ -73,7 +105,11 @@ pub fn build_schema_tree(
         // TODO Skip if we've reached maximum depth
 
         items.push(
-            TreeItem::new(folder.id.to_string(), folder.name.clone()).children(build_schema_tree(
+            TreeItem::new(
+                format!("{}/{}", SCHEMA_ID, folder.id.to_string()),
+                folder.name.clone(),
+            )
+            .children(build_schema_tree(
                 Some(folder.id),
                 depth + 1,
                 folders,
@@ -84,7 +120,10 @@ pub fn build_schema_tree(
 
     // Add schemas
     for schema in schemas.iter().filter(|s| s.folder_id == parent_id) {
-        items.push(TreeItem::new(schema.id.to_string(), schema.name.clone()));
+        items.push(TreeItem::new(
+            format!("{}/{}", SCHEMA_ID, schema.id.to_string()),
+            schema.name.clone(),
+        ));
     }
 
     items

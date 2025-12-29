@@ -1,7 +1,7 @@
 use crate::ws_sidebar::WorkspaceSidebar as WsSidebar;
 use crate::{
     EnvironmentSelector, EnvironmentSelectorEvent, FolderDetailPage, FolderDetailPageEvent,
-    HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent, WorkspaceSidebar,
+    HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent,
     WorkspaceSidebarEvent,
 };
 use gpui::*;
@@ -15,7 +15,6 @@ pub struct WorkspaceContent {
     view: WorkspaceView,
     http_services: std::collections::HashMap<Uuid, Entity<HttpService>>,
     service_tabs: Option<Entity<ServiceTabs>>,
-    sidebar: Option<Entity<WorkspaceSidebar>>,
     sidebar_next: Entity<WsSidebar>,
     env_selector: Option<Entity<EnvironmentSelector>>,
     folder_detail_page: Option<Entity<FolderDetailPage>>,
@@ -41,7 +40,6 @@ impl WorkspaceContent {
         });
 
         let service_tabs = cx.new(|_| ServiceTabs::new());
-        let sidebar = cx.new(|_| WorkspaceSidebar::new());
         let env_selector = cx.new(|_| EnvironmentSelector::new());
         let folder_detail_page = cx.new(|cx| FolderDetailPage::new(cx));
 
@@ -50,7 +48,7 @@ impl WorkspaceContent {
             ServiceTabsEvent::Close(id) => this.close_service(*id, cx),
         });
 
-        let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
+        let sidebar_sub = cx.subscribe(&sidebar_next, |this, _, event, cx| match event {
             WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
             WorkspaceSidebarEvent::OpenSchema(_id) => {}
             WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
@@ -63,7 +61,6 @@ impl WorkspaceContent {
             WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => {
                 this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx)
             }
-            WorkspaceSidebarEvent::ToggleFolder(id) => this.toggle_folder(*id, cx),
             WorkspaceSidebarEvent::ImportOpenApi(config) => this.import_openapi(config.clone(), cx),
             WorkspaceSidebarEvent::PreviewImport(config) => this.preview_import(config.clone(), cx),
             WorkspaceSidebarEvent::RequestImportPreview(config) => {
@@ -92,6 +89,7 @@ impl WorkspaceContent {
                     id, menu_type
                 );
             }
+            _ => {}
         });
 
         let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
@@ -129,7 +127,6 @@ impl WorkspaceContent {
             view: WorkspaceView::Services,
             http_services: std::collections::HashMap::new(),
             service_tabs: Some(service_tabs),
-            sidebar: Some(sidebar),
             sidebar_next,
             env_selector: Some(env_selector),
             folder_detail_page: Some(folder_detail_page),
@@ -397,19 +394,6 @@ impl WorkspaceContent {
         cx.notify();
     }
 
-    fn toggle_folder(&mut self, folder_id: Uuid, cx: &mut Context<Self>) {
-        if let Some(sidebar) = &self.sidebar {
-            sidebar.update(cx, |sidebar, _| {
-                if sidebar.expanded_folders.contains(&folder_id) {
-                    sidebar.expanded_folders.remove(&folder_id);
-                } else {
-                    sidebar.expanded_folders.insert(folder_id);
-                }
-            });
-        }
-        cx.notify();
-    }
-
     fn open_folder_detail(&mut self, folder_id: Uuid, cx: &mut Context<Self>) {
         // Set the view to FolderDetail
         self.view = WorkspaceView::FolderDetail(folder_id);
@@ -565,9 +549,6 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            if let Some(sidebar) = &self.sidebar {
-                sidebar.update(cx, |s, _| s.set_workspace(workspace.clone()));
-            }
             if let Some(tabs) = &self.service_tabs {
                 tabs.update(cx, |t, _| t.set_workspace(workspace.clone()));
             }
@@ -615,10 +596,6 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            if let Some(sidebar) = &self.sidebar {
-                sidebar.update(cx, |s, _| s.set_workspace(workspace.clone()));
-            }
-
             // Ensure the folder detail page has the current workspace
             if let Some(folder_detail_page) = &self.folder_detail_page {
                 folder_detail_page.update(cx, |page, _| {
@@ -629,7 +606,7 @@ impl WorkspaceContent {
             div()
                 .h_flex()
                 .size_full()
-                .children(self.sidebar.clone())
+                .child(self.sidebar_next.clone())
                 .child(
                     div()
                         .flex_1()

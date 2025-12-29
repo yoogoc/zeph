@@ -1,6 +1,7 @@
 mod utils;
 
-use crate::ws_sidebar::utils::cal_icon;
+use crate::ws_sidebar::utils::{cal_icon, TreeId};
+use crate::WorkspaceSidebarEvent;
 use gpui::*;
 use gpui_component::list::ListItem;
 use gpui_component::tree::{tree, TreeItem, TreeState};
@@ -10,16 +11,14 @@ use utils::build_tree;
 
 pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
-    selected_item: Option<TreeItem>,
 }
+
+impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
 
 impl WorkspaceSidebar {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let tree = cx.new(|cx| TreeState::new(cx));
-        Self {
-            tree,
-            selected_item: None,
-        }
+        Self { tree }
     }
 
     pub fn set_workspace(&mut self, workspace: Workspace, cx: &mut Context<Self>) {
@@ -29,8 +28,17 @@ impl WorkspaceSidebar {
     }
 
     fn handle_selection(&mut self, item: TreeItem, cx: &mut Context<Self>) {
-        self.selected_item = Some(item.clone());
-        println!("Selected: {} ({})", item.label, item.id);
+        let selected_item = item.clone();
+        if !item.is_folder() {
+            let id = TreeId::new(selected_item.id);
+            match id {
+                TreeId::Service(id) => {
+                    cx.emit(WorkspaceSidebarEvent::OpenService(id));
+                }
+                TreeId::Schema(_id) => {}
+            }
+        }
+
         cx.notify();
     }
 }
