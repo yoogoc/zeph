@@ -161,6 +161,11 @@ impl WorkspaceSidebar {
                                 Button::new(format!("action_{}", id))
                                     .icon(IconName::Menu)
                                     .small()
+                                    .on_mouse_down(MouseButton::Left, cx.listener({
+                                        move |_this, _, _window, cx| {
+                                            cx.stop_propagation();
+                                        }
+                                    }))
                                     .dropdown_menu({
                                         let item = entry.item().clone();
                                         let view = cx.entity();
