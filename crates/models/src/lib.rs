@@ -1,6 +1,9 @@
+mod runtime;
+
 use gpui::SharedString;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+pub use runtime::ContentType;
 
 // === Sync Metadata ===
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -66,9 +69,9 @@ pub struct Workspace {
 
     // Runtime state
     #[serde(skip)]
-    pub opened_services: Vec<Uuid>,
+    pub opened_services: Vec<ContentType>,
     #[serde(skip)]
-    pub active_service: Option<Uuid>,
+    pub active_service: Option<ContentType>,
     #[serde(skip)]
     pub active_environment_id: Option<Uuid>,
     #[serde(skip)]
@@ -186,7 +189,6 @@ pub enum WorkspaceView {
     Docs,
     History,
     Settings,
-    FolderDetail(Uuid), // New view for folder details
 }
 
 // === Folder ===

@@ -2,12 +2,11 @@ use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::Sizable;
-use models::Workspace;
-use uuid::Uuid;
+use models::{ContentType, Workspace};
 
 pub enum ServiceTabsEvent {
-    Select(Uuid),
-    Close(Uuid),
+    Select(ContentType),
+    Close(ContentType),
 }
 
 pub struct ServiceTabs {
@@ -38,37 +37,32 @@ impl Render for ServiceTabs {
 
         let service_ids: Vec<_> = workspace.opened_services.clone();
         let selected_index = workspace
-            .active_service
-            .and_then(|id| workspace.opened_services.iter().position(|&s| s == id))
+            .active_service.clone()
+            .and_then(|id| workspace.opened_services.iter().position(|s| s.eq(&id)))
             .unwrap_or(0);
 
         let tabs: Vec<_> = workspace
             .opened_services
             .iter()
-            .filter_map(|&service_id| {
-                workspace
-                    .services
-                    .iter()
-                    .find(|s| s.id == service_id)
-                    .map(|service| {
-                        Tab::new().pr_1().label(service.name.clone()).suffix(
-                            Button::new(format!("close_{}", service_id))
-                                .small()
-                                .label("×")
-                                .on_click(cx.listener(move |_this, _, _, cx| {
-                                    cx.emit(ServiceTabsEvent::Close(service_id));
-                                    cx.stop_propagation();
-                                })),
-                        )
-                    })
+            .map(|ct| {
+                let ct = ct.clone();
+                Tab::new().pr_1().label(ct.name()).suffix(
+                    Button::new(format!("close_{}", ct.id()))
+                        .small()
+                        .label("×")
+                        .on_click(cx.listener(move |_this, _, _, cx| {
+                            cx.emit(ServiceTabsEvent::Close(ct.clone()));
+                            cx.stop_propagation();
+                        })),
+                )
             })
             .collect();
 
         TabBar::new("service_tabs")
             .selected_index(selected_index)
             .on_click(cx.listener(move |_this, index: &usize, _, cx| {
-                if let Some(&service_id) = service_ids.get(*index) {
-                    cx.emit(ServiceTabsEvent::Select(service_id));
+                if let Some(ct) = service_ids.get(*index) {
+                    cx.emit(ServiceTabsEvent::Select(ct.clone()));
                 }
             }))
             .children(tabs)

@@ -74,15 +74,23 @@ impl WorkspaceSidebar {
     fn handle_selection(&mut self, item: TreeItem, ix: usize, cx: &mut Context<Self>) {
         let selected_item = item.clone();
         self.tree_map.insert(item.id.clone(), ix);
-        if !item.is_folder() {
-            let id = TreeId::new(selected_item.id);
+        let id = TreeId::new(selected_item.id);
+        if item.is_folder() {
+            match id {
+                TreeId::Service(id) | TreeId::Schema(id) => {
+                    cx.emit(WorkspaceSidebarEvent::OpenFolderDetail(id));
+                }
+                _ => {}
+            }
+        } else {
             match id {
                 TreeId::Service(id) => {
                     cx.emit(WorkspaceSidebarEvent::OpenService(id));
                 }
-                TreeId::Schema(_id) => {}
-                TreeId::ServiceRoot => {}
-                TreeId::SchemaRoot => {}
+                TreeId::Schema(id) => {
+                    cx.emit(WorkspaceSidebarEvent::OpenSchema(id));
+                }
+                _ => {}
             }
         }
 

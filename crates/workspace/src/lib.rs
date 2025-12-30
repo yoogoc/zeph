@@ -1,9 +1,6 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use log::error;
-use models::{
-    CreateWorkspace, Environment, EnvironmentVariable, HttpConfig, HttpMethod, Service,
-    ServiceType, Workspace,
-};
+use models::{ContentType, CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
 use std::sync::Arc;
 use storage::{
     Database, EnvironmentStore, EnvironmentVariableStore, FolderStore, SchemaStore, ServiceStore,
@@ -29,11 +26,11 @@ pub enum WorkspaceEvent {
 
 #[derive(Clone, Debug)]
 pub enum WorkspaceServiceEvent {
-    Open(Workspace, Service),
-    Switch{
+    Open(Workspace, ContentType),
+    Switch {
         workspace: Workspace,
-        old: Service,
-        new: Option<Service>,
+        old: ContentType,
+        new: Option<ContentType>,
     },
 }
 
@@ -359,54 +356,45 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent::Reload);
     }
 
-    pub fn open_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
+    pub fn open_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
         if let Some(workspace) = self.get_active_workspace_mut() {
-            if !workspace.opened_services.contains(&service_id) {
-                workspace.opened_services.push(service_id);
+            if !workspace.opened_services.contains(&ct) {
+                workspace.opened_services.push(ct.clone());
             }
-            workspace.active_service = Some(service_id);
-            if let Some(service) = workspace.services.iter().find(|s| s.id == service_id) {
-                cx.emit(WorkspaceServiceEvent::Open(
-                    workspace.clone(),
-                    service.clone(),
-                ));
-            }
+            workspace.active_service = Some(ct.clone());
+            cx.emit(WorkspaceServiceEvent::Open(workspace.clone(), ct.clone()));
         }
     }
 
-    pub fn close_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
+    pub fn close_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
         if let Some(workspace) = self.get_active_workspace_mut() {
-            workspace.opened_services.retain(|&id| id != service_id);
-            if workspace.active_service == Some(service_id) {
-                workspace.active_service = workspace.opened_services.first().copied();
+            workspace.opened_services.retain(|id| id.ne(&ct));
+            if workspace.active_service == Some(ct.clone()) {
+                workspace.active_service = workspace.opened_services.first().cloned();
             }
-            if let Some(old) = workspace.services.iter().find(|s| s.id == service_id) {
-                    cx.emit(WorkspaceServiceEvent::Switch{
-                        workspace: workspace.clone(),
-                        old: old.clone(),
-                        new: workspace.active_service.map(|id| self.get_service(id).unwrap().clone()),
-                    });
-                } else {
-                    unreachable!("Service not found")
-                }
+            cx.emit(WorkspaceServiceEvent::Switch {
+                workspace: workspace.clone(),
+                old: ct.clone(),
+                new: workspace.active_service.clone(),
+            });
         }
     }
 
-    pub fn set_active_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
+    pub fn set_active_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
         if let Some(workspace) = self.get_active_workspace_mut() {
-            workspace.active_service = Some(service_id);
-            if let Some(service) = workspace.services.iter().find(|s| s.id == service_id) {
-                cx.emit(WorkspaceServiceEvent::Open(
-                    workspace.clone(),
-                    service.clone(),
-                ));
-            }
+            workspace.active_service = Some(ct.clone());
+            cx.emit(WorkspaceServiceEvent::Open(workspace.clone(), ct.clone()));
         }
     }
 
     pub fn get_service(&self, service_id: Uuid) -> Option<&Service> {
         self.get_active_workspace()
             .and_then(|w| w.services.iter().find(|s| s.id == service_id))
+    }
+
+    pub fn get_folder(&self, folder_id: Uuid) -> Option<&Folder> {
+        self.get_active_workspace()
+            .and_then(|w| w.folders.iter().find(|s| s.id == folder_id))
     }
 
     // === OpenAPI Import ===

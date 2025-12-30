@@ -216,86 +216,6 @@ impl FolderDetailPage {
         Ok(())
     }
 
-    /// Build breadcrumb navigation path for the current folder
-    fn build_breadcrumb_path(&self) -> Vec<(Uuid, String)> {
-        let mut path = Vec::new();
-        
-        if let (Some(workspace), Some(current_folder)) = (&self.workspace, &self.folder) {
-            let mut folder_id = Some(current_folder.id);
-            
-            // Build path from current folder up to root
-            while let Some(id) = folder_id {
-                if let Some(folder) = workspace.folders.iter().find(|f| f.id == id) {
-                    path.push((folder.id, folder.name.to_string()));
-                    folder_id = folder.parent_id;
-                } else {
-                    break;
-                }
-            }
-            
-            // Reverse to show root -> current
-            path.reverse();
-        }
-        
-        path
-    }
-
-    /// Render breadcrumb navigation
-    fn render_breadcrumb_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let breadcrumb_path = self.build_breadcrumb_path();
-        
-        if breadcrumb_path.is_empty() {
-            return div().into_any_element();
-        }
-
-        let path_len = breadcrumb_path.len();
-
-        div()
-            .h_flex()
-            .items_center()
-            .gap_2()
-            .text_sm()
-            .text_color(gpui::rgb(0x666666))
-            .children(
-                breadcrumb_path.into_iter().enumerate().map(|(index, (folder_id, folder_name))| {
-                    let is_current = Some(folder_id) == self.folder_id;
-                    
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .gap_2()
-                        .child(
-                            if is_current {
-                                // Current folder - not clickable
-                                div()
-                                    .text_color(gpui::rgb(0x333333))
-                                    .font_medium()
-                                    .child(folder_name)
-                                    .into_any_element()
-                            } else {
-                                // Parent folder - clickable
-                                Button::new(format!("breadcrumb_{}", folder_id))
-                                    .ghost()
-                                    .compact()
-                                    .label(folder_name)
-                                    .on_click(cx.listener(move |_this, _, _, cx| {
-                                        cx.emit(FolderDetailPageEvent::NavigateToFolder(folder_id));
-                                    }))
-                                    .into_any_element()
-                            }
-                        )
-                        .when(index < path_len - 1, |container| {
-                            container.child(
-                                gpui_component::Icon::new(gpui_component::IconName::ChevronRight)
-                                    .size_3()
-                                    .text_color(gpui::rgb(0x999999))
-                            )
-                        })
-                })
-            )
-            .into_any_element()
-    }
-
     /// Render the tab navigation
     fn render_tab_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
@@ -350,68 +270,6 @@ impl FolderDetailPage {
                     .child(self.params_panel.clone())
             }
         }
-    }
-
-    /// Render the header with folder name and navigation
-    fn render_header(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let folder_name = self.folder
-            .as_ref()
-            .map(|f| f.name.to_string())
-            .unwrap_or_else(|| "Folder Details".to_string());
-        
-        div()
-            .v_flex()
-            .gap_2()
-            .p_4()
-            .border_b_1()
-            .border_color(gpui::rgb(0xe0e0e0))
-            .child(
-                // Top row with back button and folder name
-                div()
-                    .h_flex()
-                    .items_center()
-                    .justify_between()
-                    .child(
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_3()
-                            .child(
-                                Button::new("back_button")
-                                    .ghost()
-                                    .icon(gpui_component::IconName::ChevronLeft)
-                                    .label("Back to Services")
-                                    .on_click(cx.listener(|_this, _, _, cx| {
-                                        cx.emit(FolderDetailPageEvent::NavigateBack);
-                                    }))
-                            )
-                            .child(
-                                div()
-                                    .text_xl()
-                                    .font_semibold()
-                                    .child(folder_name.clone())
-                            )
-                    )
-                    .child(
-                        // Folder switching info - simplified to avoid lifetime issues
-                        div()
-                            .h_flex()
-                            .items_center()
-                            .gap_2()
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .text_color(gpui::rgb(0x666666))
-                                    .child("Use breadcrumbs below to navigate")
-                            )
-                    )
-            )
-            .child(
-                // Breadcrumb navigation row
-                div()
-                    .pl_12() // Align with content below back button
-                    .child(self.render_breadcrumb_navigation(cx))
-            )
     }
 
     /// Render error message if present
@@ -528,8 +386,10 @@ impl Render for FolderDetailPage {
         div()
             .flex_1()
             .h_full()
+            .py_2()
+            .px_4()
             .v_flex()
-            .child(self.render_header(cx))
+            .gap_4()
             .when_some(self.render_error_message(cx), |container, error_msg| {
                 container.child(error_msg)
             })

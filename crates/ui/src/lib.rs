@@ -1,5 +1,5 @@
 mod environment_selector;
-mod folder_detail_page;
+mod folder_detail;
 mod folder_selector;
 mod home_page;
 mod http_service;
@@ -12,7 +12,7 @@ mod workspace_content;
 mod ws_sidebar;
 
 pub use environment_selector::*;
-pub use folder_detail_page::*;
+pub use folder_detail::*;
 pub use folder_selector::*;
 pub use home_page::*;
 pub use http_service::*;

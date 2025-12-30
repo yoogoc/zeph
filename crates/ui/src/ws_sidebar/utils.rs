@@ -1,7 +1,7 @@
 use gpui::SharedString;
 use gpui_component::tree::{TreeEntry, TreeItem};
 use gpui_component::IconName;
-use models::{Folder, FolderType, Schema, Service, Workspace};
+use models::{ContentType, Folder, FolderType, Schema, Service, Workspace};
 use uuid::Uuid;
 
 pub const SERVICE_ID: &str = "services";
@@ -31,6 +31,15 @@ impl TreeId {
                 SCHEMA_ID => TreeId::Schema(Uuid::parse_str(&parts[1]).unwrap()),
                 _ => unreachable!(),
             }
+        }
+    }
+    
+    pub fn from_content(value: &ContentType) -> Self {
+        match value {
+            ContentType::ServiceFolder(folder) => Self::Service(folder.id),
+            ContentType::SchemaFolder(folder) => Self::Service(folder.id),
+            ContentType::Service(service) => Self::Service(service.id),
+            ContentType::Schema(schema) => Self::Service(schema.id),
         }
     }
 

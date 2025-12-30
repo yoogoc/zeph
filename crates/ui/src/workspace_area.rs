@@ -1,6 +1,6 @@
 use crate::{Sidebar, SidebarEvent, WorkspaceContent};
 use gpui::*;
-use gpui_component::StyledExt;
+use gpui_component::h_flex;
 use models::{Workspace, WorkspaceView};
 use workspace::WorkspaceEvent;
 
@@ -24,12 +24,10 @@ impl WorkspaceArea {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let registry_sub = cx.subscribe(
             &workspace_registry,
-            |this, _registry, event: &workspace::WorkspaceEvent, cx| {
-                match event {
-                    WorkspaceEvent::Open(workspace) => this.set_workspace(Some(workspace.clone()), cx),
-                    WorkspaceEvent::Close => this.set_workspace(None, cx),
-                    _ => {}
-                }
+            |this, _registry, event: &workspace::WorkspaceEvent, cx| match event {
+                WorkspaceEvent::Open(workspace) => this.set_workspace(Some(workspace.clone()), cx),
+                WorkspaceEvent::Close => this.set_workspace(None, cx),
+                _ => {}
             },
         );
 
@@ -61,8 +59,7 @@ impl WorkspaceArea {
 
 impl Render for WorkspaceArea {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
-        div()
-            .h_flex()
+        h_flex()
             .size_full()
             .child(self.sidebar.clone())
             .child(self.content.clone())
