@@ -33,6 +33,15 @@ impl TreeId {
             }
         }
     }
+
+    pub fn to_string(&self) -> SharedString {
+        match self {
+            TreeId::ServiceRoot => SERVICE_ID.into(),
+            TreeId::SchemaRoot => SCHEMA_ID.into(),
+            TreeId::Service(id) => format!("{}/{}", SERVICE_ID, id).into(),
+            TreeId::Schema(id) => format!("{}/{}", SCHEMA_ID, id).into(),
+        }
+    }
 }
 
 impl From<SharedString> for TreeId {

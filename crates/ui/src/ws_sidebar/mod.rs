@@ -1,7 +1,8 @@
 mod utils;
 
-use std::collections::HashMap;
-use crate::ws_sidebar::utils::{cal_icon, TreeId};
+pub use utils::TreeId;
+use utils::cal_icon;
+use crate::ImportConfig;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
@@ -9,15 +10,16 @@ use gpui_component::list::ListItem;
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
 use gpui_component::{h_flex, v_flex, IconName, Sizable};
-use uuid::Uuid;
 use models::{FolderType, Workspace};
+use std::collections::HashMap;
 use utils::build_tree;
+use uuid::Uuid;
 use workspace::ConflictResolution;
-use crate::ImportConfig;
 
 pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
     hovered: Option<SharedString>,
+    tree_map: HashMap<SharedString, usize>,
 }
 
 #[derive(Debug, Clone)]
@@ -47,17 +49,30 @@ impl WorkspaceSidebar {
         Self {
             tree,
             hovered: None,
+            tree_map: HashMap::new(),
         }
     }
 
     pub fn set_workspace(&mut self, workspace: Workspace, cx: &mut Context<Self>) {
+        self.tree_map.clear();
         self.tree.update(cx, |this, cx| {
             this.set_items(build_tree(workspace), cx);
         });
     }
 
-    fn handle_selection(&mut self, item: TreeItem, cx: &mut Context<Self>) {
+    pub fn set_ix(&mut self, item: TreeId, cx: &mut Context<Self>) {
+        self.tree.update(cx, |this, cx| {
+            if let Some(ix) = self.tree_map.get(&item.to_string()) {
+                this.set_selected_index(Some(*ix), cx);
+            } else {
+                this.set_selected_index(None, cx);
+            }
+        });
+    }
+
+    fn handle_selection(&mut self, item: TreeItem, ix: usize, cx: &mut Context<Self>) {
         let selected_item = item.clone();
+        self.tree_map.insert(item.id.clone(), ix);
         if !item.is_folder() {
             let id = TreeId::new(selected_item.id);
             match id {
@@ -161,11 +176,14 @@ impl WorkspaceSidebar {
                                 Button::new(format!("action_{}", id))
                                     .icon(IconName::Menu)
                                     .small()
-                                    .on_mouse_down(MouseButton::Left, cx.listener({
-                                        move |_this, _, _window, cx| {
-                                            cx.stop_propagation();
-                                        }
-                                    }))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener({
+                                            move |_this, _, _window, cx| {
+                                                cx.stop_propagation();
+                                            }
+                                        }),
+                                    )
                                     .dropdown_menu({
                                         let item = entry.item().clone();
                                         let view = cx.entity();
@@ -385,7 +403,7 @@ impl WorkspaceSidebar {
             .on_click(cx.listener({
                 let item = entry.item().clone();
                 move |this, _, _, cx| {
-                    this.handle_selection(item.clone(), cx);
+                    this.handle_selection(item.clone(), ix, cx);
                 }
             }))
     }

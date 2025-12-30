@@ -1,4 +1,4 @@
-use crate::ws_sidebar::{WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
+use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
 use crate::{
     EnvironmentSelector, EnvironmentSelectorEvent, FolderDetailPage, FolderDetailPageEvent,
     HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent,
@@ -76,9 +76,17 @@ impl WorkspaceContent {
         let env_selector = cx.new(|_| EnvironmentSelector::new());
         let folder_detail_page = cx.new(|cx| FolderDetailPage::new(cx));
 
-        let tabs_sub = cx.subscribe(&service_tabs, |this, _, event, cx| match event {
-            ServiceTabsEvent::Select(id) => this.set_active_service(*id, cx),
-            ServiceTabsEvent::Close(id) => this.close_service(*id, cx),
+        let tabs_sub = cx.subscribe(&service_tabs, {
+            let sidebar = sidebar.clone();
+            move |this, _, event, cx| match event {
+                ServiceTabsEvent::Select(id) => {
+                    sidebar.update(cx, |s, cx| {
+                        s.set_ix(TreeId::Service(id.clone()), cx);
+                    });
+                    this.set_active_service(*id, cx);
+                }
+                ServiceTabsEvent::Close(id) => this.close_service(*id, cx),
+            }
         });
 
         let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
