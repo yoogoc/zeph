@@ -63,11 +63,7 @@ impl WorkspaceSidebar {
 
     pub fn set_ix(&mut self, item: TreeId, cx: &mut Context<Self>) {
         self.tree.update(cx, |this, cx| {
-            if let Some(ix) = self.tree_map.get(&item.to_string()) {
-                this.set_selected_index(Some(*ix), cx);
-            } else {
-                this.set_selected_index(None, cx);
-            }
+            this.set_selected_by_id(Some(item.to_string()), cx);
         });
     }
 

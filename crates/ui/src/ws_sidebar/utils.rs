@@ -33,7 +33,7 @@ impl TreeId {
             }
         }
     }
-    
+
     pub fn from_content(value: &ContentType) -> Self {
         match value {
             ContentType::ServiceFolder(folder) => Self::Service(folder.id),

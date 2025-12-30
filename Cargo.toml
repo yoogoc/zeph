@@ -20,8 +20,8 @@ i18n = { path = "crates/i18n" }
 gpui = { git = "https://github.com/zed-industries/zed" }
 gpui_tokio = { git = "https://github.com/zed-industries/zed" }
 reqwest_client = { git = "https://github.com/zed-industries/zed" }
-gpui-component = { git = "https://github.com/longbridge/gpui-component", features = ["inspector"] }
-gpui-component-assets = { git = "https://github.com/longbridge/gpui-component" }
+gpui-component = { git = "https://github.com/yoogoc/gpui-component", features = ["inspector"] }
+gpui-component-assets = { git = "https://github.com/yoogoc/gpui-component" }
 
 # Others
 anyhow = "1.0.44"
