@@ -23,6 +23,7 @@ pub struct WorkspaceSidebar {
 }
 
 #[derive(Debug, Clone)]
+#[allow(unused)]
 pub enum WorkspaceSidebarEvent {
     OpenService(Uuid),
     OpenSchema(Uuid),

@@ -3,9 +3,7 @@ use super::request_panel::{RequestPanel, RequestPanelEvent};
 use super::response_panel::ResponsePanel;
 use super::url_utils;
 use futures::StreamExt;
-use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::button::ButtonVariants;
 use gpui_component::input::{InputState, TabSize};
 use gpui_component::StyledExt;
 use gpui_tokio::Tokio;
@@ -272,13 +270,13 @@ impl HttpService {
             headers.retain(|h| h.key.to_lowercase() != "content-type");
 
             if let Some(content_type) = body_type.content_type() {
-                headers.push(models::Header {
+                headers.push(Header {
                     key: "Content-Type".into(),
                     value: content_type.into(),
                 });
             }
 
-            // Recreate headers panel with updated headers
+            // Recreate a headers panel with updated headers
             let headers_panel = cx.new(|cx| {
                 super::request_headers::RequestHeaders::new(headers, window, cx)
             });
@@ -429,20 +427,6 @@ impl Render for HttpService {
             cx.notify();
         });
 
-        // Get folder information for navigation link
-        let folder_info = if let Some(folder_id) = self.folder_id {
-            let registry = workspace::WorkspaceRegistry::global(cx);
-            if let Some(workspace) = registry.read(cx).get_active_workspace() {
-                workspace.folders.iter()
-                    .find(|f| f.id == folder_id)
-                    .map(|folder| (folder.id, folder.name.to_string()))
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-
         div()
             .flex_1()
             .h_full()
@@ -450,42 +434,6 @@ impl Render for HttpService {
             .px_4()
             .v_flex()
             .gap_4()
-            .when(folder_info.is_some(), |container: gpui::Div| {
-                let (folder_id, folder_name) = folder_info.unwrap();
-                container.child(
-                    // Navigation breadcrumb to parent folder
-                    div()
-                        .h_flex()
-                        .items_center()
-                        .gap_2()
-                        .pb_2()
-                        .border_b_1()
-                        .border_color(gpui::rgb(0xe0e0e0))
-                        .child(
-                            gpui_component::button::Button::new(format!("navigate_to_folder_{}", folder_id))
-                                .ghost()
-                                .compact()
-                                .icon(gpui_component::IconName::Folder)
-                                .label(format!("Folder: {}", folder_name))
-                                .on_click(cx.listener(move |_this, _, _, cx| {
-                                    // Emit event to navigate to folder detail
-                                    let registry = workspace::WorkspaceRegistry::global(cx);
-                                    registry.update(cx, |registry, cx| {
-                                        if let Some(workspace) = registry.get_active_workspace_mut() {
-                                            workspace.current_view = models::WorkspaceView::FolderDetail(folder_id);
-                                            cx.notify();
-                                        }
-                                    });
-                                }))
-                        )
-                        .child(
-                            div()
-                                .text_xs()
-                                .text_color(gpui::rgb(0x666666))
-                                .child("Click to view folder settings")
-                        )
-                )
-            })
             .child(self.request_panel.clone())
             .child(self.response_panel.clone())
     }

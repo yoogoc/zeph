@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use uuid::Uuid;
 use workspace::{WorkspaceEvent, WorkspaceServiceEvent};
 
+#[allow(unused)]
 enum ServiceContentType {
     Http(Uuid),
     Grpc(Uuid),
@@ -123,7 +124,6 @@ impl WorkspaceContent {
                 // TODO: Implement folder deletion
                 eprintln!("Delete folder requested: {}", id);
             }
-            _ => {}
         });
 
         let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
@@ -373,7 +373,7 @@ impl WorkspaceContent {
     fn resolve_import_conflicts(
         &mut self,
         config: ImportConfig,
-        resolutions: std::collections::HashMap<SharedString, workspace::ConflictResolution>,
+        resolutions: HashMap<SharedString, workspace::ConflictResolution>,
         cx: &mut Context<Self>,
     ) {
         let registry = workspace::WorkspaceRegistry::global(cx);
