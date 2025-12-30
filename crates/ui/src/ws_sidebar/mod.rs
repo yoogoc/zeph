@@ -1,7 +1,5 @@
 mod utils;
 
-pub use utils::TreeId;
-use utils::cal_icon;
 use crate::ImportConfig;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -13,6 +11,8 @@ use gpui_component::{h_flex, v_flex, IconName, Sizable};
 use models::{FolderType, Workspace};
 use std::collections::HashMap;
 use utils::build_tree;
+use utils::cal_icon;
+pub use utils::TreeId;
 use uuid::Uuid;
 use workspace::ConflictResolution;
 
@@ -428,6 +428,7 @@ impl Render for WorkspaceSidebar {
             )
             .child(
                 v_flex()
+                    .id("workspace-sidebar-tree")
                     .justify_start()
                     .h_full()
                     .p_2()
@@ -437,6 +438,12 @@ impl Render for WorkspaceSidebar {
                         let view = cx.entity();
                         move |ix, entry, selected, _window, cx| {
                             view.update(cx, |this, cx| this.render_item(entry, ix, selected, cx))
+                        }
+                    }))
+                    .on_hover(cx.listener(move |this, visual_state, _, cx| {
+                        if !visual_state {
+                            this.hovered = None;
+                            cx.notify();
                         }
                     })),
             )
