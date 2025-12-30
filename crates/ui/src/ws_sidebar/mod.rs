@@ -444,12 +444,12 @@ impl Render for WorkspaceSidebar {
                             view.update(cx, |this, cx| this.render_item(entry, ix, selected, cx))
                         }
                     }))
-                    .on_hover(cx.listener(move |this, visual_state, _, cx| {
-                        if !visual_state {
-                            this.hovered = None;
-                            cx.notify();
-                        }
-                    })),
+                    // .on_hover(cx.listener(move |this, visual_state, _, cx| {
+                    //     if !visual_state {
+                    //         this.hovered = None;
+                    //         cx.notify();
+                    //     }
+                    // })),
             )
     }
 }

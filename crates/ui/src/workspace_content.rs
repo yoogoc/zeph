@@ -30,13 +30,20 @@ impl WorkspaceContent {
 
         let registry_sub = cx.subscribe(&workspace_registry, {
             let sidebar = sidebar.clone();
-            move |_this, _registry, event: &WorkspaceEvent, cx| match event {
+            move |_this, registry, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
                     sidebar.update(cx, |s, cx| {
                         s.set_workspace(workspace.clone(), cx);
                     });
                 }
-                _ => cx.notify(),
+                _ => {
+                    sidebar.update(cx, |s, cx| {
+                        if let Some(workspace) = registry.read(cx).get_active_workspace() {
+                            s.set_workspace(workspace.clone(), cx);
+                        }
+                    });
+                    cx.notify()
+                },
             }
         });
 

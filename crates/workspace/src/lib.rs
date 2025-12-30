@@ -348,7 +348,14 @@ impl WorkspaceRegistry {
         let folder = models::Folder::with_type(workspace_id, &name, parent_id, folder_type);
 
         let folder_store = FolderStore::new(self.db.conn());
-        folder_store.insert(&folder).ok();
+        match folder_store.insert(&folder) {
+            Ok(_) => {
+                println!("debug");
+            }
+            Err(err) => {
+                error!("{err}");
+            }
+        }
 
         if let Some(workspace) = self.get_active_workspace_mut() {
             workspace.folders.push(folder);
