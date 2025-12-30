@@ -3,6 +3,7 @@ use gpui_component::button::Button;
 use gpui_component::tab::{Tab, TabBar};
 use gpui_component::Sizable;
 use models::{ContentType, Workspace};
+use crate::utils::cal_icon;
 
 pub enum ServiceTabsEvent {
     Select(ContentType),
@@ -46,7 +47,7 @@ impl Render for ServiceTabs {
             .iter()
             .map(|ct| {
                 let ct = ct.clone();
-                Tab::new().pr_1().label(ct.name()).suffix(
+                Tab::new().px_1().label(ct.name()).prefix(cal_icon(&ct)).suffix(
                     Button::new(format!("close_{}", ct.id()))
                         .small()
                         .label("×")

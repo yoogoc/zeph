@@ -10,6 +10,7 @@ mod title_bar;
 mod workspace_area;
 mod workspace_content;
 mod ws_sidebar;
+mod utils;
 
 pub use environment_selector::*;
 pub use folder_detail::*;
