@@ -22,6 +22,7 @@ pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
+    workspace: Option<Workspace>
 }
 
 #[derive(Debug, Clone)]
@@ -52,12 +53,14 @@ impl WorkspaceSidebar {
         Self {
             tree,
             hovered: None,
+            workspace: None,
             tree_map: HashMap::new(),
         }
     }
 
     pub fn set_workspace(&mut self, workspace: Workspace, cx: &mut Context<Self>) {
         self.tree_map.clear();
+        self.workspace = Some(workspace.clone());
         self.tree.update(cx, |this, cx| {
             this.set_items(build_tree(workspace), cx);
         });
@@ -104,11 +107,11 @@ impl WorkspaceSidebar {
         cx: &mut Context<Self>,
     ) -> ListItem {
         let item = entry.item();
-        let icon = cal_icon(entry);
+        let icon = cal_icon(entry, &self.workspace);
         let item_id = item.id.clone();
         ListItem::new(ix)
             .selected(selected)
-            .pl(px(16.) * entry.depth() + px(12.)) // Indent based on depth
+            .pl(px(10.) * entry.depth() + px(12.)) // Indent based on depth
             .child(
                 h_flex()
                     .items_center()

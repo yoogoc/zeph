@@ -1,4 +1,5 @@
-use gpui::SharedString;
+use crate::utils::cal_icon as cal_icon_ct;
+use gpui::{IntoElement, SharedString};
 use gpui_component::tree::{TreeEntry, TreeItem};
 use gpui_component::IconName;
 use models::{ContentType, Folder, FolderType, Schema, Service, Workspace};
@@ -46,10 +47,10 @@ impl TreeId {
 
     pub fn from_content(value: &ContentType) -> Self {
         match value {
-            ContentType::ServiceFolder(folder) => Self::Service(folder.id),
-            ContentType::SchemaFolder(folder) => Self::Service(folder.id),
+            ContentType::ServiceFolder(folder) => Self::ServiceFolder(folder.id),
+            ContentType::SchemaFolder(folder) => Self::SchemaFolder(folder.id),
             ContentType::Service(service) => Self::Service(service.id),
-            ContentType::Schema(schema) => Self::Service(schema.id),
+            ContentType::Schema(schema) => Self::Schema(schema.id),
         }
     }
 
@@ -59,7 +60,7 @@ impl TreeId {
             TreeId::SchemaRoot => SCHEMA_ID.into(),
             TreeId::Service(id) => format!("{}/{}", SERVICE_ID, id).into(),
             TreeId::Schema(id) => format!("{}/{}", SCHEMA_ID, id).into(),
-            TreeId::ServiceFolder(id) => format!("{}/folder/{}", SCHEMA_ID, id).into(),
+            TreeId::ServiceFolder(id) => format!("{}/folder/{}", SERVICE_ID, id).into(),
             TreeId::SchemaFolder(id) => format!("{}/folder/{}", SCHEMA_ID, id).into(),
         }
     }
@@ -169,12 +170,26 @@ pub fn build_schema_tree(
     items
 }
 
-pub fn cal_icon(entry: &TreeEntry) -> IconName {
+pub fn cal_icon(entry: &TreeEntry, workspace: &Option<Workspace>) -> impl IntoElement {
     let id = TreeId::new(entry.item().id.clone());
     match id {
-        TreeId::Service(_) => IconName::File,
-        TreeId::Schema(_) => IconName::File,
-        _ => cal_folder_icon(entry)
+        TreeId::Service(id) => {
+            match workspace
+                .as_ref()
+                .and_then(|w| w.services.iter().find(|s| s.id == id))
+            {
+                Some(service) => cal_icon_ct(&ContentType::Service(service.clone())).into_any_element(),
+                None => IconName::File.into_any_element(),
+            }
+        }
+        TreeId::Schema(id) => match workspace
+            .as_ref()
+            .and_then(|w| w.schemas.iter().find(|s| s.id == id))
+        {
+            Some(schema) => cal_icon_ct(&ContentType::Schema(schema.clone())).into_any_element(),
+            None => IconName::File.into_any_element(),
+        },
+        _ => cal_folder_icon(entry).into_any_element(),
     }
 }
 
