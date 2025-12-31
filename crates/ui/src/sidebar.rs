@@ -1,7 +1,7 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{v_flex, Sizable};
+use gpui_component::{v_flex, IconName};
 use models::WorkspaceView;
 use uuid::Uuid;
 
@@ -29,11 +29,11 @@ impl Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let buttons: Vec<(&str, &str, &str, WorkspaceView)> = vec![
-            ("services", "📁", "Services", WorkspaceView::Services),
-            ("docs", "📖", "Documentation", WorkspaceView::Docs),
-            ("history", "🕒", "History", WorkspaceView::History),
-            ("settings", "⚙️", "Settings", WorkspaceView::Settings),
+        let buttons: Vec<(&str, IconName, &str, WorkspaceView)> = vec![
+            ("services", IconName::Folder, "Services", WorkspaceView::Services),
+            ("docs", IconName::BookOpen, "Documentation", WorkspaceView::Docs),
+            ("history", IconName::Eye, "History", WorkspaceView::History),
+            ("settings", IconName::Settings, "Settings", WorkspaceView::Settings),
         ];
 
         v_flex()
@@ -44,15 +44,12 @@ impl Render for Sidebar {
             .bg(rgb(0xf5f5f5))
             .px_4()
             .pb_4()
-            .pt_1()
+            .pt_2()
             .child(
                 v_flex().gap_2().children(buttons.into_iter().map(|(id, icon, tooltip, view)| {
                     let is_active = std::mem::discriminant(&self.current_view) == std::mem::discriminant(&view);
                     Button::new(id)
-                        .w(px(30.0))
-                        .h(px(30.0))
-                        .small()
-                        .label(icon)
+                        .icon(icon)
                         .tooltip(tooltip)
                         .when(is_active, |btn: Button| btn.primary())
                         .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::SwitchView(view.clone()))))

@@ -1,4 +1,5 @@
 mod application;
+mod theme;
 
 use gpui::*;
 use gpui_component::*;
@@ -14,7 +15,8 @@ fn main() {
 
     app.run(move |cx| {
         // Initialize gpui-component
-        gpui_component::init(cx);
+        init(cx);
+        theme::init(cx);
         
         // Initialize data models and registries
         workspace::init(cx);

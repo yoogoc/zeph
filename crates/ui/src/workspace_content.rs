@@ -4,6 +4,7 @@ use crate::{
     HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent,
 };
 use gpui::*;
+use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
 use models::{ContentType, FolderType, ServiceType, Workspace, WorkspaceView};
 use std::collections::HashMap;
@@ -610,23 +611,35 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            h_flex().size_full().child(self.sidebar.clone()).child(
-                v_flex()
-                    .flex_1()
-                    .h_full()
-                    .child(
-                        h_flex()
-                            .items_center()
-                            .justify_between()
-                            .border_b_1()
-                            .border_color(rgb(0xe0e0e0))
-                            .child(div().flex_1().child(self.service_tabs.clone()))
-                            .child(div().px_2().child(self.env_selector.clone())),
-                    )
-                    .child(self.render_service_content(&workspace, window, cx)),
-            )
+            h_resizable("workspace-content")
+                .child(resizable_panel().size(px(160.)).child(self.sidebar.clone()))
+                .child(
+                    resizable_panel().child(
+                        div().size_full().pt_1().pb_2().pr_2().bg(rgb(0xf5f5f5)).child(
+                            v_flex()
+                                .rounded_2xl()
+                                .bg(white())
+                                .flex_1()
+                                .h_full()
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .justify_between()
+                                        .border_b_1()
+                                        .border_color(rgb(0xe0e0e0))
+                                        .child(div().flex_1().child(self.service_tabs.clone()))
+                                        .child(div().p_2().child(self.env_selector.clone())),
+                                )
+                                .child(self.render_service_content(&workspace, window, cx)),
+                        ),
+                    ),
+                )
+                .into_any_element()
         } else {
-            div().p_4().child("No workspace selected")
+            div()
+                .p_4()
+                .child("No workspace selected")
+                .into_any_element()
         }
     }
 }

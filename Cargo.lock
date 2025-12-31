@@ -8363,6 +8363,7 @@ dependencies = [
  "gpui_tokio",
  "models",
  "reqwest_client",
+ "tracing",
  "tracing-subscriber",
  "ui",
  "uuid",

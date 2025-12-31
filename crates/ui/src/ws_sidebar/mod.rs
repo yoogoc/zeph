@@ -164,38 +164,40 @@ impl WorkspaceSidebar {
 
 impl Render for WorkspaceSidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        v_flex()
-            .h_full()
-            .w_48()
-            .border_r_1()
-            .border_color(rgb(0xe0e0e0))
-            .child(
-                div()
-                    .p_2()
-                    .border_1()
-                    .rounded_md()
-                    .text_sm()
-                    .overflow_hidden()
-                    .child("Search"),
-            )
-            .child(
-                v_flex()
-                    .id("workspace-sidebar-tree")
-                    .justify_start()
-                    .h_full()
-                    .p_2()
-                    .gap_2()
-                    // Services Section
-                    .child(tree(&self.tree, {
-                        let view = cx.entity();
-                        move |ix, entry, selected, _window, cx| {
-                            view.update(cx, |this, cx| this.render_item(entry, ix, selected, cx))
-                        }
-                    }))
-                    // .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                    //     this.hovered = None;
-                    //     cx.notify();
-                    // })),
-            )
+        div().size_full().pt_1().pb_2().pr_1().bg(rgb(0xf5f5f5)).child(
+            v_flex()
+                .bg(white())
+                .size_full()
+                .rounded_2xl()
+                .child(
+                    div()
+                        .p_2()
+                        .border_1()
+                        .rounded_md()
+                        .text_sm()
+                        .overflow_hidden()
+                        .child("Search"),
+                )
+                .child(
+                    v_flex()
+                        .id("workspace-sidebar-tree")
+                        .justify_start()
+                        .h_full()
+                        .p_2()
+                        .gap_2()
+                        // Services Section
+                        .child(tree(&self.tree, {
+                            let view = cx.entity();
+                            move |ix, entry, selected, _window, cx| {
+                                view.update(cx, |this, cx| {
+                                    this.render_item(entry, ix, selected, cx)
+                                })
+                            }
+                        })), // .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                             //     this.hovered = None;
+                             //     cx.notify();
+                             // })),
+                ),
+        )
     }
 }
