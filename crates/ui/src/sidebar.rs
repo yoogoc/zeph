@@ -1,7 +1,7 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::StyledExt;
+use gpui_component::{v_flex, Sizable};
 use models::WorkspaceView;
 use uuid::Uuid;
 
@@ -36,19 +36,22 @@ impl Render for Sidebar {
             ("settings", "⚙️", "Settings", WorkspaceView::Settings),
         ];
 
-        div()
-            .w(px(60.0))
+        v_flex()
+            .items_center()
+            .justify_start()
+            .w(px(40.0))
             .h_full()
             .bg(rgb(0xf5f5f5))
-            .border_r_1()
-            .border_color(rgb(0xe0e0e0))
-            .p_2()
+            .px_4()
+            .pb_4()
+            .pt_1()
             .child(
-                div().v_flex().gap_2().children(buttons.into_iter().map(|(id, icon, tooltip, view)| {
+                v_flex().gap_2().children(buttons.into_iter().map(|(id, icon, tooltip, view)| {
                     let is_active = std::mem::discriminant(&self.current_view) == std::mem::discriminant(&view);
                     Button::new(id)
-                        .w(px(48.0))
-                        .h(px(48.0))
+                        .w(px(30.0))
+                        .h(px(30.0))
+                        .small()
                         .label(icon)
                         .tooltip(tooltip)
                         .when(is_active, |btn: Button| btn.primary())

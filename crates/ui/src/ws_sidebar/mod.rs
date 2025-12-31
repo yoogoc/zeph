@@ -1,5 +1,5 @@
-mod utils;
 mod popup_menu;
+mod utils;
 
 use crate::ws_sidebar::popup_menu::popup_menu;
 use crate::ImportConfig;
@@ -22,7 +22,7 @@ pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
-    workspace: Option<Workspace>
+    workspace: Option<Workspace>,
 }
 
 #[derive(Debug, Clone)]
@@ -191,12 +191,11 @@ impl Render for WorkspaceSidebar {
                         move |ix, entry, selected, _window, cx| {
                             view.update(cx, |this, cx| this.render_item(entry, ix, selected, cx))
                         }
-                    })), // .on_hover(cx.listener(move |this, visual_state, _, cx| {
-                         //     if !visual_state {
-                         //         this.hovered = None;
-                         //         cx.notify();
-                         //     }
-                         // })),
+                    }))
+                    // .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                    //     this.hovered = None;
+                    //     cx.notify();
+                    // })),
             )
     }
 }

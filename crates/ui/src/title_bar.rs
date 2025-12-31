@@ -1,7 +1,7 @@
 use gpui::*;
-use gpui_component::button::Button;
-use gpui_component::tab::{Tab, TabBar};
-use gpui_component::{Sizable, TitleBar as GTitleBar};
+use gpui_component::button::{Button, ButtonRounded};
+use gpui_component::tab::{Tab, TabBar, TabVariant};
+use gpui_component::{Sizable, TitleBar as GTitleBar, Size, IconName};
 use models::ApplicationView;
 
 pub struct TitleBar {
@@ -64,6 +64,7 @@ impl Render for TitleBar {
 
         GTitleBar::new().child(
             TabBar::new("workspace_tabs")
+                .with_variant(TabVariant::Pill)
                 .menu(true)
                 .selected_index(self.selected_index)
                 .on_click(cx.listener(move |this, index: &usize, _, cx| {
@@ -77,7 +78,7 @@ impl Render for TitleBar {
                 }))
                 .items_center()
                 .gap_2()
-                .py_2()
+                .with_size(Size::Small)
                 .child(
                     Tab::new()
                         .label("Home")
@@ -90,8 +91,9 @@ impl Render for TitleBar {
                         .pr_1()
                         .suffix(
                             Button::new(format!("close_{}", workspace_id))
-                                .small()
-                                .label("×")
+                                .with_size(px(13.))
+                                .rounded(ButtonRounded::Large)
+                                .icon(IconName::Close)
                                 .on_click(cx.listener(move |this, _, _, cx| {
                                     this.close_workspace(workspace_id, cx);
                                     cx.stop_propagation();
@@ -99,7 +101,7 @@ impl Render for TitleBar {
                         )
                         .on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                 }))
-                .h_full(),
-        )
+                .h_full().border_b_0(),
+        ).py_2().border_b_0()
     }
 }
