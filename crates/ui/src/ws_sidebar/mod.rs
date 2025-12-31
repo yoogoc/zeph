@@ -63,7 +63,7 @@ impl WorkspaceSidebar {
 
     pub fn set_ix(&mut self, item: TreeId, cx: &mut Context<Self>) {
         self.tree.update(cx, |this, cx| {
-            this.set_selected_by_id(Some(item.to_string()), cx);
+            this.set_selected_item(Some(&TreeItem::new(item.to_string().clone(), "")), cx);
         });
     }
 
