@@ -4,7 +4,7 @@ use crate::{
     HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent,
 };
 use gpui::*;
-use gpui_component::StyledExt;
+use gpui_component::{h_flex, v_flex};
 use models::{ContentType, FolderType, ServiceType, Workspace, WorkspaceView};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -25,15 +25,28 @@ pub struct WorkspaceContent {
 impl WorkspaceContent {
     pub fn new(_workspace_id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar = cx.new(|cx| WsSidebar::new(cx));
+        let service_tabs = cx.new(|_| ServiceTabs::new());
+        let env_selector = cx.new(|_| EnvironmentSelector::new());
+        let folder_detail_page = cx.new(|cx| FolderDetailPage::new(cx));
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
 
         let registry_sub = cx.subscribe(&workspace_registry, {
             let sidebar = sidebar.clone();
+            let service_tabs = service_tabs.clone();
+            let env_selector = env_selector.clone();
             move |_this, registry, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
                     sidebar.update(cx, |s, cx| {
                         s.set_workspace(workspace.clone(), cx);
+                    });
+                    service_tabs.update(cx, |s, cx| {
+                        s.set_workspace(workspace.clone());
+                        cx.notify();
+                    });
+                    env_selector.update(cx, |s, cx| {
+                        s.set_workspace(workspace.clone());
+                        cx.notify();
                     });
                 }
                 _ => {
@@ -42,16 +55,27 @@ impl WorkspaceContent {
                             s.set_workspace(workspace.clone(), cx);
                         }
                     });
+                    env_selector.update(cx, |s, cx| {
+                        if let Some(workspace) = registry.read(cx).get_active_workspace() {
+                            s.set_workspace(workspace.clone());
+                        }
+                        cx.notify();
+                    });
                     cx.notify()
-                },
+                }
             }
         });
 
         let registry_sub2 = cx.subscribe_in(&workspace_registry, window, {
+            let service_tabs = service_tabs.clone();
             move |this, _registry, event: &WorkspaceServiceEvent, window, cx| {
                 match event {
                     WorkspaceServiceEvent::Open(workspace, service) => {
                         this.set_content(workspace, service, window, cx);
+                        service_tabs.update(cx, |s, cx| {
+                            s.set_workspace(workspace.clone());
+                            cx.notify();
+                        });
                     }
                     WorkspaceServiceEvent::Switch {
                         workspace,
@@ -66,15 +90,15 @@ impl WorkspaceContent {
                         } else {
                             this.current_service = None;
                         }
+                        service_tabs.update(cx, |s, cx| {
+                            s.set_workspace(workspace.clone());
+                            cx.notify();
+                        });
                     }
                 }
                 cx.notify();
             }
         });
-
-        let service_tabs = cx.new(|_| ServiceTabs::new());
-        let env_selector = cx.new(|_| EnvironmentSelector::new());
-        let folder_detail_page = cx.new(|cx| FolderDetailPage::new(cx));
 
         let tabs_sub = cx.subscribe(&service_tabs, {
             let sidebar = sidebar.clone();
@@ -189,11 +213,9 @@ impl WorkspaceContent {
 
         self.current_service = Some(ct.clone());
         match ct {
-            ContentType::ServiceFolder(folder) => {
-                self.folder_detail.update(cx, |s, cx| {
-                    s.set_folder(Some(folder.clone()), cx);
-                })
-            }
+            ContentType::ServiceFolder(folder) => self.folder_detail.update(cx, |s, cx| {
+                s.set_folder(Some(folder.clone()), cx);
+            }),
             ContentType::SchemaFolder(_) => {}
             ContentType::Service(service) => match &service.service_type {
                 ServiceType::Http(config) => {
@@ -588,33 +610,21 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            self.service_tabs
-                .update(cx, |t, _| t.set_workspace(workspace.clone()));
-            self.env_selector
-                .update(cx, |e, _| e.set_workspace(workspace.clone()));
-
-            div()
-                .h_flex()
-                .size_full()
-                .child(self.sidebar.clone())
-                .child(
-                    div()
-                        .flex_1()
-                        .h_full()
-                        .v_flex()
-                        .child(
-                            // Tabs row with environment selector
-                            div()
-                                .h_flex()
-                                .items_center()
-                                .justify_between()
-                                .border_b_1()
-                                .border_color(rgb(0xe0e0e0))
-                                .child(div().flex_1().child(self.service_tabs.clone()))
-                                .child(div().px_2().child(self.env_selector.clone())),
-                        )
-                        .child(self.render_service_content(&workspace, window, cx)),
-                )
+            h_flex().size_full().child(self.sidebar.clone()).child(
+                v_flex()
+                    .flex_1()
+                    .h_full()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .justify_between()
+                            .border_b_1()
+                            .border_color(rgb(0xe0e0e0))
+                            .child(div().flex_1().child(self.service_tabs.clone()))
+                            .child(div().px_2().child(self.env_selector.clone())),
+                    )
+                    .child(self.render_service_content(&workspace, window, cx)),
+            )
         } else {
             div().p_4().child("No workspace selected")
         }
