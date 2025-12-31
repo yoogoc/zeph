@@ -6,7 +6,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
-use gpui_component::tab::{Tab, TabBar};
+use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{Disableable, IconName, StyledExt};
 use models::{Header, HttpMethod};
 
@@ -212,6 +212,7 @@ impl Render for RequestPanel {
                     .gap_2()
                     .child(
                         TabBar::new("request_tabs")
+                            .with_variant(TabVariant::Underline)
                             .child(Tab::new().label(shared_t!("request.body")))
                             .child(Tab::new().label(shared_t!("request.header")))
                             .selected_index(active_tab as usize)

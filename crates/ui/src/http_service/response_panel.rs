@@ -1,8 +1,8 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::input::{Input, InputState};
-use gpui_component::tab::{Tab, TabBar};
-use gpui_component::StyledExt;
+use gpui_component::tab::{Tab, TabBar, TabVariant};
+use gpui_component::v_flex;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum ResponseTab {
@@ -38,13 +38,13 @@ impl Render for ResponsePanel {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let active_tab = self.active_tab;
 
-        div()
-            .v_flex()
+        v_flex()
             .gap_2()
             .flex_1()
             .min_h_0()
             .child(
                 TabBar::new("response_tabs")
+                    .with_variant(TabVariant::Segmented)
                     .child(Tab::new().label(shared_t!("response.body")))
                     .child(Tab::new().label(shared_t!("response.header")))
                     .child(Tab::new().label(shared_t!("response.request")))

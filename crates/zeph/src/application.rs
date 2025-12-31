@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::{v_flex, Root, StyledExt};
+use gpui_component::{v_flex, Root};
 use models::{ApplicationView, CreateWorkspace};
 use ui::{HomePage, HomePageEvent};
 use uuid::Uuid;

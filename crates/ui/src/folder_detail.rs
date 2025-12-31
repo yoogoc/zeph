@@ -1,10 +1,11 @@
-use std::collections::HashMap;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
-use gpui_component::{StyledExt, Disableable, h_flex, v_flex};
+use gpui_component::tab::{Tab, TabBar, TabVariant};
+use gpui_component::{h_flex, v_flex, Disableable, StyledExt};
 use models::{Folder, Header, SearchParameter, Workspace};
+use std::collections::HashMap;
 use uuid::Uuid;
 
 /// Tab options for the folder detail page
@@ -66,9 +67,9 @@ impl FolderDetailError {
     }
 
     pub fn is_recoverable(&self) -> bool {
-        matches!(self, 
-            FolderDetailError::ValidationError(_) | 
-            FolderDetailError::NetworkError(_)
+        matches!(
+            self,
+            FolderDetailError::ValidationError(_) | FolderDetailError::NetworkError(_)
         )
     }
 }
@@ -94,7 +95,7 @@ pub struct FolderDetailPage {
     overview_panel: Entity<FolderOverviewPanel>,
     headers_panel: Entity<CommonHeadersPanel>,
     params_panel: Entity<SearchParamsPanel>,
-    
+
     // Error handling and loading states
     is_loading: bool,
     error_message: Option<String>,
@@ -110,25 +111,39 @@ impl FolderDetailPage {
         let params_panel = cx.new(|_| SearchParamsPanel::new());
 
         // Subscribe to child panel events
-        cx.subscribe(&headers_panel, |this, _panel, event: &CommonHeadersPanelEvent, cx| {
-            if let Some(folder_id) = this.folder_id {
-                match event {
-                    CommonHeadersPanelEvent::HeadersChanged(headers) => {
-                        cx.emit(FolderDetailPageEvent::UpdateCommonHeaders(folder_id, headers.clone()));
+        cx.subscribe(
+            &headers_panel,
+            |this, _panel, event: &CommonHeadersPanelEvent, cx| {
+                if let Some(folder_id) = this.folder_id {
+                    match event {
+                        CommonHeadersPanelEvent::HeadersChanged(headers) => {
+                            cx.emit(FolderDetailPageEvent::UpdateCommonHeaders(
+                                folder_id,
+                                headers.clone(),
+                            ));
+                        }
                     }
                 }
-            }
-        }).detach();
+            },
+        )
+        .detach();
 
-        cx.subscribe(&params_panel, |this, _panel, event: &SearchParamsPanelEvent, cx| {
-            if let Some(folder_id) = this.folder_id {
-                match event {
-                    SearchParamsPanelEvent::ParamsChanged(params) => {
-                        cx.emit(FolderDetailPageEvent::UpdateSearchParams(folder_id, params.clone()));
+        cx.subscribe(
+            &params_panel,
+            |this, _panel, event: &SearchParamsPanelEvent, cx| {
+                if let Some(folder_id) = this.folder_id {
+                    match event {
+                        SearchParamsPanelEvent::ParamsChanged(params) => {
+                            cx.emit(FolderDetailPageEvent::UpdateSearchParams(
+                                folder_id,
+                                params.clone(),
+                            ));
+                        }
                     }
                 }
-            }
-        }).detach();
+            },
+        )
+        .detach();
 
         Self {
             folder_id: None,
@@ -154,13 +169,13 @@ impl FolderDetailPage {
             self.overview_panel.update(cx, |panel, _| {
                 panel.set_folder(folder.clone());
             });
-            
+
             // Store headers for later initialization in the panel
             let headers = folder.common_headers.clone();
             self.headers_panel.update(cx, |panel, _| {
                 panel.set_headers(headers);
             });
-            
+
             self.params_panel.update(cx, |panel, _| {
                 panel.set_params(folder.common_search_params.clone());
             });
@@ -181,7 +196,12 @@ impl FolderDetailPage {
     }
 
     /// Set loading state
-    pub fn set_loading(&mut self, loading: bool, operation: Option<String>, cx: &mut Context<Self>) {
+    pub fn set_loading(
+        &mut self,
+        loading: bool,
+        operation: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
         self.is_loading = loading;
         self.last_operation = operation;
         if loading {
@@ -207,13 +227,17 @@ impl FolderDetailPage {
     #[allow(unused)]
     fn validate_folder_data(&self) -> Result<(), FolderDetailError> {
         if self.folder.is_none() {
-            return Err(FolderDetailError::NotFound("No folder selected".to_string()));
+            return Err(FolderDetailError::NotFound(
+                "No folder selected".to_string(),
+            ));
         }
-        
+
         if self.folder_id.is_none() {
-            return Err(FolderDetailError::InvalidData("Invalid folder ID".to_string()));
+            return Err(FolderDetailError::InvalidData(
+                "Invalid folder ID".to_string(),
+            ));
         }
-        
+
         Ok(())
     }
 
@@ -222,53 +246,36 @@ impl FolderDetailPage {
         div()
             .h_flex()
             .border_b_1()
-            .border_color(gpui::rgb(0xe0e0e0))
-            .children(
-                FolderDetailTab::all_tabs().into_iter().map(|tab| {
-                    let is_active = tab == self.active_tab;
-                    let tab_clone = tab.clone();
-                    
-                    Button::new(format!("tab_{:?}", tab))
-                        .px_4()
-                        .py_2()
-                        .rounded_none()
-                        .border_b_2()
-                        .when(is_active, |btn: Button| {
-                            btn.primary()
-                                .border_color(gpui::rgb(0x007bff))
-                        })
-                        .when(!is_active, |btn: Button| {
-                            btn.ghost()
-                                .border_color(gpui::hsla(0.0, 0.0, 0.0, 0.0))
-                        })
-                        .label(tab.display_name())
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.set_active_tab(tab_clone.clone(), cx);
-                        }))
-                })
+            .border_color(rgb(0xe0e0e0))
+            .child(
+                TabBar::new("response_tabs")
+                    .with_variant(TabVariant::Underline)
+                    .selected_index(
+                        FolderDetailTab::all_tabs()
+                            .iter()
+                            .position(|tab| tab == &self.active_tab)
+                            .unwrap_or(0),
+                    )
+                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                        if let Some(tab) = FolderDetailTab::all_tabs().get(*ix) {
+                            this.set_active_tab(tab.clone(), cx);
+                        }
+                    }))
+                    .children(FolderDetailTab::all_tabs().into_iter().map(|tab| {
+                        Tab::new().label(tab.display_name())
+                    })),
             )
     }
 
     /// Render the active tab content
     fn render_tab_content(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         match self.active_tab {
-            FolderDetailTab::Overview => {
-                div()
-                    .flex_1()
-                    .p_4()
-                    .child(self.overview_panel.clone())
-            }
+            FolderDetailTab::Overview => div().flex_1().p_1().child(self.overview_panel.clone()),
             FolderDetailTab::CommonHeaders => {
-                div()
-                    .flex_1()
-                    .p_4()
-                    .child(self.headers_panel.clone())
+                div().flex_1().p_1().child(self.headers_panel.clone())
             }
             FolderDetailTab::SearchParameters => {
-                div()
-                    .flex_1()
-                    .p_4()
-                    .child(self.params_panel.clone())
+                div().flex_1().p_1().child(self.params_panel.clone())
             }
         }
     }
@@ -289,14 +296,14 @@ impl FolderDetailPage {
                 .child(
                     gpui_component::Icon::new(gpui_component::IconName::Settings)
                         .size_4()
-                        .text_color(gpui::rgb(0xdc2626))
+                        .text_color(gpui::rgb(0xdc2626)),
                 )
                 .child(
                     div()
                         .flex_1()
                         .text_sm()
                         .text_color(gpui::rgb(0x991b1b))
-                        .child(error.clone())
+                        .child(error.clone()),
                 )
                 .child(
                     Button::new("dismiss_error")
@@ -305,7 +312,7 @@ impl FolderDetailPage {
                         .icon(gpui_component::IconName::Delete)
                         .on_click(cx.listener(|this: &mut Self, _, _, cx| {
                             this.clear_error(cx);
-                        }))
+                        })),
                 )
         })
     }
@@ -326,23 +333,16 @@ impl FolderDetailPage {
                     .rounded_md()
                     .child(
                         // Simple loading indicator - in a real app you'd use a spinner
-                        div()
-                            .w_4()
-                            .h_4()
-                            .bg(rgb(0x0ea5e9))
-                            .rounded_full()
+                        div().w_4().h_4().bg(rgb(0x0ea5e9)).rounded_full(),
                     )
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x0c4a6e))
-                            .child(
-                                self.last_operation
-                                    .as_ref()
-                                    .map(|op| format!("{}...", op))
-                                    .unwrap_or_else(|| t!("common.loading").to_string())
-                            )
-                    )
+                        div().text_sm().text_color(rgb(0x0c4a6e)).child(
+                            self.last_operation
+                                .as_ref()
+                                .map(|op| format!("{}...", op))
+                                .unwrap_or_else(|| t!("common.loading").to_string()),
+                        ),
+                    ),
             )
         } else {
             None
@@ -366,20 +366,20 @@ impl Render for FolderDetailPage {
                         .child(
                             gpui_component::Icon::new(gpui_component::IconName::Folder)
                                 .size_12()
-                                .text_color(gpui::rgb(0x9ca3af))
+                                .text_color(gpui::rgb(0x9ca3af)),
                         )
                         .child(
                             div()
                                 .text_lg()
                                 .text_color(gpui::rgb(0x666666))
-                                .child(shared_t!("folders.no_selected.title"))
+                                .child(shared_t!("folders.no_selected.title")),
                         )
                         .child(
                             div()
                                 .text_sm()
                                 .text_color(gpui::rgb(0x9ca3af))
-                                .child(shared_t!("folders.no_selected.description"))
-                        )
+                                .child(shared_t!("folders.no_selected.description")),
+                        ),
                 )
                 .into_any_element();
         }
@@ -427,9 +427,7 @@ impl FolderOverviewPanel {
 impl Render for FolderOverviewPanel {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         let Some(folder) = &self.folder else {
-            return div()
-                .child(shared_t!("folders.no_info"))
-                .into_any_element();
+            return div().child(shared_t!("folders.no_info")).into_any_element();
         };
 
         let folder_name = folder.name.to_string();
@@ -454,7 +452,7 @@ impl Render for FolderOverviewPanel {
                         div()
                             .text_lg()
                             .font_semibold()
-                            .child(shared_t!("folders.info"))
+                            .child(shared_t!("folders.info")),
                     )
                     .child(
                         div()
@@ -464,40 +462,59 @@ impl Render for FolderOverviewPanel {
                                 div()
                                     .h_flex()
                                     .gap_2()
-                                    .child(div().font_medium().child(format!("{}:", t!("folders.fields.name"))))
-                                    .child(div().child(folder_name))
+                                    .child(
+                                        div()
+                                            .font_medium()
+                                            .child(format!("{}:", t!("folders.fields.name"))),
+                                    )
+                                    .child(div().child(folder_name)),
                             )
                             .child(
                                 div()
                                     .h_flex()
                                     .gap_2()
-                                    .child(div().font_medium().child(format!("{}:", t!("folders.fields.type"))))
-                                    .child(div().child(folder_type_str))
+                                    .child(
+                                        div()
+                                            .font_medium()
+                                            .child(format!("{}:", t!("folders.fields.type"))),
+                                    )
+                                    .child(div().child(folder_type_str)),
                             )
                             .when(description.is_some(), |container| {
                                 container.child(
                                     div()
                                         .h_flex()
                                         .gap_2()
-                                        .child(div().font_medium().child(format!("{}:", t!("folders.fields.description"))))
-                                        .child(div().child(description.unwrap()))
+                                        .child(div().font_medium().child(format!(
+                                            "{}:",
+                                            t!("folders.fields.description")
+                                        )))
+                                        .child(div().child(description.unwrap())),
                                 )
                             })
                             .child(
                                 div()
                                     .h_flex()
                                     .gap_2()
-                                    .child(div().font_medium().child(format!("{}:", t!("folders.fields.created_at"))))
-                                    .child(div().child(Self::format_timestamp(created_at)))
+                                    .child(
+                                        div()
+                                            .font_medium()
+                                            .child(format!("{}:", t!("folders.fields.created_at"))),
+                                    )
+                                    .child(div().child(Self::format_timestamp(created_at))),
                             )
                             .child(
                                 div()
                                     .h_flex()
                                     .gap_2()
-                                    .child(div().font_medium().child(format!("{}:", t!("folders.fields.updated_at"))))
-                                    .child(div().child(Self::format_timestamp(updated_at)))
-                            )
-                    )
+                                    .child(
+                                        div()
+                                            .font_medium()
+                                            .child(format!("{}:", t!("folders.fields.updated_at"))),
+                                    )
+                                    .child(div().child(Self::format_timestamp(updated_at))),
+                            ),
+                    ),
             )
             .child(
                 div()
@@ -507,7 +524,7 @@ impl Render for FolderOverviewPanel {
                         div()
                             .text_lg()
                             .font_semibold()
-                            .child(shared_t!("folders.statistics"))
+                            .child(shared_t!("folders.statistics")),
                     )
                     .child(
                         div()
@@ -517,17 +534,27 @@ impl Render for FolderOverviewPanel {
                                 div()
                                     .h_flex()
                                     .gap_2()
-                                    .child(div().font_medium().child(format!("{}:", t!("folders.tab.common_headers"))))
-                                    .child(div().child(format!("{}", headers_count)))
+                                    .child(
+                                        div().font_medium().child(format!(
+                                            "{}:",
+                                            t!("folders.tab.common_headers")
+                                        )),
+                                    )
+                                    .child(div().child(format!("{}", headers_count))),
                             )
                             .child(
                                 div()
                                     .h_flex()
                                     .gap_2()
-                                    .child(div().font_medium().child(format!("{}:", t!("folders.tab.search_parameters"))))
-                                    .child(div().child(format!("{}", params_count)))
-                            )
-                    )
+                                    .child(
+                                        div().font_medium().child(format!(
+                                            "{}:",
+                                            t!("folders.tab.search_parameters")
+                                        )),
+                                    )
+                                    .child(div().child(format!("{}", params_count))),
+                            ),
+                    ),
             )
             .into_any_element()
     }
@@ -540,7 +567,11 @@ struct HeaderInputRow {
 }
 
 impl HeaderInputRow {
-    fn new(header: Option<&Header>, window: &mut Window, cx: &mut Context<CommonHeadersPanel>) -> Self {
+    fn new(
+        header: Option<&Header>,
+        window: &mut Window,
+        cx: &mut Context<CommonHeadersPanel>,
+    ) -> Self {
         let (key_value, value_value) = if let Some(header) = header {
             (header.key.to_string(), header.value.to_string())
         } else {
@@ -582,7 +613,7 @@ pub struct CommonHeadersPanel {
     header_rows: Vec<HeaderInputRow>,
     stored_headers: Vec<Header>,
     needs_add_button: bool,
-    
+
     // Error handling and validation
     is_saving: bool,
     save_error: Option<String>,
@@ -645,19 +676,19 @@ impl CommonHeadersPanel {
         // Validate all headers before emitting
         let mut valid_headers = Vec::new();
         let mut has_errors = false;
-        
+
         for (index, row) in self.header_rows.iter().enumerate() {
             if let Some(_error) = self.get_validation_error(index, cx) {
                 has_errors = true;
                 // Don't emit if there are validation errors
                 continue;
             }
-            
+
             if row.is_valid(cx) {
                 valid_headers.push(row.to_header(cx));
             }
         }
-        
+
         // Only emit if no validation errors
         if !has_errors {
             cx.emit(CommonHeadersPanelEvent::HeadersChanged(valid_headers));
@@ -667,57 +698,65 @@ impl CommonHeadersPanel {
     /// Enhanced header name validation
     fn validate_header_name(name: &str) -> Result<(), SharedString> {
         let trimmed = name.trim();
-        
+
         if trimmed.is_empty() {
             return Err(shared_t!("header.validate.name.not_empty"));
         }
-        
+
         if trimmed.len() > 100 {
             return Err(shared_t!("header.validate.name.too_long"));
         }
-        
+
         // HTTP header name validation (RFC 7230)
         if !trimmed.chars().all(|c| {
-            c.is_ascii() && 
-            (c.is_alphanumeric() || c == '-' || c == '_') &&
-            !c.is_control() && 
-            c != ':' && 
-            c != ' '
+            c.is_ascii()
+                && (c.is_alphanumeric() || c == '-' || c == '_')
+                && !c.is_control()
+                && c != ':'
+                && c != ' '
         }) {
             return Err(shared_t!("header.validate.name.syntax_error"));
         }
-        
+
         // Check for reserved headers
         let lower_name = trimmed.to_lowercase();
-        if matches!(lower_name.as_str(), 
-            "host" | "connection" | "content-length" | "transfer-encoding" | 
-            "upgrade" | "proxy-connection" | "te" | "trailer"
+        if matches!(
+            lower_name.as_str(),
+            "host"
+                | "connection"
+                | "content-length"
+                | "transfer-encoding"
+                | "upgrade"
+                | "proxy-connection"
+                | "te"
+                | "trailer"
         ) {
             return Err(shared_t!("header.validate.name.reserved", name = trimmed));
         }
-        
+
         Ok(())
     }
 
     /// Enhanced header value validation
     fn validate_header_value(value: &str) -> Result<(), SharedString> {
         let trimmed = value.trim();
-        
+
         if trimmed.is_empty() {
             return Err(shared_t!("header.validate.name.not_empty"));
         }
-        
+
         if trimmed.len() > 8192 {
             return Err(shared_t!("header.validate.name.too_long"));
         }
-        
+
         // HTTP header value validation (RFC 7230)
-        if !trimmed.chars().all(|c| {
-            c.is_ascii() && !c.is_control() || c == '\t'
-        }) {
+        if !trimmed
+            .chars()
+            .all(|c| c.is_ascii() && !c.is_control() || c == '\t')
+        {
             return Err(shared_t!("header.validate.name.syntax_error"));
         }
-        
+
         Ok(())
     }
 
@@ -725,17 +764,17 @@ impl CommonHeadersPanel {
     fn check_duplicate_headers(&self, cx: &App) -> HashMap<usize, SharedString> {
         let mut name_counts = HashMap::new();
         let mut errors = HashMap::new();
-        
+
         // Count occurrences of each header name
         for (index, row) in self.header_rows.iter().enumerate() {
             let key_value = row.key.read(cx).value();
             let key = key_value.trim().to_lowercase();
-            
+
             if !key.is_empty() {
                 name_counts.entry(key).or_insert_with(Vec::new).push(index);
             }
         }
-        
+
         // Mark duplicates as errors
         for (name, indices) in name_counts {
             if indices.len() > 1 {
@@ -744,7 +783,7 @@ impl CommonHeadersPanel {
                 }
             }
         }
-        
+
         errors
     }
 
@@ -754,17 +793,17 @@ impl CommonHeadersPanel {
             let value_value = row.value.read(cx).value();
             let key = key_value.trim();
             let value = value_value.trim();
-            
+
             // Check the header name
             if let Err(error) = Self::validate_header_name(key) {
                 return Some(error);
             }
-            
+
             // Check header value
             if let Err(error) = Self::validate_header_value(value) {
                 return Some(error);
             }
-            
+
             // Check for duplicates
             let duplicate_errors = self.check_duplicate_headers(cx);
             if let Some(error) = duplicate_errors.get(&index) {
@@ -810,7 +849,7 @@ impl Render for CommonHeadersPanel {
                         div()
                             .text_lg()
                             .font_semibold()
-                            .child(shared_t!("folders.tab.common_headers"))
+                            .child(shared_t!("folders.tab.common_headers")),
                     )
                     .child(
                         Button::new("add_header")
@@ -819,8 +858,8 @@ impl Render for CommonHeadersPanel {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.needs_add_button = true;
                                 cx.notify();
-                            }))
-                    )
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -830,71 +869,62 @@ impl Render for CommonHeadersPanel {
                         div()
                             .text_sm()
                             .text_color(rgb(0x666666))
-                            .child(shared_t!("header.description"))
+                            .child(shared_t!("header.description")),
                     )
-                    .child(
-                        div()
-                            .v_flex()
-                            .gap_2()
-                            .children(
-                                self.header_rows.iter().enumerate().map(|(index, row)| {
-                                    let validation_error = self.get_validation_error(index, cx);
-                                    let has_error = validation_error.is_some();
-                                    
-                                    v_flex()
-                                        .gap_1()
-                                        .child(
-                                            h_flex()
-                                                .items_center()
-                                                .gap_3()
-                                                .p_3()
-                                                .bg(gpui::rgb(0xffffff))
-                                                .border_1()
-                                                .when(has_error, |div| {
-                                                    div.border_color(gpui::rgb(0xdc3545))
-                                                })
-                                                .when(!has_error, |div| {
-                                                    div.border_color(gpui::rgb(0xe0e0e0))
-                                                })
-                                                .rounded_md()
-                                                .child(
-                                                    div()
-                                                        .flex_1()
-                                                        .h_flex()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .w(px(200.0))
-                                                                .child(Input::new(&row.key))
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .child(Input::new(&row.value))
-                                                        )
-                                                )
-                                                .child(
-                                                    Button::new(format!("delete_header_{}", index))
-                                                        .ghost()
-                                                        .compact()
-                                                        .icon(gpui_component::IconName::Delete)
-                                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                                            this.remove_header(index, cx);
-                                                        }))
-                                                )
-                                        )
-                                        .when(has_error, |container| {
-                                            container.child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(gpui::rgb(0xdc3545))
-                                                    .pl_3()
-                                                    .child(validation_error.unwrap())
-                                            )
+                    .child(div().v_flex().gap_2().children(
+                        self.header_rows.iter().enumerate().map(|(index, row)| {
+                            let validation_error = self.get_validation_error(index, cx);
+                            let has_error = validation_error.is_some();
+
+                            v_flex()
+                                .gap_1()
+                                .child(
+                                    h_flex()
+                                        .items_center()
+                                        .gap_3()
+                                        .p_3()
+                                        .bg(gpui::rgb(0xffffff))
+                                        .border_1()
+                                        .when(has_error, |div| {
+                                            div.border_color(gpui::rgb(0xdc3545))
                                         })
+                                        .when(!has_error, |div| {
+                                            div.border_color(gpui::rgb(0xe0e0e0))
+                                        })
+                                        .rounded_md()
+                                        .child(
+                                            div()
+                                                .flex_1()
+                                                .h_flex()
+                                                .gap_3()
+                                                .child(
+                                                    div().w(px(200.0)).child(Input::new(&row.key)),
+                                                )
+                                                .child(
+                                                    div().flex_1().child(Input::new(&row.value)),
+                                                ),
+                                        )
+                                        .child(
+                                            Button::new(format!("delete_header_{}", index))
+                                                .ghost()
+                                                .compact()
+                                                .icon(gpui_component::IconName::Delete)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.remove_header(index, cx);
+                                                })),
+                                        ),
+                                )
+                                .when(has_error, |container| {
+                                    container.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(gpui::rgb(0xdc3545))
+                                            .pl_3()
+                                            .child(validation_error.unwrap()),
+                                    )
                                 })
-                            )
-                    )
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -906,14 +936,18 @@ impl Render for CommonHeadersPanel {
                             div()
                                 .text_xs()
                                 .text_color(gpui::rgb(0xdc3545))
-                                .child(self.save_error.as_ref().unwrap().clone())
+                                .child(self.save_error.as_ref().unwrap().clone()),
                         )
                     })
                     .child(
                         Button::new("save_headers")
                             .primary()
                             .when(self.is_saving, |btn| btn.disabled(true))
-                            .label(if self.is_saving {shared_t!("common.saving") } else { shared_t!("common.save") })
+                            .label(if self.is_saving {
+                                shared_t!("common.saving")
+                            } else {
+                                shared_t!("common.save")
+                            })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 // Validate all headers before saving
                                 let mut has_errors = false;
@@ -923,15 +957,15 @@ impl Render for CommonHeadersPanel {
                                         break;
                                     }
                                 }
-                                
+
                                 if !has_errors {
                                     this.set_saving(true, cx);
                                     this.emit_headers_changed(cx);
                                 } else {
                                     this.set_save_error(t!("common.save_invalid").to_string(), cx);
                                 }
-                            }))
-                    )
+                            })),
+                    ),
             )
             .into_any_element()
     }
@@ -944,7 +978,11 @@ struct ParamInputRow {
 }
 
 impl ParamInputRow {
-    fn new(param: Option<&SearchParameter>, window: &mut Window, cx: &mut Context<SearchParamsPanel>) -> Self {
+    fn new(
+        param: Option<&SearchParameter>,
+        window: &mut Window,
+        cx: &mut Context<SearchParamsPanel>,
+    ) -> Self {
         let (key_value, value_value) = if let Some(param) = param {
             (param.key.to_string(), param.value.to_string())
         } else {
@@ -986,7 +1024,7 @@ pub struct SearchParamsPanel {
     param_rows: Vec<ParamInputRow>,
     stored_params: Vec<SearchParameter>,
     needs_add_button: bool,
-    
+
     // Error handling and validation
     is_saving: bool,
     save_error: Option<String>,
@@ -1049,19 +1087,19 @@ impl SearchParamsPanel {
         // Validate all parameters before emitting
         let mut valid_params = Vec::new();
         let mut has_errors = false;
-        
+
         for (index, row) in self.param_rows.iter().enumerate() {
             if let Some(_error) = self.get_validation_error(index, cx) {
                 has_errors = true;
                 // Don't emit if there are validation errors
                 continue;
             }
-            
+
             if row.is_valid(cx) {
                 valid_params.push(row.to_param(cx));
             }
         }
-        
+
         // Only emit if no validation errors
         if !has_errors {
             cx.emit(SearchParamsPanelEvent::ParamsChanged(valid_params));
@@ -1071,49 +1109,51 @@ impl SearchParamsPanel {
     /// Enhanced parameter name validation
     fn validate_param_name(name: &str) -> Result<(), SharedString> {
         let trimmed = name.trim();
-        
+
         if trimmed.is_empty() {
             return Err(shared_t!("parameter.validate.name.not_empty"));
         }
-        
+
         if trimmed.len() > 100 {
             return Err(shared_t!("parameter.validate.name.too_long"));
         }
-        
+
         // URL parameter name validation
-        if !trimmed.chars().all(|c| {
-            c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.'
-        }) {
+        if !trimmed
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        {
             return Err(shared_t!("parameter.validate.name.syntax_error"));
         }
-        
+
         // Check for reserved parameter names that might conflict with common URL patterns
-        if matches!(trimmed.to_lowercase().as_str(), 
+        if matches!(
+            trimmed.to_lowercase().as_str(),
             "callback" | "jsonp" | "_" | "__proto__" | "constructor"
         ) {
             return Err(shared_t!("parameter.validate.name.reserved"));
         }
-        
+
         Ok(())
     }
 
     /// Enhanced parameter value validation
     fn validate_param_value(value: &str) -> Result<(), SharedString> {
         let trimmed = value.trim();
-        
+
         if trimmed.is_empty() {
             return Err(shared_t!("parameter.validate.value.not_empty"));
         }
-        
+
         if trimmed.len() > 2048 {
             return Err(shared_t!("parameter.validate.value.too_long"));
         }
-        
+
         // Check for potentially problematic characters
         if trimmed.contains('\n') || trimmed.contains('\r') {
             return Err(shared_t!("parameter.validate.value.syntax_error"));
         }
-        
+
         Ok(())
     }
 
@@ -1121,26 +1161,29 @@ impl SearchParamsPanel {
     fn check_duplicate_params(&self, cx: &App) -> HashMap<usize, SharedString> {
         let mut name_counts = HashMap::new();
         let mut errors = HashMap::new();
-        
+
         // Count occurrences of each parameter name
         for (index, row) in self.param_rows.iter().enumerate() {
             let key_value = row.key.read(cx).value();
             let key = key_value.trim().to_lowercase();
-            
+
             if !key.is_empty() {
                 name_counts.entry(key).or_insert_with(Vec::new).push(index);
             }
         }
-        
+
         // Mark duplicates as errors
         for (name, indices) in name_counts {
             if indices.len() > 1 {
                 for &index in &indices {
-                    errors.insert(index, shared_t!("parameter.validate.name.duplicate", name = name));
+                    errors.insert(
+                        index,
+                        shared_t!("parameter.validate.name.duplicate", name = name),
+                    );
                 }
             }
         }
-        
+
         errors
     }
 
@@ -1150,17 +1193,17 @@ impl SearchParamsPanel {
             let value_value = row.value.read(cx).value();
             let key = key_value.trim();
             let value = value_value.trim();
-            
+
             // Check parameter name
             if let Err(error) = Self::validate_param_name(key) {
                 return Some(error);
             }
-            
+
             // Check parameter value
             if let Err(error) = Self::validate_param_value(value) {
                 return Some(error);
             }
-            
+
             // Check for duplicates
             let duplicate_errors = self.check_duplicate_params(cx);
             if let Some(error) = duplicate_errors.get(&index) {
@@ -1206,7 +1249,7 @@ impl Render for SearchParamsPanel {
                         div()
                             .text_lg()
                             .font_semibold()
-                            .child(shared_t!("folders.tab.search_parameters"))
+                            .child(shared_t!("folders.tab.search_parameters")),
                     )
                     .child(
                         Button::new("add_param")
@@ -1215,8 +1258,8 @@ impl Render for SearchParamsPanel {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.needs_add_button = true;
                                 cx.notify();
-                            }))
-                    )
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -1226,73 +1269,64 @@ impl Render for SearchParamsPanel {
                         div()
                             .text_sm()
                             .text_color(gpui::rgb(0x666666))
-                            .child(shared_t!("parameter.description"))
+                            .child(shared_t!("parameter.description")),
                     )
-                    .child(
-                        div()
-                            .v_flex()
-                            .gap_2()
-                            .children(
-                                self.param_rows.iter().enumerate().map(|(index, row)| {
-                                    let validation_error = self.get_validation_error(index, cx);
-                                    let has_error = validation_error.is_some();
-                                    
+                    .child(div().v_flex().gap_2().children(
+                        self.param_rows.iter().enumerate().map(|(index, row)| {
+                            let validation_error = self.get_validation_error(index, cx);
+                            let has_error = validation_error.is_some();
+
+                            div()
+                                .v_flex()
+                                .gap_1()
+                                .child(
                                     div()
-                                        .v_flex()
-                                        .gap_1()
+                                        .h_flex()
+                                        .items_center()
+                                        .gap_3()
+                                        .p_3()
+                                        .bg(gpui::rgb(0xffffff))
+                                        .border_1()
+                                        .when(has_error, |div| {
+                                            div.border_color(gpui::rgb(0xdc3545))
+                                        })
+                                        .when(!has_error, |div| {
+                                            div.border_color(gpui::rgb(0xe0e0e0))
+                                        })
+                                        .rounded_md()
                                         .child(
                                             div()
+                                                .flex_1()
                                                 .h_flex()
-                                                .items_center()
                                                 .gap_3()
-                                                .p_3()
-                                                .bg(gpui::rgb(0xffffff))
-                                                .border_1()
-                                                .when(has_error, |div| {
-                                                    div.border_color(gpui::rgb(0xdc3545))
-                                                })
-                                                .when(!has_error, |div| {
-                                                    div.border_color(gpui::rgb(0xe0e0e0))
-                                                })
-                                                .rounded_md()
                                                 .child(
-                                                    div()
-                                                        .flex_1()
-                                                        .h_flex()
-                                                        .gap_3()
-                                                        .child(
-                                                            div()
-                                                                .w(px(200.0))
-                                                                .child(Input::new(&row.key))
-                                                        )
-                                                        .child(
-                                                            div()
-                                                                .flex_1()
-                                                                .child(Input::new(&row.value))
-                                                        )
+                                                    div().w(px(200.0)).child(Input::new(&row.key)),
                                                 )
                                                 .child(
-                                                    Button::new(format!("delete_param_{}", index))
-                                                        .ghost()
-                                                        .compact()
-                                                        .icon(gpui_component::IconName::Delete)
-                                                        .on_click(cx.listener(move |this, _, _, cx| {
-                                                            this.remove_param(index, cx);
-                                                        }))
-                                                )
+                                                    div().flex_1().child(Input::new(&row.value)),
+                                                ),
                                         )
-                                        .when(has_error, |container| {
-                                            container.child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(gpui::rgb(0xdc3545))
-                                                    .pl_3()
-                                                    .child(validation_error.unwrap())
-                                            )
-                                        })
+                                        .child(
+                                            Button::new(format!("delete_param_{}", index))
+                                                .ghost()
+                                                .compact()
+                                                .icon(gpui_component::IconName::Delete)
+                                                .on_click(cx.listener(move |this, _, _, cx| {
+                                                    this.remove_param(index, cx);
+                                                })),
+                                        ),
+                                )
+                                .when(has_error, |container| {
+                                    container.child(
+                                        div()
+                                            .text_xs()
+                                            .text_color(gpui::rgb(0xdc3545))
+                                            .pl_3()
+                                            .child(validation_error.unwrap()),
+                                    )
                                 })
-                            )
-                    )
+                        }),
+                    )),
             )
             .child(
                 div()
@@ -1304,14 +1338,18 @@ impl Render for SearchParamsPanel {
                             div()
                                 .text_xs()
                                 .text_color(gpui::rgb(0xdc3545))
-                                .child(self.save_error.as_ref().unwrap().clone())
+                                .child(self.save_error.as_ref().unwrap().clone()),
                         )
                     })
                     .child(
                         Button::new("save_params")
                             .primary()
                             .when(self.is_saving, |btn| btn.disabled(true))
-                            .label(if self.is_saving {shared_t!("common.saving") } else { shared_t!("common.save") })
+                            .label(if self.is_saving {
+                                shared_t!("common.saving")
+                            } else {
+                                shared_t!("common.save")
+                            })
                             .on_click(cx.listener(|this, _, _, cx| {
                                 // Validate all parameters before saving
                                 let mut has_errors = false;
@@ -1321,17 +1359,16 @@ impl Render for SearchParamsPanel {
                                         break;
                                     }
                                 }
-                                
+
                                 if !has_errors {
                                     this.set_saving(true, cx);
                                     this.emit_params_changed(cx);
                                 } else {
                                     this.set_save_error(t!("common.save_invalid").to_string(), cx);
                                 }
-                            }))
-                    )
+                            })),
+                    ),
             )
             .into_any_element()
     }
 }
-

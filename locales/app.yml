@@ -289,7 +289,7 @@ response:
     zh-CN: "Body"
   header:
     en: "Headers"
-    zh-CN: "请求头"
+    zh-CN: "响应头"
   request:
     en: "Request"
     zh-CN: "请求"

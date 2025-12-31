@@ -1,8 +1,8 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::input::{Input, InputState, TabSize};
-use gpui_component::tab::{Tab, TabBar};
-use gpui_component::StyledExt;
+use gpui_component::tab::{Tab, TabBar, TabVariant};
+use gpui_component::{Sizable, StyledExt, Size};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum BodyType {
@@ -94,6 +94,8 @@ impl Render for RequestBody {
             .gap_2()
             .child(
                 TabBar::new("body_type_tabs")
+                    .with_variant(TabVariant::Pill)
+                    .with_size(Size::Small)
                     .child(Tab::new().label("none"))
                     .child(Tab::new().label("JSON"))
                     .child(Tab::new().label("XML"))

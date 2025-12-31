@@ -1,6 +1,6 @@
 use crate::global_setting::open_settings;
 use gpui::*;
-use gpui_component::button::{Button, ButtonRounded, ButtonVariants};
+use gpui_component::button::{Button, ButtonRounded};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{h_flex, IconName, Sizable, Size, TitleBar as GTitleBar};
 use models::ApplicationView;

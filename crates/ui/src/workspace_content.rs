@@ -596,7 +596,8 @@ impl WorkspaceContent {
                     .into_any_element(),
                 ContentType::ServiceFolder(_) => h_flex()
                     .size_full()
-                    .p_4()
+                    .py_2()
+                    .px_4()
                     .child(self.folder_detail.clone())
                     .into_any_element(),
                 ContentType::SchemaFolder(_) => h_flex()
