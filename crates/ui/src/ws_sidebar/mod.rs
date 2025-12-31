@@ -176,7 +176,7 @@ impl Render for WorkspaceSidebar {
                         .rounded_md()
                         .text_sm()
                         .overflow_hidden()
-                        .child("Search"),
+                        .child(shared_t!("common.search")),
                 )
                 .child(
                     v_flex()

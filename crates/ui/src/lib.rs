@@ -24,3 +24,8 @@ pub use sidebar::*;
 pub use title_bar::*;
 pub use workspace_area::*;
 pub use workspace_content::*;
+
+i18n::init!();
+
+#[macro_use]
+extern crate i18n;

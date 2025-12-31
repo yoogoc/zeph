@@ -2818,6 +2818,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "i18n"
+version = "0.0.1"
+dependencies = [
+ "rust-i18n",
+]
+
+[[package]]
 name = "iana-time-zone"
 version = "0.1.64"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6772,9 +6779,11 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui_tokio",
+ "i18n",
  "log",
  "models",
  "reqwest",
+ "rust-i18n",
  "smallvec",
  "urlencoding",
  "uuid",
@@ -8361,8 +8370,10 @@ dependencies = [
  "gpui-component",
  "gpui-component-assets",
  "gpui_tokio",
+ "i18n",
  "models",
  "reqwest_client",
+ "rust-i18n",
  "tracing",
  "tracing-subscriber",
  "ui",

@@ -133,12 +133,12 @@ impl Render for RequestPanel {
 
         let tooltip_text = if use_base_url {
             if base_url.is_empty() {
-                "Base URL mode enabled (no base URL set)".to_string()
+                t!("request.base_url.enabled_but_empty").to_string()
             } else {
-                format!("Base URL: {}", base_url)
+                format!("{}: {}", t!("env.base_url"), base_url)
             }
         } else {
-            "Base URL mode disabled".to_string()
+            t!("request.base_url.disabled").to_string()
         };
 
         div()
@@ -179,7 +179,7 @@ impl Render for RequestPanel {
                             .child(
                                 Button::new("send_request")
                                     .primary()
-                                    .label(if is_loading { "Sending..." } else { "Send" })
+                                    .label(if is_loading { shared_t!("request.sending") } else { shared_t!("request.send") })
                                     .disabled(is_loading)
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(RequestPanelEvent::Send);
@@ -212,8 +212,8 @@ impl Render for RequestPanel {
                     .gap_2()
                     .child(
                         TabBar::new("request_tabs")
-                            .child(Tab::new().label("Body"))
-                            .child(Tab::new().label("Headers"))
+                            .child(Tab::new().label(shared_t!("request.body")))
+                            .child(Tab::new().label(shared_t!("request.header")))
                             .selected_index(active_tab as usize)
                             .on_click(cx.listener(|this, ix: &usize, _, cx| {
                                 this.active_tab = if *ix == 0 {
@@ -225,7 +225,8 @@ impl Render for RequestPanel {
                             }))
                             .suffix(
                                 Button::new("add_header")
-                                    .label("+ Add Header")
+                                    .icon(IconName::Plus)
+                                    .label(shared_t!("request.add_header"))
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(RequestPanelEvent::AddHeader);
                                     })),

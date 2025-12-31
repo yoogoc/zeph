@@ -578,26 +578,35 @@ impl WorkspaceContent {
                         .get(&service.id)
                         .map(|service| service.clone().into_any_element())
                         .unwrap_or(div().into_any_element()),
-                    ServiceType::Grpc(_) => {
-                        div().child("Grpc Page Coming soon...").into_any_element()
-                    }
-                    ServiceType::WebSocket(_) => div()
+                    ServiceType::Grpc(_) => h_flex()
+                        .size_full()
+                        .p_4()
+                        .child("Grpc Page Coming soon...")
+                        .into_any_element(),
+                    ServiceType::WebSocket(_) => h_flex()
+                        .size_full()
+                        .p_4()
                         .child("WebSocket Page Coming soon...")
                         .into_any_element(),
                 },
-                ContentType::Schema(_) => {
-                    div().child("Schema Page Coming soon...").into_any_element()
-                }
-                ContentType::ServiceFolder(_) => {
-                    div().child(self.folder_detail.clone()).into_any_element()
-                }
-                ContentType::SchemaFolder(_) => div()
+                ContentType::Schema(_) => h_flex()
+                    .size_full()
+                    .p_4()
+                    .child("Schema Page Coming soon...")
+                    .into_any_element(),
+                ContentType::ServiceFolder(_) => h_flex()
+                    .size_full()
+                    .p_4()
+                    .child(self.folder_detail.clone())
+                    .into_any_element(),
+                ContentType::SchemaFolder(_) => h_flex()
+                    .size_full()
+                    .p_4()
                     .child("Schema Folder Page Coming soon...")
                     .into_any_element(),
             },
-            None => div()
-                .flex_1()
-                .h_full()
+            None => h_flex()
+                .size_full()
                 .p_4()
                 .items_center()
                 .justify_center()
@@ -615,30 +624,36 @@ impl WorkspaceContent {
                 .child(resizable_panel().size(px(160.)).child(self.sidebar.clone()))
                 .child(
                     resizable_panel().child(
-                        div().size_full().pt_1().pb_2().pr_2().bg(rgb(0xf5f5f5)).child(
-                            v_flex()
-                                .rounded_2xl()
-                                .bg(white())
-                                .flex_1()
-                                .h_full()
-                                .child(
-                                    h_flex()
-                                        .items_center()
-                                        .justify_between()
-                                        .border_b_1()
-                                        .border_color(rgb(0xe0e0e0))
-                                        .child(div().flex_1().child(self.service_tabs.clone()))
-                                        .child(div().p_2().child(self.env_selector.clone())),
-                                )
-                                .child(self.render_service_content(&workspace, window, cx)),
-                        ),
+                        div()
+                            .size_full()
+                            .pt_1()
+                            .pb_2()
+                            .pr_2()
+                            .bg(rgb(0xf5f5f5))
+                            .child(
+                                v_flex()
+                                    .rounded_2xl()
+                                    .bg(white())
+                                    .flex_1()
+                                    .h_full()
+                                    .child(
+                                        h_flex()
+                                            .items_center()
+                                            .justify_between()
+                                            .border_b_1()
+                                            .border_color(rgb(0xe0e0e0))
+                                            .child(div().flex_1().child(self.service_tabs.clone()))
+                                            .child(div().p_2().child(self.env_selector.clone())),
+                                    )
+                                    .child(self.render_service_content(&workspace, window, cx)),
+                            ),
                     ),
                 )
                 .into_any_element()
         } else {
             div()
                 .p_4()
-                .child("No workspace selected")
+                .child(shared_t!("workspaces.no_selected"))
                 .into_any_element()
         }
     }

@@ -18,7 +18,10 @@ impl EventEmitter<SidebarEvent> for Sidebar {}
 
 impl Sidebar {
     pub fn new(workspace_id: Option<Uuid>, current_view: WorkspaceView) -> Self {
-        Self { current_view, workspace_id }
+        Self {
+            current_view,
+            workspace_id,
+        }
     }
 
     pub fn set_view(&mut self, view: WorkspaceView, workspace_id: Option<Uuid>) {
@@ -29,11 +32,31 @@ impl Sidebar {
 
 impl Render for Sidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let buttons: Vec<(&str, IconName, &str, WorkspaceView)> = vec![
-            ("services", IconName::Folder, "Services", WorkspaceView::Services),
-            ("docs", IconName::BookOpen, "Documentation", WorkspaceView::Docs),
-            ("history", IconName::Eye, "History", WorkspaceView::History),
-            ("settings", IconName::Settings, "Settings", WorkspaceView::Settings),
+        let buttons: Vec<(&str, IconName, SharedString, WorkspaceView)> = vec![
+            (
+                "services",
+                IconName::Folder,
+                shared_t!("sidebar.services"),
+                WorkspaceView::Services,
+            ),
+            (
+                "docs",
+                IconName::BookOpen,
+                shared_t!("sidebar.docs"),
+                WorkspaceView::Docs,
+            ),
+            (
+                "history",
+                IconName::Eye,
+                shared_t!("sidebar.history"),
+                WorkspaceView::History,
+            ),
+            (
+                "settings",
+                IconName::Settings,
+                shared_t!("sidebar.settings"),
+                WorkspaceView::Settings,
+            ),
         ];
 
         v_flex()
@@ -45,15 +68,18 @@ impl Render for Sidebar {
             .px_4()
             .pb_4()
             .pt_2()
-            .child(
-                v_flex().gap_2().children(buttons.into_iter().map(|(id, icon, tooltip, view)| {
-                    let is_active = std::mem::discriminant(&self.current_view) == std::mem::discriminant(&view);
+            .child(v_flex().gap_2().children(buttons.into_iter().map(
+                |(id, icon, tooltip, view)| {
+                    let is_active =
+                        std::mem::discriminant(&self.current_view) == std::mem::discriminant(&view);
                     Button::new(id)
                         .icon(icon)
                         .tooltip(tooltip)
                         .when(is_active, |btn: Button| btn.primary())
-                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(SidebarEvent::SwitchView(view.clone()))))
-                })),
-            )
+                        .on_click(cx.listener(move |_, _, _, cx| {
+                            cx.emit(SidebarEvent::SwitchView(view.clone()))
+                        }))
+                },
+            )))
     }
 }

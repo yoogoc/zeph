@@ -15,7 +15,7 @@ pub fn open_settings(cx: &mut App) {
         let settings = cx.new(|_| GlobalSettings {});
         cx.new(|cx| Root::new(settings, window, cx))
     })
-    .expect("Failed to open window. Please restart the application.");
+    .expect(t!("common.failed_open_window").as_ref());
 }
 
 pub struct GlobalSettings {}
@@ -24,7 +24,14 @@ impl Render for GlobalSettings {
     fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
-            .child(TitleBar::new().items_center().h_flex().justify_center().child("Settings").border_b_0())
+            .child(
+                TitleBar::new()
+                    .items_center()
+                    .h_flex()
+                    .justify_center()
+                    .child(shared_t!("global_settings.title"))
+                    .border_b_0(),
+            )
             .child("Setting coming soon......")
     }
 }

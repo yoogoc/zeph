@@ -37,8 +37,8 @@ impl RequestHeaders {
 
     pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.rows.push(HeaderRow {
-            key: cx.new(|cx| InputState::new(window, cx).placeholder("Key")),
-            value: cx.new(|cx| InputState::new(window, cx).placeholder("Value")),
+            key: cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key"))),
+            value: cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key"))),
         });
         cx.notify();
     }
@@ -85,7 +85,7 @@ impl Render for RequestHeaders {
                         .text_center()
                         .text_color(gpui::rgb(0x6c757d))
                         .text_sm()
-                        .child("No headers added"),
+                        .child(shared_t!("header.empty")),
                 )
             })
     }

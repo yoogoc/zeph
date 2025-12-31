@@ -125,7 +125,7 @@ impl Render for RequestBody {
                         .text_center()
                         .text_color(gpui::rgb(0x6c757d))
                         .text_sm()
-                        .child("This request does not have a body"),
+                        .child(shared_t!("request.no_body")),
                 )
             })
     }

@@ -4,10 +4,15 @@ mod theme;
 use gpui::*;
 use gpui_component::*;
 use std::sync::Arc;
+use rust_i18n::t;
+
+i18n::init!();
 
 fn main() {
     // Initialize logging
     tracing_subscriber::fmt::init();
+
+    rust_i18n::set_locale("zh-CN");
 
     let app = Application::new()
         .with_assets(gpui_component_assets::Assets)
@@ -17,10 +22,10 @@ fn main() {
         // Initialize gpui-component
         init(cx);
         theme::init(cx);
-        
+
         // Initialize data models and registries
         workspace::init(cx);
-        
+
         gpui_tokio::init(cx);
 
         let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
@@ -33,11 +38,10 @@ fn main() {
 
         cx.open_window(window_options, |window, cx| {
             cx.activate(true);
-            
 
             let app_view = application::init(window, cx);
             cx.new(|cx| Root::new(app_view, window, cx))
         })
-        .expect("Failed to open window. Please restart the application.");
+        .expect(t!("common.failed_open_window").as_ref());
     });
 }

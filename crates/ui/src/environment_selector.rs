@@ -65,7 +65,7 @@ impl EnvironmentSelector {
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             dialog
-                .title("Manage Environments")
+                .title(shared_t!("env.title"))
                 .w(px(800.0))
                 .child(manager.clone())
         });
@@ -80,7 +80,7 @@ impl EnvironmentSelector {
             let this_clone = this.clone();
 
             dialog
-                .title("Create Environment")
+                .title(shared_t!("env.create"))
                 .w(px(400.0))
                 .confirm()
                 .child(Input::new(&input).w_full())
@@ -112,7 +112,7 @@ impl Render for EnvironmentSelector {
 
         let active_name = active_env
             .map(|e| e.name.to_string())
-            .unwrap_or_else(|| "No Environment".to_string());
+            .unwrap_or_else(|| t!("env.not_found").to_string());
 
         let view = cx.entity();
 
@@ -137,7 +137,7 @@ impl Render for EnvironmentSelector {
                                 ));
                             }
                             m.separator()
-                                .item(PopupMenuItem::new("+ New Environment").on_click(
+                                .item(PopupMenuItem::new(shared_t!("env.create")).icon(IconName::Plus).on_click(
                                     window.listener_for(&view, |this, _, window, cx| {
                                         this.open_create_dialog(window, cx);
                                     }),
@@ -218,7 +218,7 @@ impl EnvironmentManager {
                         Button::new("add_env")
                             .w_full()
                             .icon(IconName::Plus)
-                            .label("New Environment")
+                            .label(shared_t!("env.create"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_create_env_dialog(window, cx);
                             })),
@@ -264,7 +264,7 @@ impl EnvironmentManager {
                 .items_center()
                 .justify_center()
                 .text_color(rgb(0x6c757d))
-                .child("Select an environment")
+                .child(shared_t!("env.select"))
                 .into_any_element();
         };
 
@@ -282,7 +282,7 @@ impl EnvironmentManager {
 
         if self.new_var_name.is_none() {
             self.new_var_name = Some(cx.new(|cx| {
-                InputState::new(window, cx).placeholder("Variable name")
+                InputState::new(window, cx).placeholder(shared_t!("variable.name"))
             }));
         }
 
@@ -339,7 +339,7 @@ impl EnvironmentManager {
                         div()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_sm().font_semibold().child("Base URL"))
+                            .child(div().text_sm().font_semibold().child(shared_t!("env.base_url")))
                             .child(
                                 div()
                                     .h_flex()
@@ -347,7 +347,7 @@ impl EnvironmentManager {
                                     .child(Input::new(&base_url_input).flex_1())
                                     .child(
                                         Button::new("save_url")
-                                            .label("Save")
+                                            .label(shared_t!("save"))
                                             .primary()
                                             .on_click(cx.listener(move |this, _, _, cx| {
                                                 if let Some(input) = &this.base_url_input {
@@ -365,7 +365,7 @@ impl EnvironmentManager {
                         div()
                             .v_flex()
                             .gap_2()
-                            .child(div().text_sm().font_semibold().child("Variables"))
+                            .child(div().text_sm().font_semibold().child(shared_t!("env.variable")))
                             .child(
                                 div()
                                     .h_flex()
@@ -374,7 +374,7 @@ impl EnvironmentManager {
                                     .child(
                                         Button::new("add_var")
                                             .icon(IconName::Plus)
-                                            .label("Add")
+                                            .label(shared_t!("common.add"))
                                             .on_click(cx.listener(move |this, _, window, cx| {
                                                 if let Some(input) = &this.new_var_name {
                                                     let name = input.read(cx).value().to_string();
@@ -404,7 +404,7 @@ impl EnvironmentManager {
                 .p_4()
                 .text_color(rgb(0x6c757d))
                 .text_sm()
-                .child("No variables")
+                .child(shared_t!("variable.not_found"))
                 .into_any_element();
         }
 
@@ -419,8 +419,8 @@ impl EnvironmentManager {
                     .bg(rgb(0xf8f9fa))
                     .border_b_1()
                     .border_color(rgb(0xe0e0e0))
-                    .child(div().w(px(140.0)).px_3().py_2().text_sm().font_semibold().child("Name"))
-                    .child(div().flex_1().px_3().py_2().text_sm().font_semibold().child("Value"))
+                    .child(div().w(px(140.0)).px_3().py_2().text_sm().font_semibold().child(shared_t!("variable.name")))
+                    .child(div().flex_1().px_3().py_2().text_sm().font_semibold().child(shared_t!("variable.value")))
                     .child(div().w(px(100.0)).px_3().py_2().text_sm().font_semibold().child(""))
             )
             .children(variables.into_iter().map(|var| {
@@ -498,14 +498,14 @@ impl EnvironmentManager {
 
     fn open_create_env_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let this = cx.entity().downgrade();
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("env.title")));
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let input_clone = input.clone();
             let this_clone = this.clone();
 
             dialog
-                .title("New Environment")
+                .title(shared_t!("env.create"))
                 .w(px(400.0))
                 .confirm()
                 .child(Input::new(&input).w_full())

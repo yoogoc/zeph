@@ -74,7 +74,7 @@ impl From<SharedString> for TreeId {
 
 pub fn build_tree(workspace: Workspace) -> Vec<TreeItem> {
     vec![
-        TreeItem::new(SERVICE_ID, "Services")
+        TreeItem::new(SERVICE_ID, shared_t!("workspaces.service"))
             .expanded(true)
             .children(build_service_tree(
                 None,
@@ -82,7 +82,7 @@ pub fn build_tree(workspace: Workspace) -> Vec<TreeItem> {
                 &workspace.folders,
                 &workspace.services,
             )),
-        TreeItem::new(SCHEMA_ID, "Schemas")
+        TreeItem::new(SCHEMA_ID, shared_t!("workspaces.schema"))
             .expanded(true)
             .children(build_schema_tree(
                 None,

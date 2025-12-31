@@ -8,10 +8,10 @@ version = "0.0.1"
 edition = "2021"
 publish = false
 
-#[workspace.metadata.i18n]
-#available-locales = ["en"]
-#default-locale = "en"
-#load-path = "locales"
+[workspace.metadata.i18n]
+available-locales = ["en", "zh-CN"]
+default-locale = "zh-CN"
+load-path = "locales"
 
 [workspace.dependencies]
 i18n = { path = "crates/i18n" }

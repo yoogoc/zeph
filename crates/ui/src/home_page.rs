@@ -39,7 +39,7 @@ impl HomePage {
             let create_sample_for_checkbox = create_sample.clone();
 
             dialog
-                .title("Create Workspace")
+                .title(shared_t!("workspaces.create"))
                 .w(px(400.0))
                 .confirm()
                 .child(
@@ -49,7 +49,7 @@ impl HomePage {
                         .child(Input::new(&input).w_full())
                         .child(
                             Checkbox::new("create_sample_services")
-                                .label("Create sample services")
+                                .label(shared_t!("workspaces.create_sample_services"))
                                 .checked(create_sample_for_checkbox.get())
                                 .on_click(move |checked, _, _| {
                                     create_sample_for_checkbox.set(*checked);
@@ -136,7 +136,7 @@ impl HomePage {
                                                 div()
                                                     .text_xs()
                                                     .text_color(rgb(0x6c757d))
-                                                    .child(format!("Created {}", created)),
+                                                    .child(shared_t!("workspaces.created_at", at = created)),
                                             ),
                                     ),
                             )
@@ -160,7 +160,7 @@ impl HomePage {
                                 workspace
                                     .description
                                     .clone()
-                                    .unwrap_or_else(|| "No description".into()),
+                                    .unwrap_or_else(|| t!("workspaces.default_description").into()),
                             ),
                     ),
             )
@@ -185,18 +185,18 @@ impl Render for HomePage {
                         div()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_2xl().font_bold().child("Welcome to Zeph"))
+                            .child(div().text_2xl().font_bold().child(shared_t!("welcome.title")))
                             .child(
                                 div()
                                     .text_color(rgb(0x6c757d))
-                                    .child("Your API testing companion"),
+                                    .child(shared_t!("welcome.description")),
                             ),
                     )
                     .child(
                         Button::new("create_workspace")
                             .primary()
                             .icon(IconName::Plus)
-                            .label("New Workspace")
+                            .label(shared_t!("workspaces.create"))
                             .on_click(cx.listener(|this, _, window, cx| {
                                 this.open_create_dialog(window, cx);
                             })),

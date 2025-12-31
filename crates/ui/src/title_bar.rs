@@ -88,7 +88,7 @@ impl Render for TitleBar {
                             .with_size(Size::Small)
                             .child(
                                 Tab::new()
-                                    .label("Home")
+                                    .label(shared_t!("common.home"))
                                     .on_mouse_down(MouseButton::Left, |_, window, _| {
                                         window.prevent_default()
                                     }),

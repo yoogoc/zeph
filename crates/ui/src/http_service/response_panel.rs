@@ -45,9 +45,9 @@ impl Render for ResponsePanel {
             .min_h_0()
             .child(
                 TabBar::new("response_tabs")
-                    .child(Tab::new().label("Body"))
-                    .child(Tab::new().label("Headers"))
-                    .child(Tab::new().label("Request"))
+                    .child(Tab::new().label(shared_t!("response.body")))
+                    .child(Tab::new().label(shared_t!("response.header")))
+                    .child(Tab::new().label(shared_t!("response.request")))
                     .selected_index(active_tab as usize)
                     .on_click(cx.listener(|this, ix: &usize, _, cx| {
                         this.active_tab = match *ix {

@@ -17,3 +17,5 @@ futures.workspace = true
 chrono.workspace = true
 urlencoding.workspace = true
 log = "0.4.29"
+i18n.workspace = true
+rust-i18n.workspace = true

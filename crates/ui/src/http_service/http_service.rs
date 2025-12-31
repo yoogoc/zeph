@@ -301,7 +301,7 @@ impl HttpService {
         // Build request info with final URL and base_url usage indicator
         let mut request_info_text = format!("{:?} {}\n", method, url);
         if self.use_base_url && !self.base_url.is_empty() && !url_utils::is_absolute_url(&user_entered_url) {
-            request_info_text.push_str(&format!("(Base URL: {})\n", self.base_url));
+            request_info_text.push_str(&format!("({}: {})\n", t!("env.base_url"), self.base_url));
         }
         request_info_text.push('\n');
         for h in &headers {

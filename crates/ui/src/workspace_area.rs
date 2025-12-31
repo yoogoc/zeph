@@ -24,7 +24,7 @@ impl WorkspaceArea {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let registry_sub = cx.subscribe(
             &workspace_registry,
-            |this, _registry, event: &workspace::WorkspaceEvent, cx| match event {
+            |this, _registry, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::Open(workspace) => this.set_workspace(Some(workspace.clone()), cx),
                 WorkspaceEvent::Close => this.set_workspace(None, cx),
                 _ => {}
