@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::{Root, StyledExt};
+use gpui_component::{v_flex, Root, StyledExt};
 use models::{ApplicationView, CreateWorkspace};
 use ui::{HomePage, HomePageEvent};
 use uuid::Uuid;
@@ -94,8 +94,7 @@ impl Render for Application {
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let app_state = workspace_registry.read(cx).get_state();
 
-        div()
-            .v_flex()
+        v_flex()
             .size_full()
             .child(self.title_bar.clone())
             .child(match &app_state.current_view {

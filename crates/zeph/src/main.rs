@@ -20,6 +20,8 @@ fn main() {
         
         // Initialize data models and registries
         workspace::init(cx);
+        
+        gpui_tokio::init(cx);
 
         let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
@@ -31,7 +33,7 @@ fn main() {
 
         cx.open_window(window_options, |window, cx| {
             cx.activate(true);
-            gpui_tokio::init(cx);
+            
 
             let app_view = application::init(window, cx);
             cx.new(|cx| Root::new(app_view, window, cx))

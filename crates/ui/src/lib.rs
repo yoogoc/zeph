@@ -11,6 +11,7 @@ mod workspace_area;
 mod workspace_content;
 mod ws_sidebar;
 mod utils;
+mod global_setting;
 
 pub use environment_selector::*;
 pub use folder_detail::*;
