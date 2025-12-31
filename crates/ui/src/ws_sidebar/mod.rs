@@ -70,24 +70,17 @@ impl WorkspaceSidebar {
     fn handle_selection(&mut self, item: TreeItem, ix: usize, cx: &mut Context<Self>) {
         let selected_item = item.clone();
         self.tree_map.insert(item.id.clone(), ix);
-        let id = TreeId::new(selected_item.id);
-        if item.is_folder() {
-            match id {
-                TreeId::Service(id) | TreeId::Schema(id) => {
-                    cx.emit(WorkspaceSidebarEvent::OpenFolderDetail(id));
-                }
-                _ => {}
+        match TreeId::new(selected_item.id) {
+            TreeId::Service(id) => {
+                cx.emit(WorkspaceSidebarEvent::OpenService(id));
             }
-        } else {
-            match id {
-                TreeId::Service(id) => {
-                    cx.emit(WorkspaceSidebarEvent::OpenService(id));
-                }
-                TreeId::Schema(id) => {
-                    cx.emit(WorkspaceSidebarEvent::OpenSchema(id));
-                }
-                _ => {}
+            TreeId::Schema(id) => {
+                cx.emit(WorkspaceSidebarEvent::OpenSchema(id));
             }
+            TreeId::ServiceFolder(id) | TreeId::SchemaFolder(id) => {
+                cx.emit(WorkspaceSidebarEvent::OpenFolderDetail(id));
+            }
+            _ => {}
         }
 
         cx.notify();
@@ -201,107 +194,87 @@ impl WorkspaceSidebar {
                                             let mut create_schema = None;
                                             let mut create_folder = None;
                                             let mut delete = None;
-                                            if item.is_folder() {
-                                                match id {
-                                                    TreeId::ServiceRoot => {
-                                                        create_service = Some(
-                                                            WorkspaceSidebarEvent::CreateService(
-                                                                "New Service".into(),
-                                                                None,
-                                                            ),
-                                                        );
-                                                        create_folder = Some(
-                                                            WorkspaceSidebarEvent::CreateFolder(
-                                                                "New Folder".into(),
-                                                                None,
-                                                                FolderType::Service,
-                                                            ),
-                                                        );
-                                                    }
-                                                    TreeId::SchemaRoot => {
-                                                        create_schema = Some(
-                                                            WorkspaceSidebarEvent::CreateSchema(
-                                                                "New Schema".into(),
-                                                                None,
-                                                            ),
-                                                        );
-                                                        create_folder = Some(
-                                                            WorkspaceSidebarEvent::CreateFolder(
-                                                                "New Folder".into(),
-                                                                None,
-                                                                FolderType::Schema,
-                                                            ),
-                                                        );
-                                                    }
-                                                    TreeId::Service(id) => {
-                                                        detail = Some(
-                                                            WorkspaceSidebarEvent::OpenFolderDetail(
-                                                                id.clone(),
-                                                            ),
-                                                        );
-                                                        create_service = Some(
-                                                            WorkspaceSidebarEvent::CreateService(
-                                                                "New Service".into(),
-                                                                Some(id),
-                                                            ),
-                                                        );
-                                                        create_folder = Some(
-                                                            WorkspaceSidebarEvent::CreateFolder(
-                                                                "New Folder".into(),
-                                                                Some(id),
-                                                                FolderType::Service,
-                                                            ),
-                                                        );
-                                                        delete = Some(
-                                                            WorkspaceSidebarEvent::DeleteFolder(id),
-                                                        );
-                                                    }
-                                                    TreeId::Schema(id) => {
-                                                        detail = Some(
-                                                            WorkspaceSidebarEvent::OpenFolderDetail(
-                                                                id,
-                                                            ),
-                                                        );
-                                                        create_schema = Some(
-                                                            WorkspaceSidebarEvent::CreateSchema(
-                                                                "New Schema".into(),
-                                                                Some(id),
-                                                            ),
-                                                        );
-                                                        create_folder = Some(
-                                                            WorkspaceSidebarEvent::CreateFolder(
-                                                                "New Folder".into(),
-                                                                Some(id),
-                                                                FolderType::Schema,
-                                                            ),
-                                                        );
-                                                        delete = Some(
-                                                            WorkspaceSidebarEvent::DeleteFolder(id),
-                                                        );
-                                                    }
+                                            match id {
+                                                TreeId::ServiceRoot => {
+                                                    create_service =
+                                                        Some(WorkspaceSidebarEvent::CreateService(
+                                                            "New Service".into(),
+                                                            None,
+                                                        ));
+                                                    create_folder =
+                                                        Some(WorkspaceSidebarEvent::CreateFolder(
+                                                            "New Folder".into(),
+                                                            None,
+                                                            FolderType::Service,
+                                                        ));
                                                 }
-                                            } else {
-                                                match id {
-                                                    TreeId::ServiceRoot => {}
-                                                    TreeId::SchemaRoot => {}
-                                                    TreeId::Service(id) => {
-                                                        detail = Some(
-                                                            WorkspaceSidebarEvent::OpenService(id),
-                                                        );
-                                                        delete = Some(
-                                                            WorkspaceSidebarEvent::DeleteService(
-                                                                id,
-                                                            ),
-                                                        );
-                                                    }
-                                                    TreeId::Schema(id) => {
-                                                        detail = Some(
-                                                            WorkspaceSidebarEvent::OpenSchema(id),
-                                                        );
-                                                        delete = Some(
-                                                            WorkspaceSidebarEvent::DeleteSchema(id),
-                                                        );
-                                                    }
+                                                TreeId::SchemaRoot => {
+                                                    create_schema =
+                                                        Some(WorkspaceSidebarEvent::CreateSchema(
+                                                            "New Schema".into(),
+                                                            None,
+                                                        ));
+                                                    create_folder =
+                                                        Some(WorkspaceSidebarEvent::CreateFolder(
+                                                            "New Folder".into(),
+                                                            None,
+                                                            FolderType::Schema,
+                                                        ));
+                                                }
+                                                TreeId::Service(id) => {
+                                                    detail = Some(
+                                                        WorkspaceSidebarEvent::OpenService(id),
+                                                    );
+                                                    delete = Some(
+                                                        WorkspaceSidebarEvent::DeleteService(id),
+                                                    );
+                                                }
+                                                TreeId::Schema(id) => {
+                                                    detail =
+                                                        Some(WorkspaceSidebarEvent::OpenSchema(id));
+                                                    delete = Some(
+                                                        WorkspaceSidebarEvent::DeleteSchema(id),
+                                                    );
+                                                }
+                                                TreeId::ServiceFolder(id) => {
+                                                    detail = Some(
+                                                        WorkspaceSidebarEvent::OpenFolderDetail(
+                                                            id.clone(),
+                                                        ),
+                                                    );
+                                                    create_service =
+                                                        Some(WorkspaceSidebarEvent::CreateService(
+                                                            "New Service".into(),
+                                                            Some(id),
+                                                        ));
+                                                    create_folder =
+                                                        Some(WorkspaceSidebarEvent::CreateFolder(
+                                                            "New Folder".into(),
+                                                            Some(id),
+                                                            FolderType::Service,
+                                                        ));
+                                                    delete = Some(
+                                                        WorkspaceSidebarEvent::DeleteFolder(id),
+                                                    );
+                                                }
+                                                TreeId::SchemaFolder(id) => {
+                                                    detail = Some(
+                                                        WorkspaceSidebarEvent::OpenFolderDetail(id),
+                                                    );
+                                                    create_schema =
+                                                        Some(WorkspaceSidebarEvent::CreateSchema(
+                                                            "New Schema".into(),
+                                                            Some(id),
+                                                        ));
+                                                    create_folder =
+                                                        Some(WorkspaceSidebarEvent::CreateFolder(
+                                                            "New Folder".into(),
+                                                            Some(id),
+                                                            FolderType::Schema,
+                                                        ));
+                                                    delete = Some(
+                                                        WorkspaceSidebarEvent::DeleteFolder(id),
+                                                    );
                                                 }
                                             }
 
@@ -443,13 +416,12 @@ impl Render for WorkspaceSidebar {
                         move |ix, entry, selected, _window, cx| {
                             view.update(cx, |this, cx| this.render_item(entry, ix, selected, cx))
                         }
-                    }))
-                    // .on_hover(cx.listener(move |this, visual_state, _, cx| {
-                    //     if !visual_state {
-                    //         this.hovered = None;
-                    //         cx.notify();
-                    //     }
-                    // })),
+                    })), // .on_hover(cx.listener(move |this, visual_state, _, cx| {
+                         //     if !visual_state {
+                         //         this.hovered = None;
+                         //         cx.notify();
+                         //     }
+                         // })),
             )
     }
 }

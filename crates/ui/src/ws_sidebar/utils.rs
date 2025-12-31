@@ -11,6 +11,8 @@ pub const SCHEMA_ID: &str = "schemas";
 pub enum TreeId {
     ServiceRoot,
     SchemaRoot,
+    ServiceFolder(Uuid),
+    SchemaFolder(Uuid),
     Service(Uuid),
     Schema(Uuid),
 }
@@ -25,12 +27,20 @@ impl TreeId {
                 SCHEMA_ID => TreeId::SchemaRoot,
                 _ => unreachable!(),
             }
-        } else {
+        } else if parts.len() == 2 {
             match x {
                 SERVICE_ID => TreeId::Service(Uuid::parse_str(&parts[1]).unwrap()),
                 SCHEMA_ID => TreeId::Schema(Uuid::parse_str(&parts[1]).unwrap()),
                 _ => unreachable!(),
             }
+        } else if parts.len() == 3 {
+            match x {
+                SERVICE_ID => TreeId::ServiceFolder(Uuid::parse_str(&parts[2]).unwrap()),
+                SCHEMA_ID => TreeId::SchemaFolder(Uuid::parse_str(&parts[2]).unwrap()),
+                _ => unreachable!(),
+            }
+        } else {
+            unreachable!()
         }
     }
 
@@ -49,6 +59,8 @@ impl TreeId {
             TreeId::SchemaRoot => SCHEMA_ID.into(),
             TreeId::Service(id) => format!("{}/{}", SERVICE_ID, id).into(),
             TreeId::Schema(id) => format!("{}/{}", SCHEMA_ID, id).into(),
+            TreeId::ServiceFolder(id) => format!("{}/folder/{}", SCHEMA_ID, id).into(),
+            TreeId::SchemaFolder(id) => format!("{}/folder/{}", SCHEMA_ID, id).into(),
         }
     }
 }
@@ -96,7 +108,7 @@ pub fn build_service_tree(
 
         items.push(
             TreeItem::new(
-                format!("{}/{}", SERVICE_ID, folder.id.to_string()),
+                format!("{}/folder/{}", SERVICE_ID, folder.id.to_string()),
                 folder.name.clone(),
             )
             .children(build_service_tree(
@@ -134,7 +146,7 @@ pub fn build_schema_tree(
 
         items.push(
             TreeItem::new(
-                format!("{}/{}", SCHEMA_ID, folder.id.to_string()),
+                format!("{}/folder/{}", SCHEMA_ID, folder.id.to_string()),
                 folder.name.clone(),
             )
             .children(build_schema_tree(
@@ -158,10 +170,11 @@ pub fn build_schema_tree(
 }
 
 pub fn cal_icon(entry: &TreeEntry) -> IconName {
-    if entry.is_folder() {
-        cal_folder_icon(entry)
-    } else {
-        IconName::File
+    let id = TreeId::new(entry.item().id.clone());
+    match id {
+        TreeId::Service(_) => IconName::File,
+        TreeId::Schema(_) => IconName::File,
+        _ => cal_folder_icon(entry)
     }
 }
 
