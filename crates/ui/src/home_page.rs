@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
-use gpui_component::{IconName, StyledExt, WindowExt};
+use gpui_component::{h_flex, IconName, StyledExt, WindowExt};
 use gpui_component::checkbox::Checkbox;
 use models::{CreateWorkspace, Workspace};
 use uuid::Uuid;
@@ -110,7 +110,7 @@ impl HomePage {
                                     .gap_2()
                                     .items_center()
                                     .child(
-                                        div()
+                                        h_flex()
                                             .w(px(40.0))
                                             .h(px(40.0))
                                             .rounded_md()
@@ -172,7 +172,8 @@ impl Render for HomePage {
         div()
             .size_full()
             .bg(rgb(0xf8f9fa))
-            .p_8()
+            .py_4()
+            .px_8()
             .v_flex()
             .gap_6()
             .child(
