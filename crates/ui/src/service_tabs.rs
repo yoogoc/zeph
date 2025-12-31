@@ -1,9 +1,9 @@
-use gpui::*;
-use gpui_component::button::Button;
-use gpui_component::tab::{Tab, TabBar};
-use gpui_component::Sizable;
-use models::{ContentType, Workspace};
 use crate::utils::cal_icon;
+use gpui::*;
+use gpui_component::button::{Button, ButtonRounded};
+use gpui_component::tab::{Tab, TabBar, TabVariant};
+use gpui_component::{IconName, Sizable};
+use models::{ContentType, Workspace};
 
 pub enum ServiceTabsEvent {
     Select(ContentType),
@@ -38,7 +38,8 @@ impl Render for ServiceTabs {
 
         let service_ids: Vec<_> = workspace.opened_services.clone();
         let selected_index = workspace
-            .active_service.clone()
+            .active_service
+            .clone()
             .and_then(|id| workspace.opened_services.iter().position(|s| s.eq(&id)))
             .unwrap_or(0);
 
@@ -47,26 +48,33 @@ impl Render for ServiceTabs {
             .iter()
             .map(|ct| {
                 let ct = ct.clone();
-                Tab::new().px_1().label(ct.name()).prefix(cal_icon(&ct)).suffix(
-                    Button::new(format!("close_{}", ct.id()))
-                        .small()
-                        .label("×")
-                        .on_click(cx.listener(move |_this, _, _, cx| {
-                            cx.emit(ServiceTabsEvent::Close(ct.clone()));
-                            cx.stop_propagation();
-                        })),
-                )
+                Tab::new()
+                    .px_1()
+                    .label(ct.name())
+                    .prefix(cal_icon(&ct))
+                    .suffix(
+                        Button::new(format!("close_{}", ct.id()))
+                            .small()
+                            .rounded(ButtonRounded::Large)
+                            .icon(IconName::Close)
+                            .on_click(cx.listener(move |_this, _, _, cx| {
+                                cx.emit(ServiceTabsEvent::Close(ct.clone()));
+                                cx.stop_propagation();
+                            })),
+                    )
             })
             .collect();
 
-        TabBar::new("service_tabs")
-            .selected_index(selected_index)
-            .on_click(cx.listener(move |_this, index: &usize, _, cx| {
-                if let Some(ct) = service_ids.get(*index) {
-                    cx.emit(ServiceTabsEvent::Select(ct.clone()));
-                }
-            }))
-            .children(tabs)
-            .into_any_element()
+        div().size_full().pl_1().child(
+            TabBar::new("service_tabs")
+                .selected_index(selected_index)
+                .with_variant(TabVariant::Pill)
+                .on_click(cx.listener(move |_this, index: &usize, _, cx| {
+                    if let Some(ct) = service_ids.get(*index) {
+                        cx.emit(ServiceTabsEvent::Select(ct.clone()));
+                    }
+                }))
+                .children(tabs),
+        ).into_any_element()
     }
 }
