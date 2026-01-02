@@ -54,7 +54,7 @@ impl Render for ServiceTabs {
                     .prefix(cal_icon(&ct))
                     .suffix(
                         Button::new(format!("close_{}", ct.id()))
-                            .small()
+                            .xsmall()
                             .rounded(ButtonRounded::Large)
                             .icon(IconName::Close)
                             .on_click(cx.listener(move |_this, _, _, cx| {
