@@ -5663,6 +5663,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "setting"
+version = "0.0.1"
+dependencies = [
+ "gpui",
+ "gpui-component",
+ "gpui_tokio",
+ "uuid",
+]
+
+[[package]]
 name = "sha1_smol"
 version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -9,6 +9,7 @@
       <sourceFolder url="file://$MODULE_DIR$/crates/zeph/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/storage/src" isTestSource="false" />
       <sourceFolder url="file://$MODULE_DIR$/crates/i18n/src" isTestSource="false" />
+      <sourceFolder url="file://$MODULE_DIR$/crates/setting/src" isTestSource="false" />
       <excludeFolder url="file://$MODULE_DIR$/target" />
     </content>
     <orderEntry type="inheritedJdk" />

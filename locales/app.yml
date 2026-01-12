@@ -293,3 +293,17 @@ response:
   request:
     en: "Request"
     zh-CN: "请求"
+
+settings:
+  request:
+    en: "Request"
+    zh-CN: "请求"
+  i18n:
+    en: "Language"
+    zh-CN: "语言"
+  theme:
+    en: "Theme"
+    zh-CN: "主题"
+  proxy:
+    en: "Proxy"
+    zh-CN: "代理"
