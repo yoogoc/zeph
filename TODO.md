@@ -5,6 +5,9 @@
 - [ ] schema与service联动
 - [x] 修改 service 图标
 - [ ] 设置页面 - 外观theme
-- [ ] 设置页面 - 语言I18n
+- [x] 设置页面 - 语言I18n
 - [ ] 设置请求 - 超时/SSL 证书验证/自动跟随重定向/发送无缓存头
 - [ ] 设置代理 - 代理模式
+- [ ] 重做导入openapi，可以通过文件或url导入
+- [ ] 重构组件，区分Render和RenderOnce
+- [ ] 输入框可以生成example数据
