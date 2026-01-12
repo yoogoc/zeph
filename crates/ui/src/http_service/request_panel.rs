@@ -129,7 +129,9 @@ impl Render for RequestPanel {
         let is_loading = self.is_loading;
         let use_base_url = self.use_base_url;
         let base_url = self.base_url.clone();
-        let show_final_url_preview = use_base_url && !base_url.is_empty() && !url_utils::is_absolute_url(&self.url.read(cx).value().to_string());
+        let show_final_url_preview = use_base_url
+            && !base_url.is_empty()
+            && !url_utils::is_absolute_url(&self.url.read(cx).value().to_string());
 
         let tooltip_text = if use_base_url {
             if base_url.is_empty() {
@@ -179,7 +181,11 @@ impl Render for RequestPanel {
                             .child(
                                 Button::new("send_request")
                                     .primary()
-                                    .label(if is_loading { shared_t!("request.sending") } else { shared_t!("request.send") })
+                                    .label(if is_loading {
+                                        shared_t!("request.sending")
+                                    } else {
+                                        shared_t!("request.send")
+                                    })
                                     .disabled(is_loading)
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(RequestPanelEvent::Send);
@@ -188,7 +194,13 @@ impl Render for RequestPanel {
                     )
                     .when(show_final_url_preview, |el| {
                         let base_url_display = base_url.trim_end_matches('/').to_string();
-                        let path_display = self.url.read(cx).value().to_string().trim_start_matches('/').to_string();
+                        let path_display = self
+                            .url
+                            .read(cx)
+                            .value()
+                            .to_string()
+                            .trim_start_matches('/')
+                            .to_string();
                         el.child(
                             div()
                                 .h_flex()
@@ -199,10 +211,10 @@ impl Render for RequestPanel {
                                 .child(
                                     div()
                                         .text_color(gpui::rgb(0x28a745))
-                                        .child(base_url_display)
+                                        .child(base_url_display),
                                 )
                                 .child("/")
-                                .child(path_display)
+                                .child(path_display),
                         )
                     }),
             )

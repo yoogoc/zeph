@@ -5,7 +5,6 @@
 /// - Combine base URLs with paths, handling slashes correctly
 /// - Resolve final URLs based on the URL mode setting
 /// - Build URLs with search parameters
-
 use models::SearchParameter;
 
 /// Checks if a URL is an absolute URL (starts with http:// or https://).
@@ -103,45 +102,48 @@ pub fn resolve_url(base_url: &str, path: &str, use_base_url: bool) -> String {
 /// The URL with parameters appended to the query string, or the original URL if parameter encoding fails
 ///
 /// # Examples
-/// - `build_url_with_params("https://api.example.com/users", &[SearchParameter::new("limit", "10")])` 
+/// - `build_url_with_params("https://api.example.com/users", &[SearchParameter::new("limit", "10")])`
 ///   -> `"https://api.example.com/users?limit=10"`
-/// - `build_url_with_params("https://api.example.com/users?page=1", &[SearchParameter::new("limit", "10")])` 
+/// - `build_url_with_params("https://api.example.com/users?page=1", &[SearchParameter::new("limit", "10")])`
 ///   -> `"https://api.example.com/users?page=1&limit=10"`
 pub fn build_url_with_params(base_url: &str, params: &[SearchParameter]) -> String {
     if params.is_empty() {
         return base_url.to_string();
     }
-    
+
     let mut url = base_url.to_string();
     let separator = if url.contains('?') { "&" } else { "?" };
-    
+
     let mut valid_params = Vec::new();
-    
+
     // Validate and encode parameters
     for param in params {
         let key = param.key.trim();
         let value = param.value.trim();
-        
+
         // Skip invalid parameters
         if key.is_empty() || value.is_empty() {
             continue;
         }
-        
+
         // Skip parameters that are too long
         if key.len() > 100 || value.len() > 2048 {
             continue;
         }
-        
+
         // Skip parameters with invalid characters
-        if !key.chars().all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.') {
+        if !key
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == '.')
+        {
             continue;
         }
-        
+
         // Skip parameters with newlines
         if value.contains('\n') || value.contains('\r') {
             continue;
         }
-        
+
         // Encode the parameter
         match (urlencoding::encode(key), urlencoding::encode(value)) {
             (encoded_key, encoded_value) => {
@@ -149,12 +151,12 @@ pub fn build_url_with_params(base_url: &str, params: &[SearchParameter]) -> Stri
             }
         }
     }
-    
+
     if !valid_params.is_empty() {
         url.push_str(separator);
         url.push_str(&valid_params.join("&"));
     }
-    
+
     url
 }
 
@@ -315,7 +317,7 @@ mod tests {
     #[test]
     fn test_build_url_with_params_invalid_params() {
         use models::SearchParameter;
-        
+
         // Test with empty parameter name - should be skipped
         let params = vec![
             SearchParameter::new("", "value"),
@@ -325,7 +327,7 @@ mod tests {
             build_url_with_params("https://api.example.com/search", &params),
             "https://api.example.com/search?valid=value"
         );
-        
+
         // Test with empty parameter value - should be skipped
         let params = vec![
             SearchParameter::new("param", ""),
@@ -335,7 +337,7 @@ mod tests {
             build_url_with_params("https://api.example.com/search", &params),
             "https://api.example.com/search?valid=value"
         );
-        
+
         // Test with parameter containing newlines - should be skipped
         let params = vec![
             SearchParameter::new("bad", "line1\nline2"),
@@ -345,7 +347,7 @@ mod tests {
             build_url_with_params("https://api.example.com/search", &params),
             "https://api.example.com/search?valid=value"
         );
-        
+
         // Test with invalid parameter name characters - should be skipped
         let params = vec![
             SearchParameter::new("bad param", "value"), // space in name
@@ -360,7 +362,7 @@ mod tests {
     #[test]
     fn test_build_url_with_params_length_limits() {
         use models::SearchParameter;
-        
+
         // Test parameter name too long - should be skipped
         let long_name = "a".repeat(101);
         let params = vec![
@@ -371,7 +373,7 @@ mod tests {
             build_url_with_params("https://api.example.com/search", &params),
             "https://api.example.com/search?valid=value"
         );
-        
+
         // Test parameter value too long - should be skipped
         let long_value = "a".repeat(2049);
         let params = vec![
@@ -387,7 +389,7 @@ mod tests {
     #[test]
     fn test_build_url_with_params_all_invalid() {
         use models::SearchParameter;
-        
+
         // Test with all invalid parameters - should return original URL
         let params = vec![
             SearchParameter::new("", "value"),

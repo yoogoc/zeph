@@ -2,7 +2,7 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::input::{Input, InputState, TabSize};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
-use gpui_component::{Sizable, StyledExt, Size};
+use gpui_component::{Sizable, Size, StyledExt};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
 pub enum BodyType {
@@ -70,7 +70,12 @@ impl RequestBody {
     }
 
     #[allow(unused)]
-    pub fn set_body(&mut self, body: impl Into<String>, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn set_body(
+        &mut self,
+        body: impl Into<String>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         let body = body.into();
         self.editor
             .update(cx, |state, cx| state.set_value(body, window, cx));
@@ -114,11 +119,7 @@ impl Render for RequestBody {
                     })),
             )
             .when(body_type != BodyType::None, |el| {
-                el.child(
-                    div()
-                        .h(px(200.0))
-                        .child(Input::new(&self.editor).h_full()),
-                )
+                el.child(div().h(px(200.0)).child(Input::new(&self.editor).h_full()))
             })
             .when(body_type == BodyType::None, |el| {
                 el.child(

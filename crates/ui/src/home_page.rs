@@ -1,8 +1,8 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
 use gpui_component::{h_flex, IconName, StyledExt, WindowExt};
-use gpui_component::checkbox::Checkbox;
 use models::{CreateWorkspace, Workspace};
 use uuid::Uuid;
 
@@ -53,8 +53,8 @@ impl HomePage {
                                 .checked(create_sample_for_checkbox.get())
                                 .on_click(move |checked, _, _| {
                                     create_sample_for_checkbox.set(*checked);
-                                })
-                        )
+                                }),
+                        ),
                 )
                 .on_ok(move |_, window, cx| {
                     let name = input_clone.read(cx).value();
@@ -62,9 +62,9 @@ impl HomePage {
                         if let Some(this) = this_clone.upgrade() {
                             let create_sample_services = create_sample_clone.get();
                             this.update(cx, |_, cx| {
-                                cx.emit(HomePageEvent::CreateWorkspace(CreateWorkspace { 
-                                    name, 
-                                    create_sample_services 
+                                cx.emit(HomePageEvent::CreateWorkspace(CreateWorkspace {
+                                    name,
+                                    create_sample_services,
                                 }));
                             });
                         }
@@ -75,7 +75,11 @@ impl HomePage {
         });
     }
 
-    fn render_workspace_card(&self, workspace: &Workspace, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_workspace_card(
+        &self,
+        workspace: &Workspace,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let workspace_id = workspace.id;
         let created = chrono::DateTime::from_timestamp(workspace.created_at, 0)
             .map(|dt: chrono::DateTime<chrono::Utc>| dt.format("%Y-%m-%d").to_string())
@@ -133,10 +137,12 @@ impl HomePage {
                                                     .child(workspace.name.clone()),
                                             )
                                             .child(
-                                                div()
-                                                    .text_xs()
-                                                    .text_color(rgb(0x6c757d))
-                                                    .child(shared_t!("workspaces.created_at", at = created)),
+                                                div().text_xs().text_color(rgb(0x6c757d)).child(
+                                                    shared_t!(
+                                                        "workspaces.created_at",
+                                                        at = created
+                                                    ),
+                                                ),
                                             ),
                                     ),
                             )
@@ -153,15 +159,12 @@ impl HomePage {
                             ),
                     )
                     .child(
-                        div()
-                            .text_sm()
-                            .text_color(rgb(0x6c757d))
-                            .child(
-                                workspace
-                                    .description
-                                    .clone()
-                                    .unwrap_or_else(|| t!("workspaces.default_description").into()),
-                            ),
+                        div().text_sm().text_color(rgb(0x6c757d)).child(
+                            workspace
+                                .description
+                                .clone()
+                                .unwrap_or_else(|| t!("workspaces.default_description").into()),
+                        ),
                     ),
             )
     }
@@ -185,7 +188,12 @@ impl Render for HomePage {
                         div()
                             .v_flex()
                             .gap_1()
-                            .child(div().text_2xl().font_bold().child(shared_t!("welcome.title")))
+                            .child(
+                                div()
+                                    .text_2xl()
+                                    .font_bold()
+                                    .child(shared_t!("welcome.title")),
+                            )
                             .child(
                                 div()
                                     .text_color(rgb(0x6c757d))
@@ -203,19 +211,13 @@ impl Render for HomePage {
                     ),
             )
             .child(
-                div()
-                    .flex_1()
-                    .child(
-                        div()
-                            .h_flex()
-                            .flex_wrap()
-                            .gap_4()
-                            .children(
-                                self.workspaces
-                                    .iter()
-                                    .map(|w| self.render_workspace_card(w, cx)),
-                            ),
+                div().flex_1().child(
+                    div().h_flex().flex_wrap().gap_4().children(
+                        self.workspaces
+                            .iter()
+                            .map(|w| self.render_workspace_card(w, cx)),
                     ),
+                ),
             )
     }
 }

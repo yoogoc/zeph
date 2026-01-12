@@ -65,16 +65,20 @@ impl Render for ServiceTabs {
             })
             .collect();
 
-        div().size_full().pl_1().child(
-            TabBar::new("service_tabs")
-                .selected_index(selected_index)
-                .with_variant(TabVariant::Pill)
-                .on_click(cx.listener(move |_this, index: &usize, _, cx| {
-                    if let Some(ct) = service_ids.get(*index) {
-                        cx.emit(ServiceTabsEvent::Select(ct.clone()));
-                    }
-                }))
-                .children(tabs),
-        ).into_any_element()
+        div()
+            .size_full()
+            .pl_1()
+            .child(
+                TabBar::new("service_tabs")
+                    .selected_index(selected_index)
+                    .with_variant(TabVariant::Pill)
+                    .on_click(cx.listener(move |_this, index: &usize, _, cx| {
+                        if let Some(ct) = service_ids.get(*index) {
+                            cx.emit(ServiceTabsEvent::Select(ct.clone()));
+                        }
+                    }))
+                    .children(tabs),
+            )
+            .into_any_element()
     }
 }

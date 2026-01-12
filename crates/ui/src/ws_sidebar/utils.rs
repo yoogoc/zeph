@@ -178,7 +178,9 @@ pub fn cal_icon(entry: &TreeEntry, workspace: &Option<Workspace>) -> impl IntoEl
                 .as_ref()
                 .and_then(|w| w.services.iter().find(|s| s.id == id))
             {
-                Some(service) => cal_icon_ct(&ContentType::Service(service.clone())).into_any_element(),
+                Some(service) => {
+                    cal_icon_ct(&ContentType::Service(service.clone())).into_any_element()
+                }
                 None => IconName::File.into_any_element(),
             }
         }

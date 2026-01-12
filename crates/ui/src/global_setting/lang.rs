@@ -1,5 +1,5 @@
 use gpui::*;
-use gpui_component::select::{Select, SelectDelegate, SelectEvent, SelectItem, SelectState};
+use gpui_component::select::{Select, SelectDelegate, SelectEvent, SelectState};
 use gpui_component::*;
 
 pub struct LangSettings {
@@ -15,14 +15,7 @@ impl LangSettings {
             .map(|l| SharedString::from(*l))
             .collect();
         let init_locale = locales.position(&SharedString::from(locale.to_string()));
-        let select_state = cx.new(|cx| {
-            SelectState::new(
-                locales,
-                init_locale,
-                window,
-                cx,
-            )
-        });
+        let select_state = cx.new(|cx| SelectState::new(locales, init_locale, window, cx));
 
         let ss = cx.subscribe(&select_state, |_view, event, _cx| match event {
             SelectEvent::Confirm(value) => {

@@ -8,8 +8,12 @@ struct MethodItem(HttpMethod);
 
 impl SelectItem for MethodItem {
     type Value = HttpMethod;
-    fn title(&self) -> SharedString { self.0.as_str().into() }
-    fn value(&self) -> &Self::Value { &self.0 }
+    fn title(&self) -> SharedString {
+        self.0.as_str().into()
+    }
+    fn value(&self) -> &Self::Value {
+        &self.0
+    }
 }
 
 pub enum MethodSelectorEvent {
@@ -36,18 +40,25 @@ impl MethodSelector {
         let idx = items.iter().position(|i| i.0 == method).map(IndexPath::new);
         let select = cx.new(|cx| SelectState::new(items, idx, window, cx));
 
-        cx.subscribe(&select, |_this, _, ev: &SelectEvent<Vec<MethodItem>>, cx| {
-            if let SelectEvent::Confirm(Some(method)) = ev {
-                cx.emit(MethodSelectorEvent::Changed(*method));
-            }
-        })
+        cx.subscribe(
+            &select,
+            |_this, _, ev: &SelectEvent<Vec<MethodItem>>, cx| {
+                if let SelectEvent::Confirm(Some(method)) = ev {
+                    cx.emit(MethodSelectorEvent::Changed(*method));
+                }
+            },
+        )
         .detach();
 
         Self { select }
     }
 
     pub fn method(&self, cx: &App) -> HttpMethod {
-        self.select.read(cx).selected_value().copied().unwrap_or(HttpMethod::Get)
+        self.select
+            .read(cx)
+            .selected_value()
+            .copied()
+            .unwrap_or(HttpMethod::Get)
     }
 }
 

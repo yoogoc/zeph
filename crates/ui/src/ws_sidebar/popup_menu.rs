@@ -1,10 +1,16 @@
+use crate::ws_sidebar::{TreeId, WorkspaceSidebar, WorkspaceSidebarEvent};
 use gpui::*;
 use gpui_component::menu::{PopupMenu, PopupMenuItem};
 use gpui_component::tree::TreeItem;
 use models::FolderType;
-use crate::ws_sidebar::{TreeId, WorkspaceSidebar, WorkspaceSidebarEvent};
 
-pub fn popup_menu(menu: PopupMenu, item: &TreeItem, view: &Entity<WorkspaceSidebar>, window: &mut Window, _cx: &mut Context<PopupMenu>) -> PopupMenu {
+pub fn popup_menu(
+    menu: PopupMenu,
+    item: &TreeItem,
+    view: &Entity<WorkspaceSidebar>,
+    window: &mut Window,
+    _cx: &mut Context<PopupMenu>,
+) -> PopupMenu {
     let mut menu = menu;
     let id = TreeId::new(item.id.clone());
 
@@ -13,6 +19,7 @@ pub fn popup_menu(menu: PopupMenu, item: &TreeItem, view: &Entity<WorkspaceSideb
     let mut create_schema = None;
     let mut create_folder = None;
     let mut delete = None;
+    let mut import_openapi = None;
     match id {
         TreeId::ServiceRoot => {
             create_service = Some(WorkspaceSidebarEvent::CreateService(
@@ -24,6 +31,8 @@ pub fn popup_menu(menu: PopupMenu, item: &TreeItem, view: &Entity<WorkspaceSideb
                 None,
                 FolderType::Service,
             ));
+            // Implements Requirement 1.3, 1.4 - Import OpenAPI from service root with no target folder
+            import_openapi = Some(WorkspaceSidebarEvent::ShowImportDialog(None));
         }
         TreeId::SchemaRoot => {
             create_schema = Some(WorkspaceSidebarEvent::CreateSchema(
@@ -48,13 +57,15 @@ pub fn popup_menu(menu: PopupMenu, item: &TreeItem, view: &Entity<WorkspaceSideb
             detail = Some(WorkspaceSidebarEvent::OpenFolderDetail(id.clone()));
             create_service = Some(WorkspaceSidebarEvent::CreateService(
                 "New Service".into(),
-                Some(id),
+                Some(id.clone()),
             ));
             create_folder = Some(WorkspaceSidebarEvent::CreateFolder(
                 "New Folder".into(),
-                Some(id),
+                Some(id.clone()),
                 FolderType::Service,
             ));
+            // Implements Requirement 1.1, 1.2 - Import OpenAPI with target folder preset
+            import_openapi = Some(WorkspaceSidebarEvent::ShowImportDialog(Some(id.clone())));
             delete = Some(WorkspaceSidebarEvent::DeleteFolder(id));
         }
         TreeId::SchemaFolder(id) => {
@@ -113,6 +124,21 @@ pub fn popup_menu(menu: PopupMenu, item: &TreeItem, view: &Entity<WorkspaceSideb
     if let Some(event) = create_folder {
         menu = menu.item(
             PopupMenuItem::new("New Folder").on_click(window.listener_for(
+                &view,
+                move |this, _, _window, cx| {
+                    this.handle_context_menu_event(event.clone(), cx);
+
+                    cx.stop_propagation();
+                },
+            )),
+        )
+    }
+
+    // Import OpenAPI menu item
+    // Implements Requirements 1.1, 1.2, 1.3, 1.4
+    if let Some(event) = import_openapi {
+        menu = menu.item(
+            PopupMenuItem::new("导入 OpenAPI").on_click(window.listener_for(
                 &view,
                 move |this, _, _window, cx| {
                     this.handle_context_menu_event(event.clone(), cx);

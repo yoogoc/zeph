@@ -477,9 +477,9 @@ fn generate_unique_schema_name(
 /// Implements Requirement 6.4 for conflict resolution options
 #[derive(Debug, Clone)]
 pub enum ConflictResolution {
-    Skip,           // Skip importing the conflicting item
+    Skip,                 // Skip importing the conflicting item
     Rename(SharedString), // Rename to the provided name
-    Replace,        // Replace the existing item
+    Replace,              // Replace the existing item
 }
 
 /// Applies conflict resolution to the import process

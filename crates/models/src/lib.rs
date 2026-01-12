@@ -1,9 +1,9 @@
 mod runtime;
 
 use gpui::SharedString;
+pub use runtime::ContentType;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
-pub use runtime::ContentType;
 
 // === Sync Metadata ===
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -157,7 +157,7 @@ pub enum VariableType {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct CreateWorkspace {
     pub name: SharedString,
-    pub create_sample_services: bool
+    pub create_sample_services: bool,
 }
 
 impl Workspace {
@@ -233,7 +233,12 @@ impl Folder {
         Self::with_type(workspace_id, name, parent_id, FolderType::Service)
     }
 
-    pub fn with_type(workspace_id: Uuid, name: impl Into<SharedString>, parent_id: Option<Uuid>, folder_type: FolderType) -> Self {
+    pub fn with_type(
+        workspace_id: Uuid,
+        name: impl Into<SharedString>,
+        parent_id: Option<Uuid>,
+        folder_type: FolderType,
+    ) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
@@ -271,7 +276,11 @@ pub struct Service {
 }
 
 impl Service {
-    pub fn new(workspace_id: Uuid, name: impl Into<SharedString>, service_type: ServiceType) -> Self {
+    pub fn new(
+        workspace_id: Uuid,
+        name: impl Into<SharedString>,
+        service_type: ServiceType,
+    ) -> Self {
         let now = chrono::Utc::now().timestamp();
         Self {
             id: Uuid::new_v4(),
@@ -486,7 +495,6 @@ impl Default for WebSocketConfig {
         }
     }
 }
-
 
 // === OpenAPI Schema (Data Models) ===
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -261,9 +261,11 @@ impl FolderDetailPage {
                             this.set_active_tab(tab.clone(), cx);
                         }
                     }))
-                    .children(FolderDetailTab::all_tabs().into_iter().map(|tab| {
-                        Tab::new().label(tab.display_name())
-                    })),
+                    .children(
+                        FolderDetailTab::all_tabs()
+                            .into_iter()
+                            .map(|tab| Tab::new().label(tab.display_name())),
+                    ),
             )
     }
 

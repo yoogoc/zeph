@@ -20,7 +20,7 @@ pub struct FolderSelector {
     selected_folder: Option<Uuid>,
     expanded_folders: HashSet<Uuid>,
     folder_type_filter: FolderType,
-    
+
     // Performance optimization: Pre-computed folder hierarchy for faster rendering
     folder_hierarchy: HashMap<Option<Uuid>, Vec<Uuid>>,
     folder_lookup: HashMap<Uuid, usize>, // Maps folder ID to index in folders vec
@@ -46,10 +46,10 @@ impl FolderSelector {
             .into_iter()
             .filter(|f| f.folder_type == self.folder_type_filter)
             .collect();
-        
+
         // Performance optimization: Pre-compute folder hierarchy and lookup maps
         self.rebuild_hierarchy();
-        
+
         // Expand root folders by default
         for folder in &self.folders {
             if folder.parent_id.is_none() {
@@ -62,12 +62,12 @@ impl FolderSelector {
     fn rebuild_hierarchy(&mut self) {
         self.folder_hierarchy.clear();
         self.folder_lookup.clear();
-        
+
         // Build lookup map for O(1) folder access
         for (index, folder) in self.folders.iter().enumerate() {
             self.folder_lookup.insert(folder.id, index);
         }
-        
+
         // Build hierarchy map for O(1) children lookup
         for folder in &self.folders {
             self.folder_hierarchy
@@ -75,7 +75,7 @@ impl FolderSelector {
                 .or_insert_with(Vec::new)
                 .push(folder.id);
         }
-        
+
         // Sort children by name for consistent ordering
         for children in self.folder_hierarchy.values_mut() {
             children.sort_by(|a, b| {
@@ -116,21 +116,26 @@ impl FolderSelector {
             .and_then(|&index| self.folders.get(index))
     }
 
-    fn render_folder_item(&self, folder_id: Uuid, depth: usize, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_folder_item(
+        &self,
+        folder_id: Uuid,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
         let folder = match self.get_folder(folder_id) {
             Some(f) => f,
             None => return div().into_any_element(), // Skip invalid folder
         };
-        
+
         let is_expanded = self.expanded_folders.contains(&folder_id);
         let is_selected = self.selected_folder == Some(folder_id);
         let has_children = self.has_children(folder_id);
-        
+
         let chevron_icon = if has_children {
-            if is_expanded { 
-                IconName::ChevronDown 
-            } else { 
-                IconName::ChevronRight 
+            if is_expanded {
+                IconName::ChevronDown
+            } else {
+                IconName::ChevronRight
             }
         } else {
             IconName::ChevronRight // Placeholder, will be invisible
@@ -164,42 +169,62 @@ impl FolderSelector {
                                                 .icon(chevron_icon)
                                                 .on_click(cx.listener(move |this, _, _, cx| {
                                                     this.toggle_folder(folder_id);
-                                                    cx.emit(FolderSelectorEvent::ToggleFolder(folder_id));
-                                                }))
+                                                    cx.emit(FolderSelectorEvent::ToggleFolder(
+                                                        folder_id,
+                                                    ));
+                                                })),
                                         )
-                                    })
+                                    }),
                             )
-                            .child(gpui_component::Icon::new(IconName::Folder).size_4().text_color(rgb(0x6c757d)))
+                            .child(
+                                gpui_component::Icon::new(IconName::Folder)
+                                    .size_4()
+                                    .text_color(rgb(0x6c757d)),
+                            )
                             .child(div().text_sm().child(folder.name.clone())),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.selected_folder = Some(folder_id);
                         cx.emit(FolderSelectorEvent::SelectFolder(Some(folder_id)));
-                    }))
+                    })),
             )
             .when(is_expanded && has_children, |el| {
-                el.child(
-                    div()
-                        .v_flex()
-                        .children(self.render_folder_tree_optimized(Some(folder_id), depth + 1, cx))
-                )
+                el.child(div().v_flex().children(self.render_folder_tree_optimized(
+                    Some(folder_id),
+                    depth + 1,
+                    cx,
+                )))
             })
             .into_any_element()
     }
 
     /// Performance optimization: Use pre-computed hierarchy for faster tree rendering
-    fn render_folder_tree_optimized(&self, parent_id: Option<Uuid>, depth: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_folder_tree_optimized(
+        &self,
+        parent_id: Option<Uuid>,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         self.folder_hierarchy
             .get(&parent_id)
             .map(|children| {
-                children.iter()
-                    .map(|&folder_id| self.render_folder_item(folder_id, depth, cx).into_any_element())
+                children
+                    .iter()
+                    .map(|&folder_id| {
+                        self.render_folder_item(folder_id, depth, cx)
+                            .into_any_element()
+                    })
                     .collect()
             })
             .unwrap_or_default()
     }
 
-    fn render_folder_tree(&self, parent_id: Option<Uuid>, depth: usize, cx: &mut Context<Self>) -> Vec<AnyElement> {
+    fn render_folder_tree(
+        &self,
+        parent_id: Option<Uuid>,
+        depth: usize,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
         // Use optimized version
         self.render_folder_tree_optimized(parent_id, depth, cx)
     }
@@ -231,7 +256,7 @@ impl Render for FolderSelector {
                             .text_sm()
                             .font_semibold()
                             .text_color(rgb(0x495057))
-                            .child("Select Target Folder")
+                            .child("Select Target Folder"),
                     )
                     .child(
                         Button::new("clear_selection")
@@ -241,8 +266,8 @@ impl Render for FolderSelector {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.selected_folder = None;
                                 cx.emit(FolderSelectorEvent::SelectFolder(None));
-                            }))
-                    )
+                            })),
+                    ),
             )
             .child(
                 div()
@@ -255,13 +280,12 @@ impl Render for FolderSelector {
                                 .text_center()
                                 .text_sm()
                                 .text_color(rgb(0x6c757d))
-                                .child("No folders available")
+                                .child("No folders available"),
                         )
                     })
                     .when(!self.folders.is_empty(), |el| {
                         el.children(self.render_folder_tree(None, 0, cx))
-                    })
+                    }),
             )
     }
 }
-

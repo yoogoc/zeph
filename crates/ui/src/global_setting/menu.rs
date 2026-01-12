@@ -40,7 +40,6 @@ impl MenuList {
             selected_item: Some(Menu::Request),
         }
     }
-
 }
 
 impl ListDelegate for MenuList {

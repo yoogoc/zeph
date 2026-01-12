@@ -3,8 +3,8 @@ mod theme;
 
 use gpui::*;
 use gpui_component::*;
-use std::sync::Arc;
 use rust_i18n::t;
+use std::sync::Arc;
 
 i18n::init!();
 

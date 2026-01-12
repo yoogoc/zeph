@@ -1,7 +1,8 @@
 use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
 use crate::{
     EnvironmentSelector, EnvironmentSelectorEvent, FolderDetailPage, FolderDetailPageEvent,
-    HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent,
+    HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent, SimpleImportConfig,
+    SimpleImportDialog, SimpleImportDialogEvent,
 };
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
@@ -20,6 +21,9 @@ pub struct WorkspaceContent {
     sidebar: Entity<WsSidebar>,
     env_selector: Entity<EnvironmentSelector>,
     folder_detail: Entity<FolderDetailPage>,
+    // Import dialog state
+    import_dialog: Option<Entity<SimpleImportDialog>>,
+    show_import_dialog: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -114,41 +118,46 @@ impl WorkspaceContent {
             }
         });
 
-        let sidebar_sub = cx.subscribe(&sidebar, |this, _, event, cx| match event {
-            WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
-            WorkspaceSidebarEvent::OpenSchema(_id) => {}
-            WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
-            WorkspaceSidebarEvent::CreateService(name, folder_id) => {
-                this.create_service(name.clone(), *folder_id, cx)
-            }
-            WorkspaceSidebarEvent::CreateSchema(name, folder_id) => {
-                this.create_schema(name.clone(), *folder_id, cx)
-            }
-            WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => {
-                this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx)
-            }
-            WorkspaceSidebarEvent::ImportOpenApi(config) => this.import_openapi(config.clone(), cx),
-            WorkspaceSidebarEvent::PreviewImport(config) => this.preview_import(config.clone(), cx),
-            WorkspaceSidebarEvent::RequestImportPreview(config) => {
-                this.request_import_preview(config.clone(), cx)
-            }
-            WorkspaceSidebarEvent::ResolveImportConflicts(config, resolutions) => {
-                this.resolve_import_conflicts(config.clone(), resolutions.clone(), cx)
-            }
-            // New menu events - for now just log them, actual implementation will be added later
-            WorkspaceSidebarEvent::DeleteService(id) => {
-                // TODO: Implement service deletion
-                eprintln!("Delete service requested: {}", id);
-            }
-            WorkspaceSidebarEvent::DeleteSchema(id) => {
-                // TODO: Implement schema deletion
-                eprintln!("Delete schema requested: {}", id);
-            }
-            WorkspaceSidebarEvent::DeleteFolder(id) => {
-                // TODO: Implement folder deletion
-                eprintln!("Delete folder requested: {}", id);
-            }
-        });
+        let sidebar_sub =
+            cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
+                WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
+                WorkspaceSidebarEvent::OpenSchema(_id) => {}
+                WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
+                WorkspaceSidebarEvent::CreateService(name, folder_id) => {
+                    this.create_service(name.clone(), *folder_id, cx)
+                }
+                WorkspaceSidebarEvent::CreateSchema(name, folder_id) => {
+                    this.create_schema(name.clone(), *folder_id, cx)
+                }
+                WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => {
+                    this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx)
+                }
+                WorkspaceSidebarEvent::ImportOpenApi(config) => {
+                    this.import_openapi(config.clone(), cx)
+                }
+                // New menu events - for now just log them, actual implementation will be added later
+                WorkspaceSidebarEvent::DeleteService(id) => {
+                    // TODO: Implement service deletion
+                    eprintln!("Delete service requested: {}", id);
+                }
+                WorkspaceSidebarEvent::DeleteSchema(id) => {
+                    // TODO: Implement schema deletion
+                    eprintln!("Delete schema requested: {}", id);
+                }
+                WorkspaceSidebarEvent::DeleteFolder(id) => {
+                    // TODO: Implement folder deletion
+                    eprintln!("Delete folder requested: {}", id);
+                }
+                // Import dialog events
+                // Implements Requirements 1.1, 1.2, 1.3, 1.4, 3.4
+                WorkspaceSidebarEvent::ShowImportDialog(folder_id) => {
+                    this.show_import_dialog(*folder_id, window, cx);
+                }
+                // Implements Requirements 3.4, 4.4, 4.5
+                WorkspaceSidebarEvent::ExecuteImport(config) => {
+                    this.execute_simple_import(config.clone(), cx);
+                }
+            });
 
         let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
             EnvironmentSelectorEvent::SelectEnvironment(id) => this.select_environment(*id, cx),
@@ -189,6 +198,8 @@ impl WorkspaceContent {
             sidebar,
             env_selector,
             folder_detail: folder_detail_page,
+            import_dialog: None,
+            show_import_dialog: false,
             _subscriptions: vec![
                 registry_sub,
                 registry_sub2,
@@ -337,105 +348,138 @@ impl WorkspaceContent {
         });
     }
 
-    fn preview_import(&mut self, config: ImportConfig, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, _cx| {
-            let options = workspace::ImportOptions {
-                target_folder: config.target_folder,
-                create_subfolders: config.create_subfolders,
-                schema_folder_strategy: config.schema_folder_strategy,
-            };
-            if let Ok(preview) = registry.generate_openapi_import_preview(&config.content, options)
-            {
-                // In a real implementation, we would send this preview back to the dialog
-                // For now, we'll just log it
-                println!(
-                    "Import preview: {} services, {} schemas",
-                    preview.services.len(),
-                    preview.schemas.len()
-                );
-            }
-        });
-    }
-
-    /// Handle request for import preview with enhanced error handling
-    /// Implements Requirements 6.1, 6.2 for error handling in UI
-    fn request_import_preview(&mut self, config: ImportConfig, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, _cx| {
-            let options = workspace::ImportOptions {
-                target_folder: config.target_folder,
-                create_subfolders: config.create_subfolders,
-                schema_folder_strategy: config.schema_folder_strategy,
-            };
-
-            // Validate content first
-            match workspace::validate_openapi_content(&config.content) {
-                Ok(_) => {
-                    // Generate preview
-                    match registry.generate_openapi_import_preview(&config.content, options) {
-                        Ok(preview) => {
-                            // TODO: Send preview back to dialog
-                            println!(
-                                "Import preview generated: {} services, {} schemas",
-                                preview.services.len(),
-                                preview.schemas.len()
-                            );
-                        }
-                        Err(e) => {
-                            // TODO: Send error back to dialog
-                            eprintln!("Failed to generate preview: {}", e);
-                        }
-                    }
-                }
-                Err(e) => {
-                    // TODO: Send validation error back to dialog
-                    eprintln!("Content validation failed: {}", e);
-                }
-            }
-        });
-    }
-
-    /// Handle conflict resolution and import with enhanced validation
-    /// Implements Requirements 6.4 for conflict resolution
-    fn resolve_import_conflicts(
+    /// Show the simplified import dialog
+    /// Implements Requirements 1.1, 1.2, 1.3, 1.4, 3.4
+    fn show_import_dialog(
         &mut self,
-        config: ImportConfig,
-        resolutions: HashMap<SharedString, workspace::ConflictResolution>,
+        folder_id: Option<Uuid>,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // Get folder name if folder_id is provided
+        let folder_name = if let Some(id) = folder_id {
+            let registry = workspace::WorkspaceRegistry::global(cx);
+            registry
+                .read(cx)
+                .get_folder(id)
+                .map(|f| SharedString::from(f.name.clone()))
+        } else {
+            None
+        };
+
+        // Create the import dialog
+        let dialog = cx.new(|cx| {
+            let mut dialog = SimpleImportDialog::new(window, cx);
+            dialog.set_target_folder(folder_id, folder_name);
+            dialog
+        });
+
+        // Subscribe to dialog events
+        let dialog_sub = cx.subscribe(&dialog, |this, _, event: &SimpleImportDialogEvent, cx| {
+            match event {
+                SimpleImportDialogEvent::Import(config) => {
+                    // Execute the import
+                    this.execute_simple_import(config.clone(), cx);
+                    // Close the dialog
+                    this.show_import_dialog = false;
+                    this.import_dialog = None;
+                    cx.notify();
+                }
+                SimpleImportDialogEvent::Cancel => {
+                    // Close the dialog
+                    this.show_import_dialog = false;
+                    this.import_dialog = None;
+                    cx.notify();
+                }
+            }
+        });
+
+        // Store the subscription
+        self._subscriptions.push(dialog_sub);
+        self.import_dialog = Some(dialog);
+        self.show_import_dialog = true;
+        cx.notify();
+    }
+
+    /// Execute import using SimpleImportConfig
+    /// Implements Requirements 3.4, 4.4, 4.5, 5.1, 5.2
+    fn execute_simple_import(&mut self, config: SimpleImportConfig, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, _cx| {
+        registry.update(cx, |registry, cx| {
+            // Requirement 5.1: Validate content before import
+            if let Err(e) = workspace::validate_openapi_content(&config.content) {
+                eprintln!("Content validation failed: {}", e);
+                if let Some(dialog) = &self.import_dialog {
+                    dialog.update(cx, |d, _cx| {
+                        d.set_error(Some(crate::simple_import_dialog::ImportErrorType::ParseError(
+                            e.to_string(),
+                        )));
+                    });
+                }
+                return;
+            }
+
+            // Requirement 5.2: Validate target folder if specified
+            if let Some(target_folder_id) = config.target_folder {
+                match registry.get_folder(target_folder_id) {
+                    Some(folder) => {
+                        // Validate folder type - must be a service folder
+                        if folder.folder_type != FolderType::Service {
+                            eprintln!("Target folder is not a service folder");
+                            if let Some(dialog) = &self.import_dialog {
+                                dialog.update(cx, |d, _cx| {
+                                    d.set_error(Some(
+                                        crate::simple_import_dialog::ImportErrorType::ValidationError(
+                                            "目标文件夹必须是服务类型文件夹".to_string(),
+                                        ),
+                                    ));
+                                });
+                            }
+                            return;
+                        }
+                    }
+                    None => {
+                        eprintln!("Target folder not found: {}", target_folder_id);
+                        if let Some(dialog) = &self.import_dialog {
+                            dialog.update(cx, |d, _cx| {
+                                d.set_error(Some(
+                                    crate::simple_import_dialog::ImportErrorType::ImportError(
+                                        "目标文件夹不存在".to_string(),
+                                    ),
+                                ));
+                            });
+                        }
+                        return;
+                    }
+                }
+            }
+
             let options = workspace::ImportOptions {
                 target_folder: config.target_folder,
                 create_subfolders: config.create_subfolders,
-                schema_folder_strategy: config.schema_folder_strategy,
+                schema_folder_strategy: workspace::SchemaFolderStrategy::SeparateFolder,
             };
 
-            // Get current workspace data for conflict checking
-            if let Some(workspace) = registry.get_active_workspace() {
-                let existing_folders = &workspace.folders;
-                let existing_services = &workspace.services;
-                let existing_schemas = &workspace.schemas;
-
-                // Use the enhanced import function with conflict resolution
-                match workspace::import_openapi_with_validation(
-                    workspace.id,
-                    &config.content,
-                    options,
-                    existing_folders,
-                    existing_services,
-                    existing_schemas,
-                    Some(&resolutions),
-                ) {
-                    Ok(result) => {
-                        println!("Import completed with conflict resolution: {} folders, {} services, {} schemas",
-                                 result.folders.len(), result.services.len(), result.schemas.len());
-                        // TODO: Update UI with imported data
-                    }
-                    Err(e) => {
-                        eprintln!("Failed to import with conflict resolution: {}", e);
-                        // TODO: Send error back to dialog
+            match registry.import_openapi_with_options(&config.content, options, cx) {
+                Ok(_) => {
+                    // Import successful - dialog will be closed by the event handler
+                    // Implements Requirement 4.4 - dialog auto-closes on success
+                    println!("OpenAPI import completed successfully");
+                }
+                Err(e) => {
+                    // Import failed - show error in dialog
+                    // Implements Requirement 5.3 - show error details and keep dialog open
+                    eprintln!("Failed to import OpenAPI: {}", e);
+                    // Update dialog with error if it exists
+                    if let Some(dialog) = &self.import_dialog {
+                        dialog.update(cx, |d, _cx| {
+                            d.set_error(Some(
+                                crate::simple_import_dialog::ImportErrorType::ImportError(format!(
+                                    "导入失败: {}",
+                                    e
+                                )),
+                            ));
+                        });
                     }
                 }
             }
@@ -621,8 +665,8 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            h_resizable("workspace-content")
-                .child(resizable_panel().size(px(160.)).child(self.sidebar.clone()))
+            let main_content = h_resizable("workspace-content")
+                .child(resizable_panel().size(px(200.)).child(self.sidebar.clone()))
                 .child(
                     resizable_panel().child(
                         div()
@@ -649,8 +693,33 @@ impl WorkspaceContent {
                                     .child(self.render_service_content(&workspace, window, cx)),
                             ),
                     ),
-                )
-                .into_any_element()
+                );
+
+            // Render with import dialog overlay if visible
+            if self.show_import_dialog {
+                if let Some(dialog) = &self.import_dialog {
+                    div()
+                        .size_full()
+                        .relative()
+                        .child(main_content)
+                        .child(
+                            // Modal overlay
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .bg(rgba(0x00000080))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(dialog.clone()),
+                        )
+                        .into_any_element()
+                } else {
+                    main_content.into_any_element()
+                }
+            } else {
+                main_content.into_any_element()
+            }
         } else {
             div()
                 .p_4()

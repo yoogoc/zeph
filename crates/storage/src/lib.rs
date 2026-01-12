@@ -1,14 +1,14 @@
 mod db;
-mod schema;
-mod workspace;
-mod folder;
-mod service;
-mod schema_store;
 mod environment;
+mod folder;
+mod schema;
+mod schema_store;
+mod service;
+mod workspace;
 
 pub use db::Database;
-pub use workspace::WorkspaceStore;
-pub use folder::FolderStore;
-pub use service::ServiceStore;
-pub use schema_store::SchemaStore;
 pub use environment::{EnvironmentStore, EnvironmentVariableStore};
+pub use folder::FolderStore;
+pub use schema_store::SchemaStore;
+pub use service::ServiceStore;
+pub use workspace::WorkspaceStore;

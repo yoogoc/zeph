@@ -59,7 +59,7 @@ impl<'a> WorkspaceStore<'a> {
             "SELECT id, name, description, created_at, updated_at, sync_version, source, deleted
              FROM workspaces WHERE id = ?1 AND deleted = 0",
         )?;
-        
+
         let mut rows = stmt.query(params![id.to_string()])?;
         if let Some(row) = rows.next()? {
             Ok(Some(row_to_workspace(row)?))
@@ -73,7 +73,7 @@ impl<'a> WorkspaceStore<'a> {
             "SELECT id, name, description, created_at, updated_at, sync_version, source, deleted
              FROM workspaces WHERE deleted = 0 ORDER BY created_at DESC",
         )?;
-        
+
         let rows = stmt.query_map([], |row| Ok(row_to_workspace(row).unwrap()))?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }

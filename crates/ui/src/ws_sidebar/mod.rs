@@ -2,7 +2,7 @@ mod popup_menu;
 mod utils;
 
 use crate::ws_sidebar::popup_menu::popup_menu;
-use crate::ImportConfig;
+use crate::{ImportConfig, SimpleImportConfig};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
@@ -16,7 +16,6 @@ use utils::build_tree;
 use utils::cal_icon;
 pub use utils::TreeId;
 use uuid::Uuid;
-use workspace::ConflictResolution;
 
 pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
@@ -36,13 +35,13 @@ pub enum WorkspaceSidebarEvent {
     CreateFolder(SharedString, Option<Uuid>, FolderType),
     // ToggleFolder(Uuid),
     ImportOpenApi(ImportConfig),
-    PreviewImport(ImportConfig),
-    RequestImportPreview(ImportConfig),
-    ResolveImportConflicts(ImportConfig, HashMap<SharedString, ConflictResolution>),
     // New menu events
     DeleteService(Uuid),
     DeleteSchema(Uuid),
     DeleteFolder(Uuid),
+    // Import dialog events
+    ShowImportDialog(Option<Uuid>), // Show import dialog with optional target folder ID
+    ExecuteImport(SimpleImportConfig), // Execute import with the given configuration
 }
 
 impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
@@ -164,40 +163,46 @@ impl WorkspaceSidebar {
 
 impl Render for WorkspaceSidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        div().size_full().pt_1().pb_2().pr_1().bg(rgb(0xf5f5f5)).child(
-            v_flex()
-                .bg(white())
-                .size_full()
-                .rounded_2xl()
-                .child(
-                    div()
-                        .p_2()
-                        .border_1()
-                        .rounded_md()
-                        .text_sm()
-                        .overflow_hidden()
-                        .child(shared_t!("common.search")),
-                )
-                .child(
-                    v_flex()
-                        .id("workspace-sidebar-tree")
-                        .justify_start()
-                        .h_full()
-                        .p_2()
-                        .gap_2()
-                        // Services Section
-                        .child(tree(&self.tree, {
-                            let view = cx.entity();
-                            move |ix, entry, selected, _window, cx| {
-                                view.update(cx, |this, cx| {
-                                    this.render_item(entry, ix, selected, cx)
-                                })
-                            }
-                        })), // .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                             //     this.hovered = None;
-                             //     cx.notify();
-                             // })),
-                ),
-        )
+        div()
+            .size_full()
+            .pt_1()
+            .pb_2()
+            .pr_1()
+            .bg(rgb(0xf5f5f5))
+            .child(
+                v_flex()
+                    .bg(white())
+                    .size_full()
+                    .rounded_2xl()
+                    .child(
+                        div()
+                            .p_2()
+                            .border_1()
+                            .rounded_md()
+                            .text_sm()
+                            .overflow_hidden()
+                            .child(shared_t!("common.search")),
+                    )
+                    .child(
+                        v_flex()
+                            .id("workspace-sidebar-tree")
+                            .justify_start()
+                            .h_full()
+                            .p_2()
+                            .gap_2()
+                            // Services Section
+                            .child(tree(&self.tree, {
+                                let view = cx.entity();
+                                move |ix, entry, selected, _window, cx| {
+                                    view.update(cx, |this, cx| {
+                                        this.render_item(entry, ix, selected, cx)
+                                    })
+                                }
+                            })), // .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
+                                 //     this.hovered = None;
+                                 //     cx.notify();
+                                 // })),
+                    ),
+            )
     }
 }

@@ -27,8 +27,16 @@ impl RequestHeaders {
         let rows = headers
             .into_iter()
             .map(|h| HeaderRow {
-                key: cx.new(|cx| InputState::new(window, cx).default_value(&h.key).placeholder("Key")),
-                value: cx.new(|cx| InputState::new(window, cx).default_value(&h.value).placeholder("Value")),
+                key: cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&h.key)
+                        .placeholder("Key")
+                }),
+                value: cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&h.value)
+                        .placeholder("Value")
+                }),
             })
             .collect();
 

@@ -1,6 +1,9 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use log::error;
-use models::{ContentType, CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
+use models::{
+    ContentType, CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig, HttpMethod,
+    Service, ServiceType, Workspace,
+};
 use std::sync::Arc;
 use storage::{
     Database, EnvironmentStore, EnvironmentVariableStore, FolderStore, SchemaStore, ServiceStore,
@@ -413,7 +416,7 @@ impl WorkspaceRegistry {
     pub fn import_openapi_with_options(
         &mut self,
         content: &str,
-        options: openapi::ImportOptions,
+        options: ImportOptions,
         cx: &mut Context<Self>,
     ) -> anyhow::Result<()> {
         let workspace_id = match self.get_active_workspace() {
@@ -428,9 +431,9 @@ impl WorkspaceRegistry {
             .find(|w| w.id == workspace_id)
             .unwrap();
 
-        let spec = openapi::parse_openapi(content)?;
+        let spec = parse_openapi(content)?;
         let result =
-            openapi::import_openapi_with_options(workspace_id, &spec, options, &workspace.folders)?;
+            import_openapi_with_options(workspace_id, &spec, options, &workspace.folders)?;
 
         log::info!(
             "Importing {} folders, {} services, {} schemas",

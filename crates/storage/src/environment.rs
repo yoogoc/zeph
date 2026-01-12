@@ -184,9 +184,9 @@ fn row_to_variable(row: &rusqlite::Row) -> Result<EnvironmentVariable> {
         environment_id: Uuid::parse_str(&environment_id)?,
         name: name.into(),
         var_type: str_to_var_type(&var_type),
-        remote_value: remote_value.map(|x|x.into()),
-        local_value: local_value.map(|x|x.into()),
-        description: description.map(|x|x.into()),
+        remote_value: remote_value.map(|x| x.into()),
+        local_value: local_value.map(|x| x.into()),
+        description: description.map(|x| x.into()),
         created_at,
         updated_at,
     })
