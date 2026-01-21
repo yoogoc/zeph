@@ -42,6 +42,7 @@ impl Render for ResponsePanel {
             .gap_2()
             .flex_1()
             .min_h_0()
+            .h_full()
             .child(
                 TabBar::new("response_tabs")
                     .with_variant(TabVariant::Segmented)
@@ -61,7 +62,7 @@ impl Render for ResponsePanel {
             .child(
                 div()
                     .flex_1()
-                    .min_h_0()
+                    .h_full()
                     .when(active_tab == ResponseTab::Body, |el| {
                         el.child(Input::new(&self.response).disabled(true).h_full())
                     })

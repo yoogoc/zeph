@@ -3,9 +3,13 @@ use super::request_panel::{RequestPanel, RequestPanelEvent};
 use super::response_panel::ResponsePanel;
 use super::url_utils;
 use futures::StreamExt;
+use gpui::prelude::FluentBuilder;
 use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{InputState, TabSize};
-use gpui_component::StyledExt;
+use gpui_component::resizable::{resizable_panel, v_resizable};
+use gpui_component::spinner::Spinner;
+use gpui_component::{v_flex, Sizable};
 use gpui_tokio::Tokio;
 use models::{Header, HttpConfig, HttpMethod, SearchParameter};
 use smallvec::{smallvec, SmallVec};
@@ -315,8 +319,16 @@ impl HttpService {
         });
     }
 
+    fn set_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
+        self.is_loading = loading;
+        self.request_panel.update(cx, |panel, cx| {
+            panel.set_loading(loading);
+            cx.notify();
+        });
+    }
+
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.is_loading = true;
+        self.set_loading(true, cx);
         self.response
             .update(cx, |state, cx| state.set_value("", window, cx));
         self.response_headers
@@ -381,6 +393,11 @@ impl HttpService {
             async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
                 let result = task.await.unwrap();
 
+                this.update_in(cx, |this, _, cx| {
+                    this.set_loading(false, cx);
+                })
+                .ok();
+
                 match result {
                     Ok(resp) => {
                         let headers_text = resp
@@ -442,12 +459,6 @@ impl HttpService {
                             .ok();
                     }
                 }
-
-                this.update_in(cx, |this, _, cx| {
-                    this.is_loading = false;
-                    cx.notify();
-                })
-                .ok();
             },
         )
         .detach();
@@ -455,20 +466,45 @@ impl HttpService {
 }
 
 impl Render for HttpService {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        self.request_panel.update(cx, |panel, cx| {
-            panel.set_loading(self.is_loading);
-            cx.notify();
-        });
-
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
         div()
-            .flex_1()
-            .h_full()
+            .size_full()
             .py_2()
             .px_4()
-            .v_flex()
             .gap_4()
-            .child(self.request_panel.clone())
-            .child(self.response_panel.clone())
+            .relative()
+            .child(
+                v_resizable("http-service")
+                    .child(self.request_panel.clone().into_any_element())
+                    .child(
+                        resizable_panel()
+                            .child(div().pt_2().size_full().child(self.response_panel.clone())),
+                    ),
+            )
+            .when(self.is_loading, |this| {
+                this.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(hsla(0., 0., 1., 0.5))
+                        .on_mouse_down(MouseButton::Left, move |_, _, cx| cx.stop_propagation())
+                        .child(
+                            v_flex()
+                                .items_center()
+                                .justify_center()
+                                .gap_2()
+                                .child(Spinner::new().large())
+                                .child(
+                                    // TODO: cancel action
+                                    Button::new("cancel-http-service").label("cancel").primary(),
+                                ),
+                        ),
+                )
+            })
     }
 }

@@ -7,7 +7,7 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
-use gpui_component::{Disableable, IconName, StyledExt};
+use gpui_component::{h_flex, v_flex, Disableable, IconName, StyledExt};
 use models::{Header, HttpMethod};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
@@ -143,26 +143,23 @@ impl Render for RequestPanel {
             t!("request.base_url.disabled").to_string()
         };
 
-        div()
-            .v_flex()
+        v_flex()
+            .w_full()
             .gap_4()
             .child(
-                div()
-                    .v_flex()
+                v_flex()
                     .gap_1()
                     .child(
-                        div()
-                            .h_flex()
+                        h_flex()
                             .gap_2()
                             .child(
-                                div()
+                                h_flex()
                                     .flex_1()
-                                    .h_flex()
                                     .p_2()
                                     .gap_1()
-                                    .bg(gpui::rgb(0xffffff))
+                                    .bg(white())
                                     .border_1()
-                                    .border_color(gpui::rgb(0xdee2e6))
+                                    .border_color(rgb(0xdee2e6))
                                     .rounded_md()
                                     .text_sm()
                                     .child(self.method_selector.clone())
@@ -219,8 +216,7 @@ impl Render for RequestPanel {
                     }),
             )
             .child(
-                div()
-                    .v_flex()
+                v_flex()
                     .gap_2()
                     .child(
                         TabBar::new("request_tabs")
