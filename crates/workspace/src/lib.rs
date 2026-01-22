@@ -432,8 +432,7 @@ impl WorkspaceRegistry {
             .unwrap();
 
         let spec = parse_openapi(content)?;
-        let result =
-            import_openapi_with_options(workspace_id, &spec, options, &workspace.folders)?;
+        let result = import_openapi_with_options(workspace_id, &spec, options, &workspace.folders)?;
 
         log::info!(
             "Importing {} folders, {} services, {} schemas",

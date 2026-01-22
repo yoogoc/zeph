@@ -6792,6 +6792,8 @@ dependencies = [
  "i18n",
  "log",
  "models",
+ "percent-encoding",
+ "regex",
  "reqwest",
  "rust-i18n",
  "smallvec",

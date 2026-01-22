@@ -3,6 +3,8 @@ use models::{DataSource, Folder, FolderType, Header, SearchParameter, SyncMeta};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+use crate::FolderQueryParameterStore;
+
 pub struct FolderStore<'a> {
     conn: &'a Connection,
 }
@@ -36,6 +38,23 @@ impl<'a> FolderStore<'a> {
                 common_search_params_json,
             ],
         )?;
+
+        // Save common query parameters to the folder_query_parameters table
+        if !folder.common_search_params.is_empty() {
+            let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+
+            for (index, param) in folder.common_search_params.iter().enumerate() {
+                folder_query_param_store.create(
+                    folder.id,
+                    param.key.as_ref(),
+                    param.value.as_ref(),
+                    true, // enabled by default
+                    None, // no description
+                    index as i32,
+                )?;
+            }
+        }
+
         Ok(())
     }
 
@@ -48,7 +67,29 @@ impl<'a> FolderStore<'a> {
         let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
             Ok(row_to_folder(row).unwrap())
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+
+        let mut folders: Vec<Folder> = rows.filter_map(|r| r.ok()).collect();
+
+        // Load common query parameters from the folder_query_parameters table
+        let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+
+        for folder in &mut folders {
+            // Load query parameters from the new table
+            let query_params = folder_query_param_store
+                .list_by_folder(folder.id)
+                .unwrap_or_default();
+
+            // Convert QueryParameter to SearchParameter for backward compatibility
+            folder.common_search_params = query_params
+                .iter()
+                .map(|qp| SearchParameter {
+                    key: qp.key.clone(),
+                    value: qp.value.clone(),
+                })
+                .collect();
+        }
+
+        Ok(folders)
     }
 
     pub fn get_folder_with_common_settings(&self, folder_id: Uuid) -> Result<Option<Folder>> {
@@ -62,7 +103,24 @@ impl<'a> FolderStore<'a> {
         })?;
 
         match rows.next() {
-            Some(Ok(folder)) => Ok(Some(folder)),
+            Some(Ok(mut folder)) => {
+                // Load common query parameters from the folder_query_parameters table
+                let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+                let query_params = folder_query_param_store
+                    .list_by_folder(folder.id)
+                    .unwrap_or_default();
+
+                // Convert QueryParameter to SearchParameter for backward compatibility
+                folder.common_search_params = query_params
+                    .iter()
+                    .map(|qp| SearchParameter {
+                        key: qp.key.clone(),
+                        value: qp.value.clone(),
+                    })
+                    .collect();
+
+                Ok(Some(folder))
+            }
             Some(Err(e)) => Err(e.into()),
             None => Ok(None),
         }
@@ -101,6 +159,25 @@ impl<'a> FolderStore<'a> {
         self.validate_search_params(&params)
             .with_context(|| "Invalid search parameters provided")?;
 
+        // Update the folder_query_parameters table
+        let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+
+        // Delete old parameters
+        folder_query_param_store.delete_by_folder(folder_id)?;
+
+        // Insert new parameters
+        for (index, param) in params.iter().enumerate() {
+            folder_query_param_store.create(
+                folder_id,
+                param.key.as_ref(),
+                param.value.as_ref(),
+                true, // enabled by default
+                None, // no description
+                index as i32,
+            )?;
+        }
+
+        // Also update the JSON field for backward compatibility
         let params_json = serde_json::to_string(&params)
             .with_context(|| "Failed to serialize search parameters to JSON")?;
         let now = chrono::Utc::now().timestamp();

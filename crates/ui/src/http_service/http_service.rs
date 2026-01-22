@@ -1,3 +1,4 @@
+use super::param_utils::{build_url_with_query_params, merge_query_params, substitute_path_params};
 use super::request_body::BodyType;
 use super::request_panel::{RequestPanel, RequestPanelEvent};
 use super::response_panel::ResponsePanel;
@@ -11,7 +12,7 @@ use gpui_component::resizable::{resizable_panel, v_resizable};
 use gpui_component::spinner::Spinner;
 use gpui_component::{v_flex, Sizable};
 use gpui_tokio::Tokio;
-use models::{Header, HttpConfig, HttpMethod, SearchParameter};
+use models::{Header, HttpConfig, HttpMethod, QueryParameter, SearchParameter};
 use smallvec::{smallvec, SmallVec};
 use uuid::Uuid;
 use workspace;
@@ -68,16 +69,58 @@ impl HttpService {
                 request_info.clone(),
             )
         });
+
+        // Get folder query parameters for inheritance
+        let folder_query_params = if let Some(folder_id) = folder_id {
+            let registry = workspace::WorkspaceRegistry::global(cx);
+            if let Some(workspace) = registry.read(cx).get_active_workspace() {
+                if let Some(folder) = workspace.folders.iter().find(|f| f.id == folder_id) {
+                    folder
+                        .common_search_params
+                        .iter()
+                        .map(|param| QueryParameter {
+                            key: param.key.clone(),
+                            value: param.value.clone(),
+                            enabled: true,
+                            description: None,
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                }
+            } else {
+                Vec::new()
+            }
+        } else {
+            Vec::new()
+        };
+
         let request_panel = cx.new(|cx| {
             RequestPanel::new(
                 config.method.clone(),
                 url.clone(),
+                Vec::new(), // Headers are managed separately, not stored in HttpConfig
+                config.query_params.clone(),
+                config.path_params.clone(),
+                folder_query_params,
                 use_base_url,
                 base_url.clone().unwrap_or_default(),
                 window,
                 cx,
             )
         });
+
+        // Subscribe to URL changes to update path parameters
+        let url_subscription = cx.subscribe_in(
+            &url,
+            window,
+            |this, url_entity, _event: &gpui_component::input::InputEvent, window, cx| {
+                let url_value = url_entity.read(cx).value().to_string();
+                this.request_panel.update(cx, |panel, cx| {
+                    panel.update_path_params_from_url(&url_value, window, cx);
+                });
+            },
+        );
 
         let subscription = cx.subscribe_in(&request_panel, window, |this, _, event, window, cx| {
             match event {
@@ -87,6 +130,10 @@ impl HttpService {
                 RequestPanelEvent::AddHeader => {
                     this.request_panel
                         .update(cx, |panel, cx| panel.add_header(window, cx));
+                }
+                RequestPanelEvent::AddQueryParam => {
+                    this.request_panel
+                        .update(cx, |panel, cx| panel.add_query_param(window, cx));
                 }
                 RequestPanelEvent::BodyTypeChanged(body_type) => {
                     this.update_content_type_header(*body_type, window, cx);
@@ -111,7 +158,7 @@ impl HttpService {
             base_url: base_url.unwrap_or_default(),
             use_base_url,
             folder_id,
-            _subscriptions: smallvec![subscription],
+            _subscriptions: smallvec![subscription, url_subscription],
         }
     }
 
@@ -134,11 +181,23 @@ impl HttpService {
         cx.notify();
     }
 
-    /// Gets the final URL by resolving base_url and user-entered path
+    /// Gets the final URL by resolving base_url, path params, and query params
     pub fn final_url(&self, cx: &Context<Self>) -> String {
         let path = self.url.read(cx).value().to_string();
-        let resolved_url = url_utils::resolve_url(&self.base_url, &path, self.use_base_url);
-        self.resolve_final_url(resolved_url, cx)
+        let mut resolved_url = url_utils::resolve_url(&self.base_url, &path, self.use_base_url);
+
+        // Apply path parameter substitution
+        let path_params = self.request_panel.read(cx).path_params(cx);
+        resolved_url = substitute_path_params(&resolved_url, &path_params);
+
+        // Apply query parameters (both folder and service level)
+        let query_params = self.resolve_final_query_params(cx);
+        resolved_url = build_url_with_query_params(&resolved_url, &query_params);
+
+        // Apply legacy folder search parameters (for backward compatibility)
+        resolved_url = self.resolve_final_url(resolved_url, cx);
+
+        resolved_url
     }
 
     /// Gets folder common headers from the workspace registry
@@ -172,6 +231,31 @@ impl HttpService {
                         .iter()
                         .filter(|param| self.is_valid_search_param(param))
                         .cloned()
+                        .collect();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    /// Gets folder common query parameters from the workspace registry
+    /// Converts SearchParameter to QueryParameter format
+    fn get_folder_common_query_params(&self, cx: &Context<Self>) -> Vec<QueryParameter> {
+        if let Some(folder_id) = self.folder_id {
+            let registry = workspace::WorkspaceRegistry::global(cx);
+            if let Some(workspace) = registry.read(cx).get_active_workspace() {
+                if let Some(folder) = workspace.folders.iter().find(|f| f.id == folder_id) {
+                    // Convert SearchParameter to QueryParameter
+                    return folder
+                        .common_search_params
+                        .iter()
+                        .filter(|param| self.is_valid_search_param(param))
+                        .map(|param| QueryParameter {
+                            key: param.key.clone(),
+                            value: param.value.clone(),
+                            enabled: true,
+                            description: None,
+                        })
                         .collect();
                 }
             }
@@ -260,6 +344,14 @@ impl HttpService {
         self.deduplicate_headers(final_headers)
     }
 
+    /// Resolves final query parameters by merging folder and service params
+    /// Service parameters override folder parameters with same key (Requirements 5.1, 5.2, 5.3)
+    fn resolve_final_query_params(&self, cx: &Context<Self>) -> Vec<QueryParameter> {
+        let folder_params = self.get_folder_common_query_params(cx);
+        let service_params = self.request_panel.read(cx).query_params(cx);
+        merge_query_params(&folder_params, &service_params)
+    }
+
     /// Resolves final URL by merging folder search parameters with the URL
     /// Service parameters take priority over folder parameters (Requirements 6.3, 6.4)
     fn resolve_final_url(&self, base_url: String, cx: &Context<Self>) -> String {
@@ -291,6 +383,32 @@ impl HttpService {
         // Reverse to restore original order
         final_headers.reverse();
         final_headers
+    }
+
+    /// Validates path parameters are complete
+    /// Returns error if any required path parameter is missing a value (Requirements 6.4, 9.3)
+    fn validate_path_params(&self, cx: &Context<Self>) -> Result<(), String> {
+        let url = self.url.read(cx).value().to_string();
+        let path_params = self.request_panel.read(cx).path_params(cx);
+
+        // Check if URL contains any unresolved placeholders
+        let url_after_substitution = substitute_path_params(&url, &path_params);
+
+        // If there are still placeholders in the URL, some params are missing
+        if url_after_substitution.contains('{') && url_after_substitution.contains('}') {
+            // Extract the missing parameter names
+            let missing_params: Vec<String> =
+                super::param_utils::detect_path_params(&url_after_substitution);
+
+            if !missing_params.is_empty() {
+                return Err(format!(
+                    "Missing required path parameters: {}",
+                    missing_params.join(", ")
+                ));
+            }
+        }
+
+        Ok(())
     }
 
     fn update_content_type_header(
@@ -328,6 +446,20 @@ impl HttpService {
     }
 
     fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // Validate path parameters before sending (Requirements 6.4, 9.3)
+        if let Err(error_msg) = self.validate_path_params(cx) {
+            // Display validation error in response panel
+            self.response.update(cx, |state, cx| {
+                state.set_value(
+                    format!("Validation Error: {}\n\nPlease provide values for all path parameters before sending the request.", error_msg),
+                    window,
+                    cx
+                )
+            });
+            cx.notify();
+            return;
+        }
+
         self.set_loading(true, cx);
         self.response
             .update(cx, |state, cx| state.set_value("", window, cx));
@@ -340,7 +472,7 @@ impl HttpService {
         let headers = self.resolve_final_headers(cx);
         let body = self.request_panel.read(cx).body(cx);
 
-        // Build request info with final URL and base_url usage indicator
+        // Build request info with final resolved URL (Requirements 6.1, 6.2, 9.3)
         let mut request_info_text = format!("{:?} {}\n", method, url);
         if self.use_base_url
             && !self.base_url.is_empty()

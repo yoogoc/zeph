@@ -3,6 +3,8 @@ use models::{DataSource, Service, ServiceType, SyncMeta};
 use rusqlite::{params, Connection};
 use uuid::Uuid;
 
+use crate::{PathParameterStore, QueryParameterStore};
+
 pub struct ServiceStore<'a> {
     conn: &'a Connection,
 }
@@ -35,6 +37,35 @@ impl<'a> ServiceStore<'a> {
                 service.sync.deleted,
             ],
         )?;
+
+        // Save query and path parameters for HTTP services
+        if let ServiceType::Http(ref http_config) = service.service_type {
+            let query_param_store = QueryParameterStore::new(self.conn);
+            let path_param_store = PathParameterStore::new(self.conn);
+
+            // Save query parameters
+            for (index, param) in http_config.query_params.iter().enumerate() {
+                query_param_store.create(
+                    service.id,
+                    param.key.as_ref(),
+                    param.value.as_ref(),
+                    param.enabled,
+                    param.description.as_ref().map(|s| s.as_ref()),
+                    index as i32,
+                )?;
+            }
+
+            // Save path parameters
+            for param in &http_config.path_params {
+                path_param_store.create(
+                    service.id,
+                    param.name.as_ref(),
+                    param.value.as_ref(),
+                    param.description.as_ref().map(|s| s.as_ref()),
+                )?;
+            }
+        }
+
         Ok(())
     }
 
@@ -57,6 +88,39 @@ impl<'a> ServiceStore<'a> {
                 service.sync.sync_version,
             ],
         )?;
+
+        // Update query and path parameters for HTTP services
+        if let ServiceType::Http(ref http_config) = service.service_type {
+            let query_param_store = QueryParameterStore::new(self.conn);
+            let path_param_store = PathParameterStore::new(self.conn);
+
+            // Delete old parameters
+            query_param_store.delete_by_service(service.id)?;
+            path_param_store.delete_by_service(service.id)?;
+
+            // Insert new query parameters
+            for (index, param) in http_config.query_params.iter().enumerate() {
+                query_param_store.create(
+                    service.id,
+                    param.key.as_ref(),
+                    param.value.as_ref(),
+                    param.enabled,
+                    param.description.as_ref().map(|s| s.as_ref()),
+                    index as i32,
+                )?;
+            }
+
+            // Insert new path parameters
+            for param in &http_config.path_params {
+                path_param_store.create(
+                    service.id,
+                    param.name.as_ref(),
+                    param.value.as_ref(),
+                    param.description.as_ref().map(|s| s.as_ref()),
+                )?;
+            }
+        }
+
         Ok(())
     }
 
@@ -77,7 +141,18 @@ impl<'a> ServiceStore<'a> {
 
         let mut rows = stmt.query(params![id.to_string()])?;
         if let Some(row) = rows.next()? {
-            Ok(Some(row_to_service(row)?))
+            let mut service = row_to_service(row)?;
+
+            // Load query and path parameters for HTTP services
+            if let ServiceType::Http(ref mut http_config) = service.service_type {
+                let query_param_store = QueryParameterStore::new(self.conn);
+                let path_param_store = PathParameterStore::new(self.conn);
+
+                http_config.query_params = query_param_store.list_by_service(id)?;
+                http_config.path_params = path_param_store.list_by_service(id)?;
+            }
+
+            Ok(Some(service))
         } else {
             Ok(None)
         }
@@ -92,7 +167,25 @@ impl<'a> ServiceStore<'a> {
         let rows = stmt.query_map(params![workspace_id.to_string()], |row| {
             Ok(row_to_service(row).unwrap())
         })?;
-        Ok(rows.filter_map(|r| r.ok()).collect())
+
+        let mut services: Vec<Service> = rows.filter_map(|r| r.ok()).collect();
+
+        // Load query and path parameters for all HTTP services
+        let query_param_store = QueryParameterStore::new(self.conn);
+        let path_param_store = PathParameterStore::new(self.conn);
+
+        for service in &mut services {
+            if let ServiceType::Http(ref mut http_config) = service.service_type {
+                http_config.query_params = query_param_store
+                    .list_by_service(service.id)
+                    .unwrap_or_default();
+                http_config.path_params = path_param_store
+                    .list_by_service(service.id)
+                    .unwrap_or_default();
+            }
+        }
+
+        Ok(services)
     }
 }
 

@@ -200,6 +200,25 @@ parameter:
   value:
     en: "Parameter Value"
     zh-CN: "值"
+  enabled:
+    en: "Enabled"
+    zh-CN: "启用"
+  disabled:
+    en: "Disabled"
+    zh-CN: "禁用"
+  toggle_tooltip:
+    en: "Enable or disable this parameter"
+    zh-CN: "启用或禁用此参数"
+  remove_tooltip:
+    en: "Remove this parameter"
+    zh-CN: "删除此参数"
+  encoding:
+    warning:
+      en: "Special characters will be URL-encoded automatically"
+      zh-CN: "特殊字符将自动进行 URL 编码"
+    error:
+      en: "Failed to encode parameter value"
+      zh-CN: "参数值编码失败"
   validate:
     name:
       not_empty:
@@ -282,6 +301,35 @@ request:
   add_header:
     en: "Add Header"
     zh-CN: "添加请求头"
+  query:
+    en: "Query"
+    zh-CN: "查询参数"
+  path:
+    en: "Path"
+    zh-CN: "路径参数"
+  add_param:
+    en: "Add Parameter"
+    zh-CN: "添加参数"
+  url_preview:
+    title:
+      en: "Final URL Preview"
+      zh-CN: "最终 URL 预览"
+    with_params:
+      en: "URL with parameters applied"
+      zh-CN: "应用参数后的 URL"
+  validation:
+    warning:
+      en: "Validation Warning"
+      zh-CN: "验证警告"
+    error:
+      en: "Validation Error"
+      zh-CN: "验证错误"
+    confirm_send:
+      en: "There are validation warnings. Do you want to send the request anyway?"
+      zh-CN: "存在验证警告。是否仍要发送请求？"
+    cannot_send:
+      en: "Cannot send request due to validation errors. Please fix the errors first."
+      zh-CN: "由于验证错误无法发送请求。请先修复错误。"
 
 response:
   body:
@@ -293,6 +341,76 @@ response:
   request:
     en: "Request"
     zh-CN: "请求"
+
+query_params:
+  title:
+    en: "Query Parameters"
+    zh-CN: "查询参数"
+  description:
+    en: "Query parameters are appended to the URL as key-value pairs (e.g., ?limit=10&page=2)"
+    zh-CN: "查询参数作为键值对附加到 URL 中（例如：?limit=10&page=2）"
+  empty:
+    en: "No query parameters added"
+    zh-CN: "无查询参数"
+  add:
+    en: "Add Query Parameter"
+    zh-CN: "添加查询参数"
+  inherited:
+    en: "Inherited from folder"
+    zh-CN: "继承自文件夹"
+  validate:
+    key:
+      not_empty:
+        en: "Query parameter key cannot be empty"
+        zh-CN: "查询参数键不能为空"
+      too_long:
+        en: "Query parameter key too long (max 100 characters)"
+        zh-CN: "查询参数键过长（最大 100 个字符）"
+      invalid_chars:
+        en: "Query parameter key contains invalid characters"
+        zh-CN: "查询参数键包含无效字符"
+      duplicate:
+        en: "Duplicate query parameter '%{key}'"
+        zh-CN: "重复的查询参数 '%{key}'"
+    value:
+      too_long:
+        en: "Query parameter value too long (max 2048 characters)"
+        zh-CN: "查询参数值过长（最大 2048 个字符）"
+
+path_params:
+  title:
+    en: "Path Parameters"
+    zh-CN: "路径参数"
+  description:
+    en: "Path parameters are placeholders in the URL path (e.g., /users/{userId}/posts/{postId})"
+    zh-CN: "路径参数是 URL 路径中的占位符（例如：/users/{userId}/posts/{postId}）"
+  empty:
+    en: "No path parameters detected in URL"
+    zh-CN: "URL 中未检测到路径参数"
+  required:
+    en: "Required"
+    zh-CN: "必填"
+  placeholder:
+    en: "Enter value for {%{name}}"
+    zh-CN: "输入 {%{name}} 的值"
+  validate:
+    missing_required:
+      en: "Path parameter '{%{name}}' is required but has no value"
+      zh-CN: "路径参数 '{%{name}}' 是必填的但没有值"
+    value:
+      not_empty:
+        en: "Path parameter value cannot be empty"
+        zh-CN: "路径参数值不能为空"
+      too_long:
+        en: "Path parameter value too long (max 256 characters)"
+        zh-CN: "路径参数值过长（最大 256 个字符）"
+  error:
+    unresolved:
+      en: "Some path parameters are not resolved. Please provide values for all required parameters."
+      zh-CN: "某些路径参数未解析。请为所有必填参数提供值。"
+    malformed_placeholder:
+      en: "Malformed path parameter placeholder detected: %{placeholder}"
+      zh-CN: "检测到格式错误的路径参数占位符：%{placeholder}"
 
 settings:
   request:
@@ -307,3 +425,42 @@ settings:
   proxy:
     en: "Proxy"
     zh-CN: "代理"
+
+url:
+  warning:
+    too_long:
+      en: "URL exceeds 2048 characters and may not work in all browsers"
+      zh-CN: "URL 超过 2048 个字符，可能在某些浏览器中无法使用"
+  error:
+    invalid:
+      en: "Invalid URL format"
+      zh-CN: "无效的 URL 格式"
+    missing_protocol:
+      en: "URL must start with http:// or https://"
+      zh-CN: "URL 必须以 http:// 或 https:// 开头"
+
+openapi:
+  import:
+    parameters:
+      success:
+        en: "Imported %{count} parameters from OpenAPI specification"
+        zh-CN: "从 OpenAPI 规范导入了 %{count} 个参数"
+      query:
+        en: "Query parameter"
+        zh-CN: "查询参数"
+      path:
+        en: "Path parameter"
+        zh-CN: "路径参数"
+      header:
+        en: "Header parameter"
+        zh-CN: "请求头参数"
+      cookie:
+        en: "Cookie parameter"
+        zh-CN: "Cookie 参数"
+    error:
+      invalid_location:
+        en: "Invalid parameter location: %{location}"
+        zh-CN: "无效的参数位置：%{location}"
+      missing_name:
+        en: "Parameter is missing required 'name' field"
+        zh-CN: "参数缺少必需的 'name' 字段"

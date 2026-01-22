@@ -1,6 +1,9 @@
 use super::method_selector::{MethodSelector, MethodSelectorEvent};
+use super::param_utils::detect_path_params;
 use super::request_body::{BodyType, RequestBody, RequestBodyEvent};
 use super::request_headers::RequestHeaders;
+use super::request_path_params::RequestPathParams;
+use super::request_query_params::RequestQueryParams;
 use super::url_utils;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -8,19 +11,22 @@ use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{h_flex, v_flex, Disableable, IconName, StyledExt};
-use models::{Header, HttpMethod};
+use models::{Header, HttpMethod, PathParameter, QueryParameter};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum RequestTab {
     #[default]
     Body,
     Headers,
+    Query,
+    Path,
 }
 
 #[allow(unused)]
 pub enum RequestPanelEvent {
     Send,
     AddHeader,
+    AddQueryParam,
     BodyTypeChanged(BodyType),
     MethodChanged(HttpMethod),
     ToggleBaseUrl,
@@ -31,6 +37,8 @@ pub struct RequestPanel {
     method_selector: Entity<MethodSelector>,
     body_panel: Entity<RequestBody>,
     pub headers_panel: Entity<RequestHeaders>,
+    query_params_panel: Entity<RequestQueryParams>,
+    path_params_panel: Entity<RequestPathParams>,
     active_tab: RequestTab,
     is_loading: bool,
     use_base_url: bool,
@@ -44,6 +52,10 @@ impl RequestPanel {
     pub fn new(
         method: HttpMethod,
         url: Entity<InputState>,
+        headers: Vec<Header>,
+        query_params: Vec<QueryParameter>,
+        path_params: Vec<PathParameter>,
+        folder_query_params: Vec<QueryParameter>,
         use_base_url: bool,
         base_url: SharedString,
         window: &mut Window,
@@ -51,7 +63,10 @@ impl RequestPanel {
     ) -> Self {
         let method_selector = cx.new(|cx| MethodSelector::new(method, window, cx));
         let body_panel = cx.new(|cx| RequestBody::new(window, cx));
-        let headers_panel = cx.new(|cx| RequestHeaders::new(Vec::new(), window, cx));
+        let headers_panel = cx.new(|cx| RequestHeaders::new(headers, window, cx));
+        let query_params_panel =
+            cx.new(|cx| RequestQueryParams::new(query_params, folder_query_params, window, cx));
+        let path_params_panel = cx.new(|cx| RequestPathParams::new(path_params, window, cx));
 
         let method_sub = cx.subscribe(&method_selector, |_this, _, event, cx| match event {
             MethodSelectorEvent::Changed(method) => {
@@ -68,16 +83,28 @@ impl RequestPanel {
 
         let headers_sub = cx.subscribe(&headers_panel, |_this, _, _event, _cx| {});
 
+        let query_params_sub = cx.subscribe(&query_params_panel, |_this, _, _event, _cx| {});
+
+        let path_params_sub = cx.subscribe(&path_params_panel, |_this, _, _event, _cx| {});
+
         Self {
             url,
             method_selector,
             body_panel,
             headers_panel,
+            query_params_panel,
+            path_params_panel,
             active_tab: RequestTab::default(),
             is_loading: false,
             use_base_url,
             base_url,
-            _subscriptions: vec![method_sub, body_sub, headers_sub],
+            _subscriptions: vec![
+                method_sub,
+                body_sub,
+                headers_sub,
+                query_params_sub,
+                path_params_sub,
+            ],
         }
     }
 
@@ -121,6 +148,31 @@ impl RequestPanel {
     pub fn method(&self, cx: &App) -> HttpMethod {
         self.method_selector.read(cx).method(cx)
     }
+
+    pub fn query_params(&self, cx: &App) -> Vec<QueryParameter> {
+        self.query_params_panel.read(cx).params(cx)
+    }
+
+    pub fn path_params(&self, cx: &App) -> Vec<PathParameter> {
+        self.path_params_panel.read(cx).params(cx)
+    }
+
+    pub fn add_query_param(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.query_params_panel
+            .update(cx, |panel, cx| panel.add_param(window, cx));
+    }
+
+    pub fn update_path_params_from_url(
+        &mut self,
+        url: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.path_params_panel.update(cx, |panel, cx| {
+            panel.update_from_url(url, window, cx);
+        });
+        cx.notify();
+    }
 }
 
 impl Render for RequestPanel {
@@ -132,6 +184,10 @@ impl Render for RequestPanel {
         let show_final_url_preview = use_base_url
             && !base_url.is_empty()
             && !url_utils::is_absolute_url(&self.url.read(cx).value().to_string());
+
+        // Detect if path parameters exist in the URL
+        let url_value = self.url.read(cx).value().to_string();
+        let has_path_params = !detect_path_params(&url_value).is_empty();
 
         let tooltip_text = if use_base_url {
             if base_url.is_empty() {
@@ -218,34 +274,57 @@ impl Render for RequestPanel {
             .child(
                 v_flex()
                     .gap_2()
-                    .child(
-                        TabBar::new("request_tabs")
+                    .child({
+                        let mut tab_bar = TabBar::new("request_tabs")
                             .with_variant(TabVariant::Underline)
                             .child(Tab::new().label(shared_t!("request.body")))
                             .child(Tab::new().label(shared_t!("request.header")))
+                            .child(Tab::new().label(shared_t!("request.query")));
+
+                        // Only show Path tab when path parameters are detected
+                        if has_path_params {
+                            tab_bar = tab_bar.child(Tab::new().label(shared_t!("request.path")));
+                        }
+
+                        tab_bar
                             .selected_index(active_tab as usize)
-                            .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                                this.active_tab = if *ix == 0 {
-                                    RequestTab::Body
-                                } else {
-                                    RequestTab::Headers
+                            .on_click(cx.listener(move |this, ix: &usize, _, cx| {
+                                this.active_tab = match *ix {
+                                    0 => RequestTab::Body,
+                                    1 => RequestTab::Headers,
+                                    2 => RequestTab::Query,
+                                    3 if has_path_params => RequestTab::Path,
+                                    _ => RequestTab::Body,
                                 };
                                 cx.notify();
                             }))
-                            .suffix(
-                                Button::new("add_header")
+                            .suffix(match active_tab {
+                                RequestTab::Headers => Button::new("add_header")
                                     .icon(IconName::Plus)
                                     .label(shared_t!("request.add_header"))
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(RequestPanelEvent::AddHeader);
                                     })),
-                            ),
-                    )
+                                RequestTab::Query => Button::new("add_query_param")
+                                    .icon(IconName::Plus)
+                                    .label(shared_t!("request.add_param"))
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(RequestPanelEvent::AddQueryParam);
+                                    })),
+                                _ => Button::new("placeholder").label("").disabled(true),
+                            })
+                    })
                     .when(active_tab == RequestTab::Body, |el| {
                         el.child(self.body_panel.clone())
                     })
                     .when(active_tab == RequestTab::Headers, |el| {
                         el.child(self.headers_panel.clone())
+                    })
+                    .when(active_tab == RequestTab::Query, |el| {
+                        el.child(self.query_params_panel.clone())
+                    })
+                    .when(active_tab == RequestTab::Path && has_path_params, |el| {
+                        el.child(self.path_params_panel.clone())
                     }),
             )
     }

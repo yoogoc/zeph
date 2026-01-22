@@ -1,7 +1,8 @@
 use anyhow::{anyhow, Result};
 use models::{
     Folder, FolderType, HttpConfig, HttpMethod, MediaContent, Parameter, ParameterLocation,
-    PropertyType, RequestBody, Response, Schema, SchemaProperty, SchemaType, Service, ServiceType,
+    PathParameter, PropertyType, QueryParameter, RequestBody, Response, Schema, SchemaProperty,
+    SchemaType, Service, ServiceType,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -717,6 +718,75 @@ pub fn import_openapi_with_options_and_existing_folders(
                     })
                     .collect();
 
+                // Extract query parameters from OpenAPI parameters array
+                // Requirement 7.1: Extract query parameter definitions
+                let query_params: Vec<QueryParameter> = op
+                    .parameters
+                    .iter()
+                    .filter(|p| p.location.as_str() == "query")
+                    .map(|p| {
+                        // Use example value if available, otherwise empty string
+                        let value: SharedString = p
+                            .schema
+                            .as_ref()
+                            .and_then(|s| {
+                                s.example.as_ref().map(|e| {
+                                    // Handle JSON value conversion - remove quotes for strings
+                                    match e {
+                                        serde_json::Value::String(s) => s.clone().into(),
+                                        _ => e.to_string().into(),
+                                    }
+                                })
+                            })
+                            .unwrap_or_else(|| "".into());
+
+                        let mut query_param = QueryParameter::new(p.name.clone(), value);
+
+                        // Requirement 7.3: Preserve parameter metadata (description)
+                        if let Some(desc) = &p.description {
+                            query_param = query_param.with_description(desc.clone());
+                        }
+
+                        // Requirement 7.3: Preserve required status by enabling required params
+                        query_param = query_param.with_enabled(p.required);
+
+                        query_param
+                    })
+                    .collect();
+
+                // Extract path parameters from OpenAPI parameters array
+                // Requirement 7.2: Extract path parameter definitions
+                let path_params: Vec<PathParameter> = op
+                    .parameters
+                    .iter()
+                    .filter(|p| p.location.as_str() == "path")
+                    .map(|p| {
+                        // Use example value if available, otherwise empty string
+                        let value: SharedString = p
+                            .schema
+                            .as_ref()
+                            .and_then(|s| {
+                                s.example.as_ref().map(|e| {
+                                    // Handle JSON value conversion - remove quotes for strings
+                                    match e {
+                                        serde_json::Value::String(s) => s.clone().into(),
+                                        _ => e.to_string().into(),
+                                    }
+                                })
+                            })
+                            .unwrap_or_else(|| "".into());
+
+                        let mut path_param = PathParameter::new(p.name.clone(), value);
+
+                        // Requirement 7.3: Preserve parameter metadata (description)
+                        if let Some(desc) = &p.description {
+                            path_param = path_param.with_description(desc.clone());
+                        }
+
+                        path_param
+                    })
+                    .collect();
+
                 let request_body = op.request_body.as_ref().map(|rb| RequestBody {
                     description: rb.description.clone(),
                     required: rb.required,
@@ -765,6 +835,8 @@ pub fn import_openapi_with_options_and_existing_folders(
                         method,
                         path: path.clone(),
                         parameters,
+                        query_params, // Requirement 7.1: Populate HttpConfig with extracted query parameters
+                        path_params, // Requirement 7.2: Populate HttpConfig with extracted path parameters
                         request_body,
                         responses,
                         ..Default::default()
@@ -1366,5 +1438,277 @@ fn convert_property_type(obj: &SchemaObject) -> PropertyType {
         }
         Some("object") => PropertyType::Object,
         _ => PropertyType::String,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_openapi_parameter_extraction() {
+        // Test OpenAPI spec with query and path parameters
+        let openapi_spec = r#"
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Test API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/users/{userId}/posts": {
+      "get": {
+        "summary": "Get user posts",
+        "parameters": [
+          {
+            "name": "userId",
+            "in": "path",
+            "description": "The user ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "123"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Number of posts to return",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "example": "10"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page number",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "example": "1"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+"#;
+
+        let workspace_id = Uuid::new_v4();
+        let spec = parse_openapi(openapi_spec).expect("Failed to parse OpenAPI spec");
+        let result = import_openapi(workspace_id, &spec, &[]).expect("Failed to import OpenAPI");
+
+        // Verify that we have one service
+        assert_eq!(result.services.len(), 1);
+
+        let service = &result.services[0];
+        if let ServiceType::Http(http_config) = &service.service_type {
+            // Verify path parameters were extracted
+            assert_eq!(http_config.path_params.len(), 1);
+            assert_eq!(http_config.path_params[0].name.as_ref(), "userId");
+            assert_eq!(http_config.path_params[0].value.as_ref(), "123");
+            assert_eq!(
+                http_config.path_params[0]
+                    .description
+                    .as_ref()
+                    .map(|s| s.as_ref()),
+                Some("The user ID")
+            );
+
+            // Verify query parameters were extracted
+            assert_eq!(http_config.query_params.len(), 2);
+
+            // Check first query parameter (limit)
+            let limit_param = http_config
+                .query_params
+                .iter()
+                .find(|p| p.key.as_ref() == "limit")
+                .expect("limit parameter not found");
+            assert_eq!(limit_param.value.as_ref(), "10");
+            assert_eq!(limit_param.enabled, false); // not required
+            assert_eq!(
+                limit_param.description.as_ref().map(|s| s.as_ref()),
+                Some("Number of posts to return")
+            );
+
+            // Check second query parameter (page)
+            let page_param = http_config
+                .query_params
+                .iter()
+                .find(|p| p.key.as_ref() == "page")
+                .expect("page parameter not found");
+            assert_eq!(page_param.value.as_ref(), "1");
+            assert_eq!(page_param.enabled, true); // required
+            assert_eq!(
+                page_param.description.as_ref().map(|s| s.as_ref()),
+                Some("Page number")
+            );
+
+            // Verify the original parameters array is still populated
+            assert_eq!(http_config.parameters.len(), 3);
+        } else {
+            panic!("Expected HTTP service type");
+        }
+    }
+
+    #[test]
+    fn test_openapi_parameter_extraction_without_examples() {
+        // Test OpenAPI spec with parameters but no example values
+        let openapi_spec = r#"
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Test API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/items/{itemId}": {
+      "get": {
+        "summary": "Get item",
+        "parameters": [
+          {
+            "name": "itemId",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "filter",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ]
+      }
+    }
+  }
+}
+"#;
+
+        let workspace_id = Uuid::new_v4();
+        let spec = parse_openapi(openapi_spec).expect("Failed to parse OpenAPI spec");
+        let result = import_openapi(workspace_id, &spec, &[]).expect("Failed to import OpenAPI");
+
+        assert_eq!(result.services.len(), 1);
+
+        let service = &result.services[0];
+        if let ServiceType::Http(http_config) = &service.service_type {
+            // Verify path parameters were extracted with empty values
+            assert_eq!(http_config.path_params.len(), 1);
+            assert_eq!(http_config.path_params[0].name.as_ref(), "itemId");
+            assert_eq!(http_config.path_params[0].value.as_ref(), "");
+
+            // Verify query parameters were extracted with empty values
+            assert_eq!(http_config.query_params.len(), 1);
+            assert_eq!(http_config.query_params[0].key.as_ref(), "filter");
+            assert_eq!(http_config.query_params[0].value.as_ref(), "");
+            assert_eq!(http_config.query_params[0].enabled, false);
+        } else {
+            panic!("Expected HTTP service type");
+        }
+    }
+
+    #[test]
+    fn test_openapi_parameter_location_mapping() {
+        // Test that parameter locations are correctly mapped
+        let openapi_spec = r#"
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Test API",
+    "version": "1.0.0"
+  },
+  "paths": {
+    "/test": {
+      "get": {
+        "summary": "Test endpoint",
+        "parameters": [
+          {
+            "name": "pathParam",
+            "in": "path",
+            "required": true,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "queryParam",
+            "in": "query",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "headerParam",
+            "in": "header",
+            "required": false,
+            "schema": { "type": "string" }
+          },
+          {
+            "name": "cookieParam",
+            "in": "cookie",
+            "required": false,
+            "schema": { "type": "string" }
+          }
+        ]
+      }
+    }
+  }
+}
+"#;
+
+        let workspace_id = Uuid::new_v4();
+        let spec = parse_openapi(openapi_spec).expect("Failed to parse OpenAPI spec");
+        let result = import_openapi(workspace_id, &spec, &[]).expect("Failed to import OpenAPI");
+
+        assert_eq!(result.services.len(), 1);
+
+        let service = &result.services[0];
+        if let ServiceType::Http(http_config) = &service.service_type {
+            // Verify only path parameters are in path_params
+            assert_eq!(http_config.path_params.len(), 1);
+            assert_eq!(http_config.path_params[0].name.as_ref(), "pathParam");
+
+            // Verify only query parameters are in query_params
+            assert_eq!(http_config.query_params.len(), 1);
+            assert_eq!(http_config.query_params[0].key.as_ref(), "queryParam");
+
+            // Verify all parameters are in the parameters array with correct locations
+            assert_eq!(http_config.parameters.len(), 4);
+
+            let path_param = http_config
+                .parameters
+                .iter()
+                .find(|p| p.name.as_ref() == "pathParam")
+                .expect("pathParam not found");
+            assert!(matches!(path_param.location, ParameterLocation::Path));
+
+            let query_param = http_config
+                .parameters
+                .iter()
+                .find(|p| p.name.as_ref() == "queryParam")
+                .expect("queryParam not found");
+            assert!(matches!(query_param.location, ParameterLocation::Query));
+
+            let header_param = http_config
+                .parameters
+                .iter()
+                .find(|p| p.name.as_ref() == "headerParam")
+                .expect("headerParam not found");
+            assert!(matches!(header_param.location, ParameterLocation::Header));
+
+            let cookie_param = http_config
+                .parameters
+                .iter()
+                .find(|p| p.name.as_ref() == "cookieParam")
+                .expect("cookieParam not found");
+            assert!(matches!(cookie_param.location, ParameterLocation::Cookie));
+        } else {
+            panic!("Expected HTTP service type");
+        }
     }
 }

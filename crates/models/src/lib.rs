@@ -312,6 +312,10 @@ pub struct HttpConfig {
     pub method: HttpMethod,
     pub path: SharedString,
     pub parameters: Vec<Parameter>,
+    #[serde(default)]
+    pub query_params: Vec<QueryParameter>,
+    #[serde(default)]
+    pub path_params: Vec<PathParameter>,
     pub request_body: Option<RequestBody>,
     pub responses: Vec<Response>,
     pub security: Vec<SharedString>,
@@ -329,6 +333,8 @@ impl Default for HttpConfig {
             method: HttpMethod::Get,
             path: "".into(),
             parameters: vec![],
+            query_params: vec![],
+            path_params: vec![],
             request_body: None,
             responses: vec![],
             security: vec![],
@@ -419,6 +425,61 @@ impl SearchParameter {
             key: key.into(),
             value: value.into(),
         }
+    }
+}
+
+// === Query and Path Parameters ===
+
+/// Query parameter with enable/disable state for HTTP requests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QueryParameter {
+    pub key: SharedString,
+    pub value: SharedString,
+    pub enabled: bool,
+    pub description: Option<SharedString>,
+}
+
+impl QueryParameter {
+    pub fn new(key: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
+        Self {
+            key: key.into(),
+            value: value.into(),
+            enabled: true,
+            description: None,
+        }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub fn with_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
+}
+
+/// Path parameter value storage for HTTP requests
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PathParameter {
+    pub name: SharedString,
+    pub value: SharedString,
+    pub description: Option<SharedString>,
+}
+
+impl PathParameter {
+    pub fn new(name: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
+        Self {
+            name: name.into(),
+            value: value.into(),
+            description: None,
+        }
+    }
+
+    pub fn with_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
+        self
     }
 }
 
@@ -565,4 +626,99 @@ pub enum PropertyType {
     Array(Box<PropertyType>),
     Ref(SharedString), // Reference to another schema by name
     Object,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_query_parameter_new() {
+        let param = QueryParameter::new("limit", "10");
+        assert_eq!(param.key.as_ref(), "limit");
+        assert_eq!(param.value.as_ref(), "10");
+        assert!(param.enabled);
+        assert!(param.description.is_none());
+    }
+
+    #[test]
+    fn test_query_parameter_with_enabled() {
+        let param = QueryParameter::new("page", "1").with_enabled(false);
+        assert!(!param.enabled);
+    }
+
+    #[test]
+    fn test_query_parameter_with_description() {
+        let param = QueryParameter::new("sort", "asc").with_description("Sort order");
+        assert_eq!(param.description.as_ref().unwrap().as_ref(), "Sort order");
+    }
+
+    #[test]
+    fn test_query_parameter_builder_chain() {
+        let param = QueryParameter::new("filter", "active")
+            .with_enabled(false)
+            .with_description("Filter by status");
+
+        assert_eq!(param.key.as_ref(), "filter");
+        assert_eq!(param.value.as_ref(), "active");
+        assert!(!param.enabled);
+        assert_eq!(
+            param.description.as_ref().unwrap().as_ref(),
+            "Filter by status"
+        );
+    }
+
+    #[test]
+    fn test_path_parameter_new() {
+        let param = PathParameter::new("userId", "123");
+        assert_eq!(param.name.as_ref(), "userId");
+        assert_eq!(param.value.as_ref(), "123");
+        assert!(param.description.is_none());
+    }
+
+    #[test]
+    fn test_path_parameter_with_description() {
+        let param = PathParameter::new("postId", "456").with_description("Post identifier");
+        assert_eq!(
+            param.description.as_ref().unwrap().as_ref(),
+            "Post identifier"
+        );
+    }
+
+    #[test]
+    fn test_http_config_default_includes_params() {
+        let config = HttpConfig::default();
+        assert!(config.query_params.is_empty());
+        assert!(config.path_params.is_empty());
+        assert_eq!(config.method, HttpMethod::Get);
+        assert!(config.use_base_url);
+    }
+
+    #[test]
+    fn test_http_config_with_params() {
+        let mut config = HttpConfig::default();
+        config.query_params.push(QueryParameter::new("limit", "10"));
+        config.path_params.push(PathParameter::new("id", "123"));
+
+        assert_eq!(config.query_params.len(), 1);
+        assert_eq!(config.path_params.len(), 1);
+        assert_eq!(config.query_params[0].key.as_ref(), "limit");
+        assert_eq!(config.path_params[0].name.as_ref(), "id");
+    }
+
+    #[test]
+    fn test_http_config_multiple_params() {
+        let mut config = HttpConfig::default();
+        config.query_params.push(QueryParameter::new("limit", "10"));
+        config
+            .query_params
+            .push(QueryParameter::new("page", "2").with_enabled(false));
+        config.path_params.push(PathParameter::new("userId", "123"));
+        config.path_params.push(PathParameter::new("postId", "456"));
+
+        assert_eq!(config.query_params.len(), 2);
+        assert_eq!(config.path_params.len(), 2);
+        assert!(config.query_params[0].enabled);
+        assert!(!config.query_params[1].enabled);
+    }
 }
