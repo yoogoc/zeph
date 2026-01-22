@@ -460,12 +460,21 @@ impl WorkspaceRegistry {
                             service.name = new_name.clone();
                             service.updated_at = chrono::Utc::now().timestamp();
                         }
-                        
+
                         // Update opened_services with the renamed service
                         // This ensures tab titles reflect the new name immediately
                         // Clone the updated service to avoid borrow checker issues
-                        if let Some(updated_service_ref) = workspace.services.iter().find(|s| s.id == service_id).cloned() {
-                            Self::update_opened_services_after_rename(workspace, service_id, &updated_service_ref);
+                        if let Some(updated_service_ref) = workspace
+                            .services
+                            .iter()
+                            .find(|s| s.id == service_id)
+                            .cloned()
+                        {
+                            Self::update_opened_services_after_rename(
+                                workspace,
+                                service_id,
+                                &updated_service_ref,
+                            );
                         }
                     }
 

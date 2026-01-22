@@ -1,0 +1,219 @@
+_version: 2
+
+common:
+  saving: "Saving..."
+  save: "Save"
+  cancel: "Cancel"
+  save_invalid: "Please fix validation errors before saving"
+  loading: "Loading..."
+  search: "Search"
+  home: "Home"
+  failed_open_window: "Failed to open window. Please restart the application."
+  refreshed: "Refreshed"
+  quit: "Quit"
+  restart: "Restart"
+  add: "Add"
+  key: "Key"
+  value: "Value"
+
+welcome:
+  title: "Welcome to ZEPH"
+  description: "Your API testing companion"
+
+global_settings:
+  title: "Settings"
+
+workspaces:
+  service: "Service"
+  schema: "Schema"
+  title: "Workspaces"
+  create: "Create Workspace"
+  create_sample_services: "Create Sample Services"
+  created_at: "Created %{at}"
+  default_description: "No description"
+  no_selected: "No workspace selected"
+
+sidebar:
+  service: "Service"
+  docs: "Docs"
+  history: "History"
+  settings: "Settings"
+
+folders:
+  fields:
+    name: "Name"
+    type: "Type"
+    description: "Description"
+    created_at: "Created"
+    updated_at: "Updated"
+  title: "Folder"
+  tab:
+    overview: "Overview"
+    common_headers: "Common Headers"
+    search_parameters: "Search Parameters"
+  no_selected:
+    title: "No folder selected"
+    description: "Select a folder from the sidebar to view its details"
+  no_info: "No folder information available"
+  no_description: "No description"
+  info: "Folder Information"
+  type:
+    service: "Service"
+    schema: "Schema"
+  statistics: "Statistics"
+  overview:
+    edit: "Edit"
+  validate:
+    name:
+      not_empty: "Folder name cannot be empty"
+      too_long: "Folder name too long (max 255 characters)"
+    description:
+      too_long: "Folder description too long (max 1000 characters)"
+
+header:
+  description: "Headers defined here will be automatically included in all HTTP requests within this folder."
+  add: "Add Header"
+  name: "Name"
+  value: "Value"
+  empty: "No headers added"
+  validate:
+    name:
+      not_empty: "Header name cannot be empty"
+      too_long: "Header name too long (max 100 characters)"
+      syntax_error: "Invalid header name format (use only letters, numbers, hyphens, and underscores)"
+      reserved: "'%{name}' is a reserved header and cannot be set manually"
+      duplicate: "Duplicate header '%{name}'"
+    value:
+      not_empty: "Header value cannot be empty"
+      too_long: "Header value too long (max 8192 characters)"
+      syntax_error: "Invalid header value format (contains invalid characters)"
+
+parameter:
+  description: "Parameters defined here will be automatically included as query parameters in all HTTP requests within this folder."
+  add: "Add Parameter"
+  name: "Parameter Name"
+  value: "Parameter Value"
+  enabled: "Enabled"
+  disabled: "Disabled"
+  toggle_tooltip: "Enable or disable this parameter"
+  remove_tooltip: "Remove this parameter"
+  encoding:
+    warning: "Special characters will be URL-encoded automatically"
+    error: "Failed to encode parameter value"
+  validate:
+    name:
+      not_empty: "Parameter name cannot be empty"
+      too_long: "Parameter name too long (max 100 characters)"
+      syntax_error: "Invalid parameter name format (use only letters, numbers, hyphens, underscores, and dots)"
+      reserved: "'%{name}' is a reserved parameter name"
+      duplicate: "Duplicate parameter '%{name}'"
+    value:
+      not_empty: "Parameter value cannot be empty"
+      too_long: "Parameter value too long (max 2048 characters)"
+      syntax_error: "Parameter value cannot contain newline characters"
+
+env:
+  title: "Environment"
+  create: "Create Environment"
+  not_found: "No environment found"
+  select: "Select Environment"
+  base_url: "Base URL"
+
+variable:
+  title: "Variables"
+  name: "Variable Name"
+  not_found: "No variables found"
+
+request:
+  no_body: "This request does not have a body"
+  base_url:
+    enabled_but_empty: "Base URL mode enabled (no base URL set)"
+    disabled: "Base URL mode disabled"
+  send: "Send"
+  sending: "Sending..."
+  body: "Body"
+  header: "Headers"
+  add_header: "Add Header"
+  query: "Query"
+  path: "Path"
+  add_param: "Add Parameter"
+  url_preview:
+    title: "Final URL Preview"
+    with_params: "URL with parameters applied"
+  validation:
+    warning: "Validation Warning"
+    error: "Validation Error"
+    confirm_send: "There are validation warnings. Do you want to send the request anyway?"
+    cannot_send: "Cannot send request due to validation errors. Please fix the errors first."
+
+response:
+  body: "Body"
+  header: "Headers"
+  request: "Request"
+
+query_params:
+  title: "Query Parameters"
+  description: "Query parameters are appended to the URL as key-value pairs (e.g., ?limit=10&page=2)"
+  empty: "No query parameters added"
+  add: "Add Query Parameter"
+  inherited: "Inherited from folder"
+  validate:
+    key:
+      not_empty: "Query parameter key cannot be empty"
+      too_long: "Query parameter key too long (max 100 characters)"
+      invalid_chars: "Query parameter key contains invalid characters"
+      duplicate: "Duplicate query parameter '%{key}'"
+    value:
+      too_long: "Query parameter value too long (max 2048 characters)"
+
+path_params:
+  title: "Path Parameters"
+  description: "Path parameters are placeholders in the URL path (e.g., /users/{userId}/posts/{postId})"
+  empty: "No path parameters detected in URL"
+  required: "Required"
+  placeholder: "Enter value for {%{name}}"
+  validate:
+    missing_required: "Path parameter '{%{name}}' is required but has no value"
+    value:
+      not_empty: "Path parameter value cannot be empty"
+      too_long: "Path parameter value too long (max 256 characters)"
+  error:
+    unresolved: "Some path parameters are not resolved. Please provide values for all required parameters."
+    malformed_placeholder: "Malformed path parameter placeholder detected: %{placeholder}"
+
+service:
+  unsaved_changes: "You have unsaved changes"
+  save:
+    success: "Service saved successfully"
+    error: "Failed to save service: %{error}"
+  confirm_close:
+    title: "Unsaved Changes"
+    message: "Do you want to save the changes you made to this service?"
+    save: "Save"
+    dont_save: "Don't Save"
+    cancel: "Cancel"
+
+settings:
+  request: "Request"
+  i18n: "Language"
+  theme: "Theme"
+  proxy: "Proxy"
+
+url:
+  warning:
+    too_long: "URL exceeds 2048 characters and may not work in all browsers"
+  error:
+    invalid: "Invalid URL format"
+    missing_protocol: "URL must start with http:// or https://"
+
+openapi:
+  import:
+    parameters:
+      success: "Imported %{count} parameters from OpenAPI specification"
+      query: "Query parameter"
+      path: "Path parameter"
+      header: "Header parameter"
+      cookie: "Cookie parameter"
+    error:
+      invalid_location: "Invalid parameter location: %{location}"
+      missing_name: "Parameter is missing required 'name' field"

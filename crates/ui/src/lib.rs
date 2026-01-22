@@ -31,7 +31,6 @@ pub use title_bar::*;
 pub use workspace_area::*;
 pub use workspace_content::*;
 
-i18n::init!();
-
+// Re-export i18n macros for use in this crate
 #[macro_use]
 extern crate i18n;

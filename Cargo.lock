@@ -2821,7 +2821,12 @@ dependencies = [
 name = "i18n"
 version = "0.0.1"
 dependencies = [
+ "dirs 5.0.1",
  "rust-i18n",
+ "serde",
+ "serde_yaml",
+ "thiserror 2.0.17",
+ "tracing",
 ]
 
 [[package]]

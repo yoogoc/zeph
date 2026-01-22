@@ -1,7 +1,7 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{h_flex, v_flex, StyledExt};
-use rust_i18n::t;
+use i18n::t;
 
 /// Event emitted by the confirmation dialog
 pub enum ConfirmDialogEvent {

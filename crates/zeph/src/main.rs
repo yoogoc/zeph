@@ -3,16 +3,19 @@ mod theme;
 
 use gpui::*;
 use gpui_component::*;
-use rust_i18n::t;
 use std::sync::Arc;
-
-i18n::init!();
 
 fn main() {
     // Initialize logging
     tracing_subscriber::fmt::init();
 
-    rust_i18n::set_locale("zh-CN");
+    // Initialize i18n system with runtime loading
+    if let Err(e) = i18n::init() {
+        tracing::error!("Failed to initialize i18n system: {}", e);
+        tracing::warn!("Continuing with degraded i18n support");
+    }
+
+    i18n::set_locale("zh-CN");
 
     let app = Application::new()
         .with_assets(gpui_component_assets::Assets)
@@ -42,6 +45,6 @@ fn main() {
             let app_view = application::init(window, cx);
             cx.new(|cx| Root::new(app_view, window, cx))
         })
-        .expect(t!("common.failed_open_window").as_ref());
+        .expect(&i18n::t("common.failed_open_window"));
     });
 }

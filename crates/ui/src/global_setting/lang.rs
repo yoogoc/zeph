@@ -9,10 +9,10 @@ pub struct LangSettings {
 
 impl LangSettings {
     pub fn new(window: &mut Window, cx: &mut App) -> LangSettings {
-        let locale = rust_i18n::locale();
-        let locales: Vec<SharedString> = rust_i18n::available_locales!()
+        let locale = i18n::locale();
+        let locales: Vec<SharedString> = i18n::available_locales()
             .iter()
-            .map(|l| SharedString::from(*l))
+            .map(|l| SharedString::from(l.clone()))
             .collect();
         let init_locale = locales.position(&SharedString::from(locale.to_string()));
         let select_state = cx.new(|cx| SelectState::new(locales, init_locale, window, cx));
@@ -20,7 +20,7 @@ impl LangSettings {
         let ss = cx.subscribe(&select_state, |_view, event, _cx| match event {
             SelectEvent::Confirm(value) => {
                 if let Some(selected_value) = value {
-                    rust_i18n::set_locale(&selected_value);
+                    i18n::set_locale(&selected_value);
                 } else {
                 }
             }
