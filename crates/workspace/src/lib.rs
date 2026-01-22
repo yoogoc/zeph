@@ -407,8 +407,34 @@ impl WorkspaceRegistry {
             .and_then(|w| w.folders.iter().find(|s| s.id == folder_id))
     }
 
+    /// Helper method to update opened_services after a service rename
+    /// Updates all ContentType::Service instances in opened_services that match the service_id
+    /// Also updates active_service if it matches the renamed service
+    /// Implements Requirements 1.2, 2.1, 2.3
+    fn update_opened_services_after_rename(
+        workspace: &mut Workspace,
+        service_id: Uuid,
+        updated_service: &Service,
+    ) {
+        // Update all matching services in opened_services
+        for content in workspace.opened_services.iter_mut() {
+            if let ContentType::Service(service) = content {
+                if service.id == service_id {
+                    *content = ContentType::Service(updated_service.clone());
+                }
+            }
+        }
+
+        // Update active_service if it matches the renamed service
+        if let Some(ContentType::Service(active)) = &workspace.active_service {
+            if active.id == service_id {
+                workspace.active_service = Some(ContentType::Service(updated_service.clone()));
+            }
+        }
+    }
+
     /// Rename a service
-    /// Implements Requirements 1.3, 1.4
+    /// Implements Requirements 1.1, 1.2, 1.3, 1.4, 2.2
     pub fn rename_service(
         &mut self,
         service_id: Uuid,
@@ -427,11 +453,19 @@ impl WorkspaceRegistry {
                 Ok(_) => {
                     // Database update successful, now update the in-memory workspace
                     if let Some(workspace) = self.get_active_workspace_mut() {
+                        // Update the service in workspace.services
                         if let Some(service) =
                             workspace.services.iter_mut().find(|s| s.id == service_id)
                         {
                             service.name = new_name.clone();
                             service.updated_at = chrono::Utc::now().timestamp();
+                        }
+                        
+                        // Update opened_services with the renamed service
+                        // This ensures tab titles reflect the new name immediately
+                        // Clone the updated service to avoid borrow checker issues
+                        if let Some(updated_service_ref) = workspace.services.iter().find(|s| s.id == service_id).cloned() {
+                            Self::update_opened_services_after_rename(workspace, service_id, &updated_service_ref);
                         }
                     }
 
