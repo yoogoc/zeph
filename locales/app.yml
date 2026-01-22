@@ -7,6 +7,9 @@ common:
   save:
     en: "Save"
     zh-CN: "保存"
+  cancel:
+    en: "Cancel"
+    zh-CN: "取消"
   save_invalid:
     en: "Please fix validation errors before saving"
     zh-CN: "请修复验证错误后再保存"
@@ -130,6 +133,9 @@ folders:
   no_info:
     en: "No folder information available"
     zh-CN: "无"
+  no_description:
+    en: "No description"
+    zh-CN: "无描述"
   info:
     en: "Folder Information"
     zh-CN: "文件夹信息"
@@ -143,6 +149,22 @@ folders:
   statistics:
     en: "Statistics"
     zh-CN: "统计"
+  overview:
+    edit:
+      en: "Edit"
+      zh-CN: "编辑"
+  validate:
+    name:
+      not_empty:
+        en: "Folder name cannot be empty"
+        zh-CN: "文件夹名称不能为空"
+      too_long:
+        en: "Folder name too long (max 255 characters)"
+        zh-CN: "文件夹名称过长 (最大 255 个字符)"
+    description:
+      too_long:
+        en: "Folder description too long (max 1000 characters)"
+        zh-CN: "文件夹描述过长 (最大 1000 个字符)"
 
 header:
   description:
@@ -411,6 +433,34 @@ path_params:
     malformed_placeholder:
       en: "Malformed path parameter placeholder detected: %{placeholder}"
       zh-CN: "检测到格式错误的路径参数占位符：%{placeholder}"
+
+service:
+  unsaved_changes:
+    en: "You have unsaved changes"
+    zh-CN: "有未保存的修改"
+  save:
+    success:
+      en: "Service saved successfully"
+      zh-CN: "服务保存成功"
+    error:
+      en: "Failed to save service: %{error}"
+      zh-CN: "保存服务失败：%{error}"
+  confirm_close:
+    title:
+      en: "Unsaved Changes"
+      zh-CN: "未保存的修改"
+    message:
+      en: "Do you want to save the changes you made to this service?"
+      zh-CN: "是否保存对此服务所做的修改？"
+    save:
+      en: "Save"
+      zh-CN: "保存"
+    dont_save:
+      en: "Don't Save"
+      zh-CN: "不保存"
+    cancel:
+      en: "Cancel"
+      zh-CN: "取消"
 
 settings:
   request:

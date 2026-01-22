@@ -1,6 +1,7 @@
 mod popup_menu;
 mod utils;
 
+use crate::rename_dialog::{EntityType, RenameDialog, RenameDialogEvent};
 use crate::ws_sidebar::popup_menu::popup_menu;
 use crate::{ImportConfig, SimpleImportConfig};
 use gpui::prelude::FluentBuilder;
@@ -22,6 +23,7 @@ pub struct WorkspaceSidebar {
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
     workspace: Option<Workspace>,
+    rename_dialog: Option<Entity<RenameDialog>>,
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +44,13 @@ pub enum WorkspaceSidebarEvent {
     // Import dialog events
     ShowImportDialog(Option<Uuid>), // Show import dialog with optional target folder ID
     ExecuteImport(SimpleImportConfig), // Execute import with the given configuration
+    // Rename events - Requirements 1.1, 1.2, 2.1, 2.2
+    // These events are emitted when the user initiates a rename from the context menu
+    RenameService(Uuid),
+    RenameFolder(Uuid),
+    // Confirm rename events - emitted when the user confirms the new name in the dialog
+    ConfirmRenameService(Uuid, SharedString),
+    ConfirmRenameFolder(Uuid, SharedString),
 }
 
 impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
@@ -54,6 +63,7 @@ impl WorkspaceSidebar {
             hovered: None,
             workspace: None,
             tree_map: HashMap::new(),
+            rename_dialog: None,
         }
     }
 
@@ -95,6 +105,117 @@ impl WorkspaceSidebar {
         cx: &mut Context<Self>,
     ) {
         cx.emit(event);
+    }
+
+    /// Show the rename dialog for a Service
+    /// Implements Requirements 1.1, 1.2
+    pub fn show_rename_service_dialog(
+        &mut self,
+        service_id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Find the service in the workspace to get its current name
+        if let Some(workspace) = &self.workspace {
+            if let Some(service) = workspace.services.iter().find(|s| s.id == service_id) {
+                let current_name = service.name.clone();
+
+                // Create the rename dialog
+                let dialog =
+                    cx.new(|cx| RenameDialog::new(current_name, EntityType::Service, window, cx));
+
+                // Subscribe to dialog events
+                cx.subscribe_in(&dialog, window, move |this, _dialog, event, _window, cx| {
+                    match event {
+                        RenameDialogEvent::Confirm(new_name) => {
+                            // Close the dialog
+                            this.rename_dialog = None;
+                            // Emit event to update the service name in the database
+                            // This will be handled by the parent component (WorkspaceArea)
+                            cx.emit(WorkspaceSidebarEvent::ConfirmRenameService(
+                                service_id,
+                                new_name.clone(),
+                            ));
+                            cx.notify();
+                        }
+                        RenameDialogEvent::Cancel => {
+                            // Just close the dialog
+                            this.rename_dialog = None;
+                            cx.notify();
+                        }
+                    }
+                })
+                .detach();
+
+                self.rename_dialog = Some(dialog);
+                cx.notify();
+            }
+        }
+    }
+
+    /// Show the rename dialog for a Folder
+    /// Implements Requirements 2.1, 2.2
+    pub fn show_rename_folder_dialog(
+        &mut self,
+        folder_id: Uuid,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        // Find the folder in the workspace to get its current name
+        if let Some(workspace) = &self.workspace {
+            if let Some(folder) = workspace.folders.iter().find(|f| f.id == folder_id) {
+                let current_name = folder.name.clone();
+
+                // Create the rename dialog
+                let dialog =
+                    cx.new(|cx| RenameDialog::new(current_name, EntityType::Folder, window, cx));
+
+                // Subscribe to dialog events
+                cx.subscribe_in(&dialog, window, move |this, _dialog, event, _window, cx| {
+                    match event {
+                        RenameDialogEvent::Confirm(new_name) => {
+                            // Close the dialog
+                            this.rename_dialog = None;
+                            // Emit event to update the folder name in the database
+                            // This will be handled by the parent component (WorkspaceArea)
+                            cx.emit(WorkspaceSidebarEvent::ConfirmRenameFolder(
+                                folder_id,
+                                new_name.clone(),
+                            ));
+                            cx.notify();
+                        }
+                        RenameDialogEvent::Cancel => {
+                            // Just close the dialog
+                            this.rename_dialog = None;
+                            cx.notify();
+                        }
+                    }
+                })
+                .detach();
+
+                self.rename_dialog = Some(dialog);
+                cx.notify();
+            }
+        }
+    }
+
+    /// Handle rename events by showing the appropriate dialog
+    /// Implements Requirements 1.1, 1.2, 2.1, 2.2
+    pub fn handle_rename_event(
+        &mut self,
+        event: &WorkspaceSidebarEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match event {
+            WorkspaceSidebarEvent::RenameService(service_id) => {
+                self.show_rename_service_dialog(*service_id, window, cx);
+            }
+            WorkspaceSidebarEvent::RenameFolder(folder_id) => {
+                self.show_rename_folder_dialog(*folder_id, window, cx);
+            }
+            _ => {}
+        }
     }
 
     // 渲染树节点
@@ -204,5 +325,20 @@ impl Render for WorkspaceSidebar {
                                  // })),
                     ),
             )
+            // Render rename dialog as an overlay if it exists
+            .when_some(self.rename_dialog.clone(), |el, dialog| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(rgba(0x00000080)) // Semi-transparent black overlay
+                        .child(dialog),
+                )
+            })
     }
 }

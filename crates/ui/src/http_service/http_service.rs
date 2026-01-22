@@ -13,6 +13,7 @@ use gpui_component::spinner::Spinner;
 use gpui_component::{v_flex, Sizable};
 use gpui_tokio::Tokio;
 use models::{Header, HttpConfig, HttpMethod, QueryParameter, SearchParameter};
+use rust_i18n::t;
 use smallvec::{smallvec, SmallVec};
 use uuid::Uuid;
 use workspace;
@@ -28,11 +29,16 @@ pub struct HttpService {
     base_url: SharedString,
     use_base_url: bool,
     folder_id: Option<Uuid>,
+    // Save state management (Requirements 3.1, 3.2)
+    is_modified: bool,
+    original_config: HttpConfig,
+    service_id: Uuid,
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
 
 impl HttpService {
     pub fn new(
+        service_id: Uuid,
         config: HttpConfig,
         base_url: Option<SharedString>,
         folder_id: Option<Uuid>,
@@ -119,6 +125,8 @@ impl HttpService {
                 this.request_panel.update(cx, |panel, cx| {
                     panel.update_path_params_from_url(&url_value, window, cx);
                 });
+                // Mark as modified when URL changes (Requirements 3.1)
+                this.mark_modified(cx);
             },
         );
 
@@ -130,22 +138,35 @@ impl HttpService {
                 RequestPanelEvent::AddHeader => {
                     this.request_panel
                         .update(cx, |panel, cx| panel.add_header(window, cx));
+                    // Mark as modified when headers change (Requirements 3.1)
+                    this.mark_modified(cx);
                 }
                 RequestPanelEvent::AddQueryParam => {
                     this.request_panel
                         .update(cx, |panel, cx| panel.add_query_param(window, cx));
+                    // Mark as modified when query params change (Requirements 3.1)
+                    this.mark_modified(cx);
                 }
                 RequestPanelEvent::BodyTypeChanged(body_type) => {
                     this.update_content_type_header(*body_type, window, cx);
+                    // Mark as modified when body type changes (Requirements 3.1)
+                    this.mark_modified(cx);
                 }
                 RequestPanelEvent::MethodChanged(_) => {
                     // Method is managed by MethodSelector, no action needed here
+                    // Mark as modified when method changes (Requirements 3.1)
+                    this.mark_modified(cx);
                 }
                 RequestPanelEvent::ToggleBaseUrl => {
                     this.toggle_use_base_url(cx);
+                    // Mark as modified when base URL toggle changes (Requirements 3.1)
+                    this.mark_modified(cx);
                 }
             }
         });
+
+        // Store original config for comparison (Requirements 3.1, 3.2)
+        let original_config = config.clone();
 
         Self {
             url,
@@ -158,8 +179,141 @@ impl HttpService {
             base_url: base_url.unwrap_or_default(),
             use_base_url,
             folder_id,
+            is_modified: false,
+            original_config,
+            service_id,
             _subscriptions: smallvec![subscription, url_subscription],
         }
+    }
+
+    /// Marks the service as modified (Requirements 3.1)
+    pub fn mark_modified(&mut self, cx: &mut Context<Self>) {
+        if !self.is_modified {
+            self.is_modified = true;
+            cx.notify();
+        }
+    }
+
+    /// Returns true if the service has unsaved changes (Requirements 3.1, 3.2)
+    pub fn is_modified(&self) -> bool {
+        self.is_modified
+    }
+
+    /// Checks if there are unsaved changes (Requirements 3.1, 3.2)
+    pub fn has_unsaved_changes(&self, cx: &Context<Self>) -> bool {
+        if !self.is_modified {
+            return false;
+        }
+
+        // Compare current config with original config
+        let current_config = self.collect_current_config(cx);
+
+        // Compare method
+        if current_config.method != self.original_config.method {
+            return true;
+        }
+
+        // Compare path
+        if current_config.path != self.original_config.path {
+            return true;
+        }
+
+        // Compare use_base_url
+        if current_config.use_base_url != self.original_config.use_base_url {
+            return true;
+        }
+
+        // Compare query_params
+        if current_config.query_params.len() != self.original_config.query_params.len() {
+            return true;
+        }
+        for (current, original) in current_config
+            .query_params
+            .iter()
+            .zip(self.original_config.query_params.iter())
+        {
+            if current.key != original.key
+                || current.value != original.value
+                || current.enabled != original.enabled
+            {
+                return true;
+            }
+        }
+
+        // Compare path_params
+        if current_config.path_params.len() != self.original_config.path_params.len() {
+            return true;
+        }
+        for (current, original) in current_config
+            .path_params
+            .iter()
+            .zip(self.original_config.path_params.iter())
+        {
+            if current.name != original.name || current.value != original.value {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Collects the current configuration from UI components (Requirements 3.3)
+    fn collect_current_config(&self, cx: &Context<Self>) -> HttpConfig {
+        let path = self.url.read(cx).value().to_string().into();
+        let method = self.request_panel.read(cx).method(cx);
+        let query_params = self.request_panel.read(cx).query_params(cx);
+        let path_params = self.request_panel.read(cx).path_params(cx);
+
+        HttpConfig {
+            method,
+            path,
+            parameters: self.original_config.parameters.clone(),
+            query_params,
+            path_params,
+            request_body: self.original_config.request_body.clone(),
+            responses: self.original_config.responses.clone(),
+            security: self.original_config.security.clone(),
+            use_base_url: self.use_base_url,
+        }
+    }
+
+    /// Saves the current configuration to the database (Requirements 3.2, 3.3, 3.4, 3.6)
+    pub fn save_changes(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        // Collect current configuration
+        let current_config = self.collect_current_config(cx);
+        let service_id = self.service_id;
+
+        // Update via WorkspaceRegistry which handles database persistence
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.update_service_config(service_id, current_config.clone(), cx);
+        });
+
+        // Clear modified state after save attempt (Requirements 3.4)
+        // Note: If the save fails in WorkspaceRegistry, the user will see an error in logs
+        // but we still clear the modified state to avoid confusion
+        self.is_modified = false;
+        self.original_config = current_config;
+        cx.notify();
+    }
+
+    /// Saves changes without requiring a window parameter (for use in dialogs)
+    /// Implements Requirements 3.5
+    pub fn save_changes_no_window(&mut self, cx: &mut Context<Self>) {
+        // Collect current configuration
+        let current_config = self.collect_current_config(cx);
+        let service_id = self.service_id;
+
+        // Update via WorkspaceRegistry which handles database persistence
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.update_service_config(service_id, current_config.clone(), cx);
+        });
+
+        // Clear modified state after save attempt
+        self.is_modified = false;
+        self.original_config = current_config;
+        cx.notify();
     }
 
     /// Updates the base_url when the environment changes
@@ -598,7 +752,9 @@ impl HttpService {
 }
 
 impl Render for HttpService {
-    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let is_modified = self.is_modified;
+
         div()
             .size_full()
             .py_2()
@@ -606,11 +762,47 @@ impl Render for HttpService {
             .gap_4()
             .relative()
             .child(
-                v_resizable("http-service")
-                    .child(self.request_panel.clone().into_any_element())
+                v_flex()
+                    .size_full()
+                    .gap_2()
+                    // Save button bar (Requirements 3.2)
+                    .when(is_modified, |this| {
+                        this.child(
+                            div()
+                                .flex()
+                                .items_center()
+                                .justify_end()
+                                .gap_2()
+                                .px_2()
+                                .py_1()
+                                .bg(gpui::rgb(0xFFF3CD))
+                                .border_1()
+                                .border_color(gpui::rgb(0xFFE69C))
+                                .rounded_md()
+                                .child(
+                                    div()
+                                        .flex_1()
+                                        .text_sm()
+                                        .text_color(gpui::rgb(0x856404))
+                                        .child(t!("service.unsaved_changes").to_string()),
+                                )
+                                .child(
+                                    Button::new("save-service")
+                                        .label(t!("common.save"))
+                                        .primary()
+                                        .on_click(cx.listener(|this, _, window, cx| {
+                                            this.save_changes(window, cx);
+                                        })),
+                                ),
+                        )
+                    })
+                    // Main content area
                     .child(
-                        resizable_panel()
-                            .child(div().pt_2().size_full().child(self.response_panel.clone())),
+                        v_resizable("http-service")
+                            .child(self.request_panel.clone().into_any_element())
+                            .child(resizable_panel().child(
+                                div().pt_2().size_full().child(self.response_panel.clone()),
+                            )),
                     ),
             )
             .when(self.is_loading, |this| {

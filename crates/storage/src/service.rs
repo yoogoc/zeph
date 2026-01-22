@@ -14,7 +14,36 @@ impl<'a> ServiceStore<'a> {
         Self { conn }
     }
 
+    /// Validate service name
+    /// Returns an error if the name is empty, only whitespace, or exceeds 255 characters
+    fn validate_name(&self, name: &str) -> Result<()> {
+        let trimmed = name.trim();
+        if trimmed.is_empty() {
+            anyhow::bail!("Service name cannot be empty or only whitespace");
+        }
+        if name.len() > 255 {
+            anyhow::bail!("Service name cannot exceed 255 characters");
+        }
+        Ok(())
+    }
+
+    /// Validate service description
+    /// Returns an error if the description exceeds 1000 characters
+    fn validate_description(&self, description: &str) -> Result<()> {
+        if description.len() > 1000 {
+            anyhow::bail!("Service description cannot exceed 1000 characters");
+        }
+        Ok(())
+    }
+
     pub fn insert(&self, service: &Service) -> Result<()> {
+        // Validate name before inserting
+        self.validate_name(service.name.as_ref())?;
+
+        // Validate description if present
+        if let Some(ref desc) = service.description {
+            self.validate_description(desc.as_ref())?;
+        }
         let (service_type, config) = serialize_service_type(&service.service_type)?;
 
         self.conn.execute(
@@ -70,7 +99,18 @@ impl<'a> ServiceStore<'a> {
     }
 
     pub fn update(&self, service: &Service) -> Result<()> {
+        // Validate name before updating
+        self.validate_name(service.name.as_ref())?;
+
+        // Validate description if present
+        if let Some(ref desc) = service.description {
+            self.validate_description(desc.as_ref())?;
+        }
+
         let (service_type, config) = serialize_service_type(&service.service_type)?;
+
+        // Ensure updated_at is set to current time
+        let updated_at = chrono::Utc::now().timestamp();
 
         self.conn.execute(
             "UPDATE services SET folder_id = ?2, name = ?3, description = ?4, service_type = ?5, config = ?6, deprecated = ?7, sort_order = ?8, updated_at = ?9, sync_version = ?10
@@ -84,7 +124,7 @@ impl<'a> ServiceStore<'a> {
                 config,
                 service.deprecated,
                 service.sort_order,
-                service.updated_at,
+                updated_at,
                 service.sync.sync_version,
             ],
         )?;
@@ -254,5 +294,337 @@ fn str_to_source(s: &str) -> DataSource {
     match s {
         "remote" => DataSource::Remote,
         _ => DataSource::Local,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::Database;
+    use models::{HttpConfig, ServiceType};
+
+    #[test]
+    fn test_validate_name_empty_string() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let result = store.validate_name("");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be empty or only whitespace"));
+    }
+
+    #[test]
+    fn test_validate_name_only_whitespace() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let result = store.validate_name("   ");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be empty or only whitespace"));
+    }
+
+    #[test]
+    fn test_validate_name_tabs_and_newlines() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let result = store.validate_name("\t\n  \t");
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be empty or only whitespace"));
+    }
+
+    #[test]
+    fn test_validate_name_exceeds_255_chars() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let long_name = "a".repeat(256);
+        let result = store.validate_name(&long_name);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot exceed 255 characters"));
+    }
+
+    #[test]
+    fn test_validate_name_exactly_255_chars() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let name = "a".repeat(255);
+        let result = store.validate_name(&name);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_name_valid() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let result = store.validate_name("Valid Service Name");
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_validate_description_exceeds_1000_chars() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let long_desc = "a".repeat(1001);
+        let result = store.validate_description(&long_desc);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot exceed 1000 characters"));
+    }
+
+    #[test]
+    fn test_validate_description_exactly_1000_chars() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+
+        let desc = "a".repeat(1000);
+        let result = store.validate_description(&desc);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_insert_service_with_empty_name_fails() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        let mut service = Service::new(
+            workspace_id,
+            "Valid Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        service.name = "".into();
+
+        let result = store.insert(&service);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be empty or only whitespace"));
+    }
+
+    #[test]
+    fn test_insert_service_with_whitespace_name_fails() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        let mut service = Service::new(
+            workspace_id,
+            "Valid Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        service.name = "   ".into();
+
+        let result = store.insert(&service);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be empty or only whitespace"));
+    }
+
+    #[test]
+    fn test_insert_service_with_long_name_fails() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        let long_name = "a".repeat(256);
+        let mut service = Service::new(
+            workspace_id,
+            "Valid Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        service.name = long_name.into();
+
+        let result = store.insert(&service);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot exceed 255 characters"));
+    }
+
+    #[test]
+    fn test_update_service_with_empty_name_fails() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        // Create a valid service first
+        let service = Service::new(
+            workspace_id,
+            "Valid Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        store.insert(&service).expect("Failed to insert service");
+
+        // Try to update with empty name
+        let mut updated_service = service.clone();
+        updated_service.name = "".into();
+
+        let result = store.update(&updated_service);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be empty or only whitespace"));
+    }
+
+    #[test]
+    fn test_update_service_with_whitespace_name_fails() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        // Create a valid service first
+        let service = Service::new(
+            workspace_id,
+            "Valid Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        store.insert(&service).expect("Failed to insert service");
+
+        // Try to update with whitespace name
+        let mut updated_service = service.clone();
+        updated_service.name = "   \t\n  ".into();
+
+        let result = store.update(&updated_service);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot be empty or only whitespace"));
+    }
+
+    #[test]
+    fn test_update_service_name_success() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        // Create a service
+        let service = Service::new(
+            workspace_id,
+            "Original Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        let service_id = service.id;
+        store.insert(&service).expect("Failed to insert service");
+
+        // Update the name
+        let mut updated_service = service.clone();
+        updated_service.name = "New Name".into();
+
+        let result = store.update(&updated_service);
+        assert!(result.is_ok());
+
+        // Verify the name was updated
+        let loaded_service = store
+            .get(service_id)
+            .expect("Failed to get service")
+            .expect("Service not found");
+        assert_eq!(loaded_service.name.as_ref(), "New Name");
+    }
+
+    #[test]
+    fn test_update_service_updates_timestamp() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        // Create a service with a specific timestamp
+        let mut service = Service::new(
+            workspace_id,
+            "Test Service",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        let service_id = service.id;
+        // Set an old timestamp
+        service.updated_at = chrono::Utc::now().timestamp() - 100;
+        let original_updated_at = service.updated_at;
+        store.insert(&service).expect("Failed to insert service");
+
+        // Update the service
+        let mut updated_service = service.clone();
+        updated_service.name = "Updated Name".into();
+
+        store
+            .update(&updated_service)
+            .expect("Failed to update service");
+
+        // Verify the timestamp was updated to current time
+        let loaded_service = store
+            .get(service_id)
+            .expect("Failed to get service")
+            .expect("Service not found");
+        assert!(loaded_service.updated_at > original_updated_at);
+    }
+
+    #[test]
+    fn test_insert_service_with_long_description_fails() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        let long_desc = "a".repeat(1001);
+        let mut service = Service::new(
+            workspace_id,
+            "Valid Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        service.description = Some(long_desc.into());
+
+        let result = store.insert(&service);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot exceed 1000 characters"));
+    }
+
+    #[test]
+    fn test_update_service_with_long_description_fails() {
+        let db = Database::open_in_memory().expect("Failed to create database");
+        let store = ServiceStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+
+        // Create a valid service first
+        let service = Service::new(
+            workspace_id,
+            "Valid Name",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        store.insert(&service).expect("Failed to insert service");
+
+        // Try to update with long description
+        let long_desc = "a".repeat(1001);
+        let mut updated_service = service.clone();
+        updated_service.description = Some(long_desc.into());
+
+        let result = store.update(&updated_service);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("cannot exceed 1000 characters"));
     }
 }

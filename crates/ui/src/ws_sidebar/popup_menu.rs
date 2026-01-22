@@ -18,6 +18,7 @@ pub fn popup_menu(
     let mut create_service = None;
     let mut create_schema = None;
     let mut create_folder = None;
+    let mut rename = None;
     let mut delete = None;
     let mut import_openapi = None;
     match id {
@@ -47,6 +48,8 @@ pub fn popup_menu(
         }
         TreeId::Service(id) => {
             detail = Some(WorkspaceSidebarEvent::OpenService(id));
+            // Implements Requirements 1.1, 2.1 - Add Rename menu item for Service
+            rename = Some(WorkspaceSidebarEvent::RenameService(id));
             delete = Some(WorkspaceSidebarEvent::DeleteService(id));
         }
         TreeId::Schema(id) => {
@@ -66,6 +69,8 @@ pub fn popup_menu(
             ));
             // Implements Requirement 1.1, 1.2 - Import OpenAPI with target folder preset
             import_openapi = Some(WorkspaceSidebarEvent::ShowImportDialog(Some(id.clone())));
+            // Implements Requirements 1.1, 2.1 - Add Rename menu item for Folder
+            rename = Some(WorkspaceSidebarEvent::RenameFolder(id.clone()));
             delete = Some(WorkspaceSidebarEvent::DeleteFolder(id));
         }
         TreeId::SchemaFolder(id) => {
@@ -79,6 +84,8 @@ pub fn popup_menu(
                 Some(id),
                 FolderType::Schema,
             ));
+            // Implements Requirements 1.1, 2.1 - Add Rename menu item for Folder
+            rename = Some(WorkspaceSidebarEvent::RenameFolder(id));
             delete = Some(WorkspaceSidebarEvent::DeleteFolder(id));
         }
     }
@@ -147,6 +154,19 @@ pub fn popup_menu(
                 },
             )),
         )
+    }
+
+    // Rename menu item
+    // Implements Requirements 1.1, 2.1 - Add Rename menu item for Service and Folder
+    if let Some(event) = rename {
+        menu = menu.item(PopupMenuItem::new("Rename").on_click(window.listener_for(
+            &view,
+            move |this, _, _window, cx| {
+                this.handle_context_menu_event(event.clone(), cx);
+
+                cx.stop_propagation();
+            },
+        )))
     }
 
     if let Some(event) = delete {

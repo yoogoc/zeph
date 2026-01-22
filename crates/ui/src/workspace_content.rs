@@ -1,8 +1,8 @@
 use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
 use crate::{
-    EnvironmentSelector, EnvironmentSelectorEvent, FolderDetailPage, FolderDetailPageEvent,
-    HttpService, ImportConfig, ServiceTabs, ServiceTabsEvent, SimpleImportConfig,
-    SimpleImportDialog, SimpleImportDialogEvent,
+    ConfirmDialog, ConfirmDialogEvent, EnvironmentSelector, EnvironmentSelectorEvent,
+    FolderDetailPage, FolderDetailPageEvent, HttpService, ImportConfig, ServiceTabs,
+    ServiceTabsEvent, SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent,
 };
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
@@ -24,6 +24,10 @@ pub struct WorkspaceContent {
     // Import dialog state
     import_dialog: Option<Entity<SimpleImportDialog>>,
     show_import_dialog: bool,
+    // Confirmation dialog state (Requirements 3.5)
+    confirm_dialog: Option<Entity<ConfirmDialog>>,
+    show_confirm_dialog: bool,
+    pending_close_content: Option<ContentType>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -40,6 +44,7 @@ impl WorkspaceContent {
             let sidebar = sidebar.clone();
             let service_tabs = service_tabs.clone();
             let env_selector = env_selector.clone();
+            let folder_detail = folder_detail_page.clone();
             move |_this, registry, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
                     sidebar.update(cx, |s, cx| {
@@ -55,16 +60,38 @@ impl WorkspaceContent {
                     });
                 }
                 _ => {
+                    // Handle WorkspaceEvent::Reload and WorkspaceEvent::Close
+                    // Update all UI components with the latest workspace data
+                    // Implements Requirements 1.4, 2.4, 8.1, 8.2
                     sidebar.update(cx, |s, cx| {
                         if let Some(workspace) = registry.read(cx).get_active_workspace() {
                             s.set_workspace(workspace.clone(), cx);
                         }
+                    });
+                    service_tabs.update(cx, |s, cx| {
+                        if let Some(workspace) = registry.read(cx).get_active_workspace() {
+                            s.set_workspace(workspace.clone());
+                        }
+                        cx.notify();
                     });
                     env_selector.update(cx, |s, cx| {
                         if let Some(workspace) = registry.read(cx).get_active_workspace() {
                             s.set_workspace(workspace.clone());
                         }
                         cx.notify();
+                    });
+                    // Update folder detail page if a folder is currently being displayed
+                    folder_detail.update(cx, |detail, cx| {
+                        if let Some(folder_id) = detail.get_folder_id() {
+                            if let Some(workspace) = registry.read(cx).get_active_workspace() {
+                                // Find the updated folder in the workspace
+                                if let Some(updated_folder) =
+                                    workspace.folders.iter().find(|f| f.id == folder_id)
+                                {
+                                    detail.set_folder(Some(updated_folder.clone()), cx);
+                                }
+                            }
+                        }
                     });
                     cx.notify()
                 }
@@ -115,11 +142,16 @@ impl WorkspaceContent {
                     this.set_active_service(ct.clone(), cx);
                 }
                 ServiceTabsEvent::Close(ct) => this.close_service(ct.clone(), cx),
+                ServiceTabsEvent::Rename(ct, new_name) => {
+                    this.rename_service_from_tab(ct.clone(), new_name.clone(), cx);
+                }
             }
         });
 
-        let sidebar_sub =
-            cx.subscribe_in(&sidebar, window, |this, _, event, window, cx| match event {
+        let sidebar_sub = cx.subscribe_in(
+            &sidebar,
+            window,
+            |this, sidebar_entity, event, window, cx| match event {
                 WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
                 WorkspaceSidebarEvent::OpenSchema(_id) => {}
                 WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
@@ -157,7 +189,28 @@ impl WorkspaceContent {
                 WorkspaceSidebarEvent::ExecuteImport(config) => {
                     this.execute_simple_import(config.clone(), cx);
                 }
-            });
+                // Rename events - show the rename dialog
+                // Implements Requirements 1.1, 1.2, 2.1, 2.2
+                WorkspaceSidebarEvent::RenameService(_id) => {
+                    sidebar_entity.update(cx, |sidebar, cx| {
+                        sidebar.handle_rename_event(event, window, cx);
+                    });
+                }
+                WorkspaceSidebarEvent::RenameFolder(_id) => {
+                    sidebar_entity.update(cx, |sidebar, cx| {
+                        sidebar.handle_rename_event(event, window, cx);
+                    });
+                }
+                // Confirm rename events - update the database
+                // Implements Requirements 1.3, 2.3
+                WorkspaceSidebarEvent::ConfirmRenameService(id, new_name) => {
+                    this.rename_service(*id, new_name.clone(), cx);
+                }
+                WorkspaceSidebarEvent::ConfirmRenameFolder(id, new_name) => {
+                    this.rename_folder(*id, new_name.clone(), cx);
+                }
+            },
+        );
 
         let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
             EnvironmentSelectorEvent::SelectEnvironment(id) => this.select_environment(*id, cx),
@@ -187,6 +240,9 @@ impl WorkspaceContent {
                 FolderDetailPageEvent::UpdateSearchParams(folder_id, params) => {
                     this.update_folder_search_params(*folder_id, params.clone(), cx)
                 }
+                FolderDetailPageEvent::UpdateFolderInfo(folder_id, name, description) => {
+                    this.update_folder_info(*folder_id, name.clone(), description.clone(), cx)
+                }
             });
 
         Self {
@@ -200,6 +256,9 @@ impl WorkspaceContent {
             folder_detail: folder_detail_page,
             import_dialog: None,
             show_import_dialog: false,
+            confirm_dialog: None,
+            show_confirm_dialog: false,
+            pending_close_content: None,
             _subscriptions: vec![
                 registry_sub,
                 registry_sub2,
@@ -234,6 +293,7 @@ impl WorkspaceContent {
                     if !self.http_services.contains_key(&service.id) {
                         let http_service = cx.new(|cx| {
                             HttpService::new(
+                                service.id,
                                 config.clone(),
                                 base_url.clone(),
                                 service.folder_id,
@@ -523,6 +583,38 @@ impl WorkspaceContent {
         });
     }
 
+    /// Rename a service
+    /// Implements Requirements 1.3
+    fn rename_service(&mut self, service_id: Uuid, new_name: SharedString, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.rename_service(service_id, new_name, cx);
+        });
+    }
+
+    /// Rename a folder
+    /// Implements Requirements 2.3
+    fn rename_folder(&mut self, folder_id: Uuid, new_name: SharedString, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.rename_folder(folder_id, new_name, cx);
+        });
+    }
+
+    /// Rename a service from tab editing
+    /// Implements Requirements 1.7: Tab title editing saves to database
+    fn rename_service_from_tab(
+        &mut self,
+        content_type: ContentType,
+        new_name: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        // Only handle Service content type
+        if let ContentType::Service(service) = content_type {
+            self.rename_service(service.id, new_name, cx);
+        }
+    }
+
     fn open_service(&mut self, id: Uuid, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
@@ -534,6 +626,76 @@ impl WorkspaceContent {
     }
 
     fn close_service(&mut self, ct: ContentType, cx: &mut Context<Self>) {
+        // Check if this is a Service with unsaved changes (Requirements 3.5)
+        if let ContentType::Service(service) = &ct {
+            if let Some(http_service) = self.http_services.get(&service.id) {
+                // Check if the service has unsaved changes by reading its is_modified flag
+                let has_unsaved = http_service.read_with(cx, |service, _cx| service.is_modified());
+
+                if has_unsaved {
+                    // Show confirmation dialog
+                    self.show_close_confirmation(ct.clone(), cx);
+                    return;
+                }
+            }
+        }
+
+        // No unsaved changes, proceed with close
+        self.do_close_service(ct, cx);
+    }
+
+    /// Shows the confirmation dialog for closing a service with unsaved changes
+    /// Implements Requirements 3.5
+    fn show_close_confirmation(&mut self, ct: ContentType, cx: &mut Context<Self>) {
+        let dialog = cx.new(|_cx| ConfirmDialog::unsaved_changes());
+
+        // Subscribe to dialog events
+        let dialog_sub = cx.subscribe(&dialog, move |this, _, event: &ConfirmDialogEvent, cx| {
+            match event {
+                ConfirmDialogEvent::Confirm => {
+                    // Save and then close
+                    if let Some(pending_ct) = this.pending_close_content.take() {
+                        if let ContentType::Service(service) = &pending_ct {
+                            if let Some(http_service) = this.http_services.get(&service.id) {
+                                http_service.update(cx, |service, cx| {
+                                    service.save_changes_no_window(cx);
+                                });
+                            }
+                        }
+                        this.do_close_service(pending_ct, cx);
+                    }
+                    this.show_confirm_dialog = false;
+                    this.confirm_dialog = None;
+                    cx.notify();
+                }
+                ConfirmDialogEvent::Discard => {
+                    // Close without saving
+                    if let Some(pending_ct) = this.pending_close_content.take() {
+                        this.do_close_service(pending_ct, cx);
+                    }
+                    this.show_confirm_dialog = false;
+                    this.confirm_dialog = None;
+                    cx.notify();
+                }
+                ConfirmDialogEvent::Cancel => {
+                    // Cancel the close operation
+                    this.pending_close_content = None;
+                    this.show_confirm_dialog = false;
+                    this.confirm_dialog = None;
+                    cx.notify();
+                }
+            }
+        });
+
+        self._subscriptions.push(dialog_sub);
+        self.confirm_dialog = Some(dialog);
+        self.show_confirm_dialog = true;
+        self.pending_close_content = Some(ct);
+        cx.notify();
+    }
+
+    /// Actually closes the service (without checking for unsaved changes)
+    fn do_close_service(&mut self, ct: ContentType, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, {
             let ct = ct.clone();
@@ -605,6 +767,19 @@ impl WorkspaceContent {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
             registry.update_folder_search_params(folder_id, params, cx);
+        });
+    }
+
+    fn update_folder_info(
+        &mut self,
+        folder_id: Uuid,
+        name: String,
+        description: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            registry.update_folder_info(folder_id, name, description, cx);
         });
     }
 
@@ -694,6 +869,28 @@ impl WorkspaceContent {
                             ),
                     ),
                 );
+
+            // Render with confirmation dialog overlay if visible (Requirements 3.5)
+            if self.show_confirm_dialog {
+                if let Some(dialog) = &self.confirm_dialog {
+                    return div()
+                        .size_full()
+                        .relative()
+                        .child(main_content)
+                        .child(
+                            // Modal overlay
+                            div()
+                                .absolute()
+                                .inset_0()
+                                .bg(rgba(0x00000080))
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .child(dialog.clone()),
+                        )
+                        .into_any_element();
+                }
+            }
 
             // Render with import dialog overlay if visible
             if self.show_import_dialog {

@@ -1,5 +1,5 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
-use log::error;
+use log::{error, info};
 use models::{
     ContentType, CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig, HttpMethod,
     Service, ServiceType, Workspace,
@@ -407,6 +407,151 @@ impl WorkspaceRegistry {
             .and_then(|w| w.folders.iter().find(|s| s.id == folder_id))
     }
 
+    /// Rename a service
+    /// Implements Requirements 1.3, 1.4
+    pub fn rename_service(
+        &mut self,
+        service_id: Uuid,
+        new_name: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        // Update the database first
+        let service_store = ServiceStore::new(self.db.conn());
+
+        // Get the current service to update it
+        if let Some(service) = self.get_service(service_id).cloned() {
+            let mut updated_service = service.clone();
+            updated_service.name = new_name.clone();
+
+            match service_store.update(&updated_service) {
+                Ok(_) => {
+                    // Database update successful, now update the in-memory workspace
+                    if let Some(workspace) = self.get_active_workspace_mut() {
+                        if let Some(service) =
+                            workspace.services.iter_mut().find(|s| s.id == service_id)
+                        {
+                            service.name = new_name.clone();
+                            service.updated_at = chrono::Utc::now().timestamp();
+                        }
+                    }
+
+                    // Notify all subscribers that the workspace has been updated
+                    // This will trigger UI updates in Sidebar, ServiceTabs, and detail pages
+                    cx.emit(WorkspaceEvent::Reload);
+                    cx.notify();
+
+                    info!(
+                        "Successfully renamed service {} to '{}'",
+                        service_id, new_name
+                    );
+                }
+                Err(e) => {
+                    // Database update failed, log the error
+                    error!("Failed to rename service {}: {}", service_id, e);
+
+                    // Don't update the in-memory state if database update failed
+                    // This ensures consistency between database and UI
+                }
+            }
+        } else {
+            error!("Service {} not found in workspace", service_id);
+        }
+    }
+
+    /// Update service configuration
+    /// Implements Requirements 3.2, 3.3, 3.4, 3.6
+    pub fn update_service_config(
+        &mut self,
+        service_id: Uuid,
+        new_config: HttpConfig,
+        cx: &mut Context<Self>,
+    ) {
+        // Update the database first
+        let service_store = ServiceStore::new(self.db.conn());
+
+        // Get the current service to update it
+        if let Some(service) = self.get_service(service_id).cloned() {
+            let mut updated_service = service.clone();
+            updated_service.service_type = ServiceType::Http(new_config);
+
+            match service_store.update(&updated_service) {
+                Ok(_) => {
+                    // Database update successful, now update the in-memory workspace
+                    if let Some(workspace) = self.get_active_workspace_mut() {
+                        if let Some(service) =
+                            workspace.services.iter_mut().find(|s| s.id == service_id)
+                        {
+                            service.service_type = updated_service.service_type.clone();
+                            service.updated_at = chrono::Utc::now().timestamp();
+                        }
+                    }
+
+                    // Notify all subscribers that the workspace has been updated
+                    // This will trigger UI updates in all components
+                    cx.emit(WorkspaceEvent::Reload);
+                    cx.notify();
+
+                    info!(
+                        "Successfully updated service configuration for {}",
+                        service_id
+                    );
+                }
+                Err(e) => {
+                    // Database update failed, log the error
+                    error!(
+                        "Failed to update service configuration {}: {}",
+                        service_id, e
+                    );
+
+                    // Don't update the in-memory state if database update failed
+                    // This ensures consistency between database and UI
+                }
+            }
+        } else {
+            error!("Service {} not found in workspace", service_id);
+        }
+    }
+
+    /// Rename a folder
+    /// Implements Requirements 2.3
+    pub fn rename_folder(
+        &mut self,
+        folder_id: Uuid,
+        new_name: SharedString,
+        cx: &mut Context<Self>,
+    ) {
+        // Update the database first
+        let folder_store = FolderStore::new(self.db.conn());
+
+        match folder_store.update(folder_id, Some(new_name.as_ref()), None, None) {
+            Ok(updated_folder) => {
+                // Database update successful, now update the in-memory workspace
+                if let Some(workspace) = self.get_active_workspace_mut() {
+                    if let Some(folder) = workspace.folders.iter_mut().find(|f| f.id == folder_id) {
+                        folder.name = updated_folder.name.clone();
+                        folder.updated_at = updated_folder.updated_at;
+                    }
+                }
+
+                // Notify all subscribers that the workspace has been updated
+                cx.emit(WorkspaceEvent::Reload);
+                cx.notify();
+
+                info!(
+                    "Successfully renamed folder {} to '{}'",
+                    folder_id, new_name
+                );
+            }
+            Err(e) => {
+                // Database update failed, log the error
+                error!("Failed to rename folder {}: {}", folder_id, e);
+
+                // Optionally, we could emit an error event here in the future
+                // For now, just log the error and don't update the in-memory state
+            }
+        }
+    }
+
     // === OpenAPI Import ===
 
     pub fn import_openapi(&mut self, content: &str, cx: &mut Context<Self>) -> anyhow::Result<()> {
@@ -639,5 +784,33 @@ impl WorkspaceRegistry {
             }
         }
         cx.emit(WorkspaceEvent::Reload);
+    }
+
+    pub fn update_folder_info(
+        &mut self,
+        folder_id: Uuid,
+        name: String,
+        description: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let folder_store = FolderStore::new(self.db.conn());
+
+        // Update the folder in the database
+        match folder_store.update(folder_id, Some(&name), Some(description.as_deref()), None) {
+            Ok(updated_folder) => {
+                // Update the in-memory workspace data
+                if let Some(workspace) = self.get_active_workspace_mut() {
+                    if let Some(folder) = workspace.folders.iter_mut().find(|f| f.id == folder_id) {
+                        folder.name = updated_folder.name;
+                        folder.description = updated_folder.description;
+                        folder.updated_at = updated_folder.updated_at;
+                    }
+                }
+                cx.emit(WorkspaceEvent::Reload);
+            }
+            Err(e) => {
+                error!("Failed to update folder info: {}", e);
+            }
+        }
     }
 }

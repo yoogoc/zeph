@@ -325,6 +325,141 @@ impl<'a> FolderStore<'a> {
 
         Ok(())
     }
+
+    /// Update folder basic information
+    ///
+    /// Updates one or more fields of a folder. Pass `None` to leave a field unchanged.
+    /// Pass `Some(None)` to set a nullable field to NULL.
+    ///
+    /// # Arguments
+    /// * `folder_id` - The UUID of the folder to update
+    /// * `name` - Optional new name for the folder
+    /// * `description` - Optional new description (Some(None) to clear, Some(Some(desc)) to set)
+    /// * `parent_id` - Optional new parent_id (Some(None) to clear, Some(Some(id)) to set)
+    ///
+    /// # Returns
+    /// The updated Folder object with all fields populated
+    ///
+    /// # Errors
+    /// Returns an error if:
+    /// - The folder_id does not exist or has been deleted
+    /// - The name validation fails (empty, whitespace-only, or too long)
+    /// - The description validation fails (too long)
+    /// - Database operation fails
+    pub fn update(
+        &self,
+        folder_id: Uuid,
+        name: Option<&str>,
+        description: Option<Option<&str>>,
+        parent_id: Option<Option<Uuid>>,
+    ) -> Result<Folder> {
+        // Validate name if provided
+        if let Some(name_str) = name {
+            self.validate_name(name_str)
+                .with_context(|| "Invalid folder name")?;
+        }
+
+        // Validate description if provided
+        if let Some(Some(desc_str)) = description {
+            self.validate_description(desc_str)
+                .with_context(|| "Invalid folder description")?;
+        }
+
+        // Build dynamic UPDATE query based on which fields are provided
+        let mut updates = Vec::new();
+        let mut params_vec: Vec<Box<dyn rusqlite::ToSql>> = Vec::new();
+
+        if let Some(name_str) = name {
+            updates.push("name = ?");
+            params_vec.push(Box::new(name_str.to_string()));
+        }
+
+        if let Some(desc_opt) = description {
+            updates.push("description = ?");
+            params_vec.push(Box::new(desc_opt.map(|s| s.to_string())));
+        }
+
+        if let Some(parent_opt) = parent_id {
+            updates.push("parent_id = ?");
+            params_vec.push(Box::new(parent_opt.map(|id| id.to_string())));
+        }
+
+        // Always update the updated_at timestamp
+        let now = chrono::Utc::now().timestamp();
+        updates.push("updated_at = ?");
+        params_vec.push(Box::new(now));
+
+        // If no fields to update, just return the current folder
+        if updates.len() == 1 {
+            // Only updated_at would be updated, so just fetch and return
+            return self
+                .get_folder_with_common_settings(folder_id)?
+                .ok_or_else(|| anyhow!("Folder not found or has been deleted: {}", folder_id));
+        }
+
+        // Build the SQL query
+        let sql = format!(
+            "UPDATE folders SET {} WHERE id = ? AND deleted = 0",
+            updates.join(", ")
+        );
+
+        // Add folder_id as the last parameter
+        params_vec.push(Box::new(folder_id.to_string()));
+
+        // Convert to references for rusqlite
+        let params_refs: Vec<&dyn rusqlite::ToSql> =
+            params_vec.iter().map(|p| p.as_ref()).collect();
+
+        // Execute the update
+        let rows_affected = self
+            .conn
+            .execute(&sql, params_refs.as_slice())
+            .with_context(|| format!("Failed to update folder {}", folder_id))?;
+
+        if rows_affected == 0 {
+            return Err(anyhow!(
+                "Folder not found or has been deleted: {}",
+                folder_id
+            ));
+        }
+
+        // Fetch and return the updated folder
+        self.get_folder_with_common_settings(folder_id)?
+            .ok_or_else(|| anyhow!("Failed to retrieve updated folder: {}", folder_id))
+    }
+
+    /// Validate folder name
+    fn validate_name(&self, name: &str) -> Result<()> {
+        let trimmed = name.trim();
+
+        // Check for empty or whitespace-only names
+        if trimmed.is_empty() {
+            return Err(anyhow!("Folder name cannot be empty or whitespace-only"));
+        }
+
+        // Check length limit (255 characters)
+        if trimmed.len() > 255 {
+            return Err(anyhow!(
+                "Folder name is too long (max 255 characters, got {})",
+                trimmed.len()
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Validate folder description
+    fn validate_description(&self, description: &str) -> Result<()> {
+        // Check length limit (1000 characters)
+        if description.len() > 1000 {
+            return Err(anyhow!(
+                "Folder description is too long (max 1000 characters, got {})",
+                description.len()
+            ));
+        }
+
+        Ok(())
+    }
 }
 
 fn row_to_folder(row: &rusqlite::Row) -> Result<Folder> {
@@ -715,5 +850,289 @@ mod tests {
         assert_eq!(retrieved_folder.common_search_params.len(), 1);
         assert_eq!(retrieved_folder.common_search_params[0].key, "limit");
         assert_eq!(retrieved_folder.common_search_params[0].value, "100");
+    }
+
+    #[test]
+    fn test_update_folder_name() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Original Name", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Update only the name
+        let updated_folder = folder_store
+            .update(folder_id, Some("New Name"), None, None)
+            .expect("Failed to update folder name");
+
+        assert_eq!(updated_folder.name.as_ref(), "New Name");
+        assert_eq!(updated_folder.id, folder_id);
+        assert_eq!(updated_folder.workspace_id, workspace_id);
+    }
+
+    #[test]
+    fn test_update_folder_description() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Test Folder", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Update only the description
+        let updated_folder = folder_store
+            .update(folder_id, None, Some(Some("New description")), None)
+            .expect("Failed to update folder description");
+
+        assert_eq!(
+            updated_folder.description.as_ref().map(|s| s.as_ref()),
+            Some("New description")
+        );
+        assert_eq!(updated_folder.name.as_ref(), "Test Folder");
+    }
+
+    #[test]
+    fn test_update_folder_clear_description() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let mut folder = Folder::new(workspace_id, "Test Folder", None);
+        folder.description = Some("Original description".into());
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Clear the description
+        let updated_folder = folder_store
+            .update(folder_id, None, Some(None), None)
+            .expect("Failed to clear folder description");
+
+        assert!(updated_folder.description.is_none());
+        assert_eq!(updated_folder.name.as_ref(), "Test Folder");
+    }
+
+    #[test]
+    fn test_update_folder_parent_id() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let parent_folder = Folder::new(workspace_id, "Parent Folder", None);
+        let parent_id = parent_folder.id;
+        let child_folder = Folder::new(workspace_id, "Child Folder", None);
+        let child_id = child_folder.id;
+
+        folder_store
+            .insert(&parent_folder)
+            .expect("Failed to insert parent folder");
+        folder_store
+            .insert(&child_folder)
+            .expect("Failed to insert child folder");
+
+        // Update parent_id
+        let updated_folder = folder_store
+            .update(child_id, None, None, Some(Some(parent_id)))
+            .expect("Failed to update folder parent_id");
+
+        assert_eq!(updated_folder.parent_id, Some(parent_id));
+        assert_eq!(updated_folder.name.as_ref(), "Child Folder");
+    }
+
+    #[test]
+    fn test_update_folder_multiple_fields() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Original Name", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Update multiple fields at once
+        let updated_folder = folder_store
+            .update(
+                folder_id,
+                Some("Updated Name"),
+                Some(Some("Updated description")),
+                None,
+            )
+            .expect("Failed to update folder");
+
+        assert_eq!(updated_folder.name.as_ref(), "Updated Name");
+        assert_eq!(
+            updated_folder.description.as_ref().map(|s| s.as_ref()),
+            Some("Updated description")
+        );
+    }
+
+    #[test]
+    fn test_update_folder_empty_name_fails() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Test Folder", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Try to update with empty name
+        let result = folder_store.update(folder_id, Some(""), None, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("empty")
+                || err_msg.contains("whitespace")
+                || err_msg.contains("Invalid folder name")
+        );
+    }
+
+    #[test]
+    fn test_update_folder_whitespace_name_fails() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Test Folder", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Try to update with whitespace-only name
+        let result = folder_store.update(folder_id, Some("   "), None, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(
+            err_msg.contains("empty")
+                || err_msg.contains("whitespace")
+                || err_msg.contains("Invalid folder name")
+        );
+    }
+
+    #[test]
+    fn test_update_folder_name_too_long_fails() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Test Folder", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Try to update with name longer than 255 characters
+        let long_name = "a".repeat(256);
+        let result = folder_store.update(folder_id, Some(&long_name), None, None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("too long") || err_msg.contains("Invalid folder name"));
+    }
+
+    #[test]
+    fn test_update_folder_description_too_long_fails() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Test Folder", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Try to update with description longer than 1000 characters
+        let long_desc = "a".repeat(1001);
+        let result = folder_store.update(folder_id, None, Some(Some(&long_desc)), None);
+        assert!(result.is_err());
+        let err_msg = result.unwrap_err().to_string();
+        assert!(err_msg.contains("too long") || err_msg.contains("Invalid folder description"));
+    }
+
+    #[test]
+    fn test_update_nonexistent_folder_fails() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let nonexistent_id = Uuid::new_v4();
+
+        // Try to update a folder that doesn't exist
+        let result = folder_store.update(nonexistent_id, Some("New Name"), None, None);
+        assert!(result.is_err());
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("not found or has been deleted"));
+    }
+
+    #[test]
+    fn test_update_folder_preserves_other_fields() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let mut folder = Folder::new(workspace_id, "Test Folder", None);
+
+        // Set up common headers and search params
+        folder.common_headers = vec![Header {
+            key: "Authorization".into(),
+            value: "Bearer token".into(),
+        }];
+        folder.common_search_params = vec![SearchParameter::new("limit", "10")];
+
+        let folder_id = folder.id;
+        let original_created_at = folder.created_at;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Sleep briefly to ensure timestamp difference
+        std::thread::sleep(std::time::Duration::from_millis(10));
+
+        // Update only the name
+        let updated_folder = folder_store
+            .update(folder_id, Some("New Name"), None, None)
+            .expect("Failed to update folder");
+
+        // Verify other fields are preserved
+        assert_eq!(updated_folder.name.as_ref(), "New Name");
+        assert_eq!(updated_folder.workspace_id, workspace_id);
+        assert_eq!(updated_folder.created_at, original_created_at);
+        assert_eq!(updated_folder.common_headers.len(), 1);
+        assert_eq!(updated_folder.common_search_params.len(), 1);
+        // updated_at should be different (or at least not less than created_at)
+        assert!(updated_folder.updated_at >= original_created_at);
+    }
+
+    #[test]
+    fn test_update_folder_name_with_leading_trailing_spaces() {
+        let db = Database::open_in_memory().expect("Failed to create test database");
+        let folder_store = FolderStore::new(db.conn());
+        let workspace_id = Uuid::new_v4();
+        let folder = Folder::new(workspace_id, "Test Folder", None);
+        let folder_id = folder.id;
+
+        folder_store
+            .insert(&folder)
+            .expect("Failed to insert folder");
+
+        // Update with name that has leading/trailing spaces (should be accepted)
+        let updated_folder = folder_store
+            .update(folder_id, Some("  Valid Name  "), None, None)
+            .expect("Failed to update folder");
+
+        // The name should be stored as-is (validation only checks trimmed version)
+        assert_eq!(updated_folder.name.as_ref(), "  Valid Name  ");
     }
 }
