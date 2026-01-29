@@ -45,8 +45,13 @@ impl WorkspaceContent {
             let service_tabs = service_tabs.clone();
             let env_selector = env_selector.clone();
             let folder_detail = folder_detail_page.clone();
-            move |_this, registry, event: &WorkspaceEvent, cx| match event {
+            move |this, registry, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
+                    // Sync current_service to target workspace's active_service
+                    this.current_service = workspace.active_service.clone();
+                    // Clear http_services cache to release old workspace's service instances
+                    this.http_services.clear();
+
                     sidebar.update(cx, |s, cx| {
                         s.set_workspace(workspace.clone(), cx);
                     });
@@ -58,6 +63,7 @@ impl WorkspaceContent {
                         s.set_workspace(workspace.clone());
                         cx.notify();
                     });
+                    cx.notify();
                 }
                 _ => {
                     // Handle WorkspaceEvent::Reload and WorkspaceEvent::Close
