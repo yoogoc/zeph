@@ -1,7 +1,7 @@
 //! TreeItem component for hierarchical list nodes.
 
 use gpui::*;
-use gpui_component::icon::Icon;
+use gpui_component::Icon;
 
 /// A tree item component that displays a single node in a tree structure.
 ///
@@ -66,7 +66,7 @@ impl RenderOnce for TreeItem {
         let bg_color = if self.is_selected {
             rgb(0xe3f2fd)
         } else {
-            transparent_black()
+            rgb(0xffffff) // transparent background
         };
 
         let mut row = div()

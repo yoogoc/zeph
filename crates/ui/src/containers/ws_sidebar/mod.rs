@@ -1,7 +1,7 @@
 mod popup_menu;
 mod utils;
 
-use crate::rename_dialog::{EntityType, RenameDialog, RenameDialogEvent};
+use crate::dialogs::{EntityType, RenameDialog, RenameDialogEvent};
 use crate::ws_sidebar::popup_menu::popup_menu;
 use crate::{ImportConfig, SimpleImportConfig};
 use gpui::prelude::FluentBuilder;

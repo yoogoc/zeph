@@ -87,7 +87,7 @@ pub trait OverlayDialogExt {
     fn with_overlay_dialog<D: IntoElement>(self, dialog: Option<D>) -> Self;
 }
 
-impl<E: IntoElement> OverlayDialogExt for Div {
+impl OverlayDialogExt for Div {
     fn with_overlay_dialog<D: IntoElement>(self, dialog: Option<D>) -> Self {
         match dialog {
             Some(content) => self.child(OverlayDialog::new(content)),

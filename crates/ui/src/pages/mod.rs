@@ -3,4 +3,8 @@
 //! This module contains full page components that compose
 //! multiple containers and represent application routes.
 
-// Components will be added here as they are migrated
+mod home_page;
+mod title_bar;
+
+pub use home_page::*;
+pub use title_bar::*;

@@ -1,6 +1,7 @@
+use crate::primitives::Badge;
 use gpui::*;
-use gpui_component::{blue_200, blue_800, gray_500, green_400, h_flex, red_400, IconName};
-use models::{ContentType, HttpMethod, ServiceType};
+use gpui_component::{green_400, h_flex, red_400, IconName};
+use models::{ContentType, ServiceType};
 
 pub fn cal_icon(ct: &ContentType) -> impl IntoElement {
     match ct {
@@ -12,28 +13,7 @@ pub fn cal_icon(ct: &ContentType) -> impl IntoElement {
             .child(IconName::Folder)
             .into_any_element(),
         ContentType::Service(service) => match service.service_type.clone() {
-            ServiceType::Http(http) => {
-                let (text, bg) = match http.method {
-                    HttpMethod::Get => ("GET", green()),
-                    HttpMethod::Post => ("POST", blue()),
-                    HttpMethod::Put => ("PUT", blue_800()),
-                    HttpMethod::Delete => ("DELETE", red()),
-                    HttpMethod::Patch => ("PATCH", blue_200()),
-                    HttpMethod::Head => ("HEAD", gray_500()),
-                    HttpMethod::Options => ("OPTIONS", black()),
-                };
-                h_flex()
-                    .p_1()
-                    .h_4()
-                    .rounded_lg()
-                    .items_center()
-                    .justify_center()
-                    .child(text)
-                    .text_color(white())
-                    .text_xs()
-                    .bg(bg)
-                    .into_any_element()
-            }
+            ServiceType::Http(http) => Badge::new(http.method).compact(true).into_any_element(),
             ServiceType::Grpc(_) => h_flex()
                 .p_1()
                 .h_4()

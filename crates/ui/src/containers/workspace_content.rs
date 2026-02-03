@@ -1,33 +1,30 @@
+use crate::containers::import_handler::{self, ImportHandler};
+use crate::containers::service_manager::ServiceManager;
+use crate::containers::{FolderDetailPage, FolderDetailPageEvent, ServiceTabs, ServiceTabsEvent};
+use crate::dialogs::ConfirmDialogEvent;
+use crate::selectors::{EnvironmentSelector, EnvironmentSelectorEvent};
+use crate::simple_import_dialog::ImportErrorType;
+use crate::widgets::OverlayDialog;
 use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
-use crate::{
-    ConfirmDialog, ConfirmDialogEvent, EnvironmentSelector, EnvironmentSelectorEvent,
-    FolderDetailPage, FolderDetailPageEvent, HttpService, ImportConfig, ServiceTabs,
-    ServiceTabsEvent, SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent,
-};
+use crate::{ImportConfig, SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent};
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
 use models::{ContentType, FolderType, ServiceType, Workspace, WorkspaceView};
-use std::collections::HashMap;
 use uuid::Uuid;
 use workspace::{WorkspaceEvent, WorkspaceServiceEvent};
 
 pub struct WorkspaceContent {
     workspace_id: Option<Uuid>,
     view: WorkspaceView,
-    http_services: HashMap<Uuid, Entity<HttpService>>,
-    current_service: Option<ContentType>,
+    /// Service manager handles HTTP service lifecycle and state
+    service_manager: ServiceManager,
     service_tabs: Entity<ServiceTabs>,
     sidebar: Entity<WsSidebar>,
     env_selector: Entity<EnvironmentSelector>,
     folder_detail: Entity<FolderDetailPage>,
-    // Import dialog state
-    import_dialog: Option<Entity<SimpleImportDialog>>,
-    show_import_dialog: bool,
-    // Confirmation dialog state (Requirements 3.5)
-    confirm_dialog: Option<Entity<ConfirmDialog>>,
-    show_confirm_dialog: bool,
-    pending_close_content: Option<ContentType>,
+    /// Import handler manages import dialog state
+    import_handler: ImportHandler,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -48,9 +45,10 @@ impl WorkspaceContent {
             move |this, registry, event: &WorkspaceEvent, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
                     // Sync current_service to target workspace's active_service
-                    this.current_service = workspace.active_service.clone();
+                    this.service_manager
+                        .set_current_content(workspace.active_service.clone());
                     // Clear http_services cache to release old workspace's service instances
-                    this.http_services.clear();
+                    this.service_manager.clear_http_services();
 
                     sidebar.update(cx, |s, cx| {
                         s.set_workspace(workspace.clone(), cx);
@@ -109,7 +107,9 @@ impl WorkspaceContent {
             move |this, _registry, event: &WorkspaceServiceEvent, window, cx| {
                 match event {
                     WorkspaceServiceEvent::Open(workspace, service) => {
-                        this.set_content(workspace, service, window, cx);
+                        this.service_manager
+                            .set_content(workspace, service, window, cx);
+                        this.update_folder_detail_if_needed(service, cx);
                         service_tabs.update(cx, |s, cx| {
                             s.set_workspace(workspace.clone());
                             cx.notify();
@@ -121,12 +121,13 @@ impl WorkspaceContent {
                         new,
                     } => {
                         if let ContentType::Service(service) = old {
-                            this.http_services.remove(&service.id);
+                            this.service_manager.remove_http_service(&service.id);
                         }
                         if let Some(new) = new {
-                            this.set_content(workspace, new, window, cx);
+                            this.service_manager.set_content(workspace, new, window, cx);
+                            this.update_folder_detail_if_needed(new, cx);
                         } else {
-                            this.current_service = None;
+                            this.service_manager.set_current_content(None);
                         }
                         service_tabs.update(cx, |s, cx| {
                             s.set_workspace(workspace.clone());
@@ -254,17 +255,12 @@ impl WorkspaceContent {
         Self {
             workspace_id: None,
             view: WorkspaceView::Services,
-            http_services: HashMap::new(),
-            current_service: None,
+            service_manager: ServiceManager::new(),
             service_tabs,
             sidebar,
             env_selector,
             folder_detail: folder_detail_page,
-            import_dialog: None,
-            show_import_dialog: false,
-            confirm_dialog: None,
-            show_confirm_dialog: false,
-            pending_close_content: None,
+            import_handler: ImportHandler::new(),
             _subscriptions: vec![
                 registry_sub,
                 registry_sub2,
@@ -276,44 +272,12 @@ impl WorkspaceContent {
         }
     }
 
-    fn set_content(
-        &mut self,
-        workspace: &Workspace,
-        ct: &ContentType,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let base_url = workspace
-            .active_environment_id
-            .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
-            .map(|env| env.base_url.clone());
-
-        self.current_service = Some(ct.clone());
-        match ct {
-            ContentType::ServiceFolder(folder) => self.folder_detail.update(cx, |s, cx| {
+    /// Updates the folder detail page if the content is a folder
+    fn update_folder_detail_if_needed(&self, ct: &ContentType, cx: &mut Context<Self>) {
+        if let ContentType::ServiceFolder(folder) = ct {
+            self.folder_detail.update(cx, |s, cx| {
                 s.set_folder(Some(folder.clone()), cx);
-            }),
-            ContentType::SchemaFolder(_) => {}
-            ContentType::Service(service) => match &service.service_type {
-                ServiceType::Http(config) => {
-                    if !self.http_services.contains_key(&service.id) {
-                        let http_service = cx.new(|cx| {
-                            HttpService::new(
-                                service.id,
-                                config.clone(),
-                                base_url.clone(),
-                                service.folder_id,
-                                window,
-                                cx,
-                            )
-                        });
-                        self.http_services.insert(service.id, http_service);
-                    }
-                }
-                ServiceType::Grpc(_) => {}
-                ServiceType::WebSocket(_) => {}
-            },
-            ContentType::Schema(_) => {}
+            });
         }
     }
 
@@ -384,19 +348,7 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(workspace) = workspace {
-            // Get base_url from an active environment
-            let base_url = workspace
-                .active_environment_id
-                .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
-                .map(|env| env.base_url.clone())
-                .unwrap_or_default();
-
-            // Update all existing HttpService instances
-            for http_service in self.http_services.values() {
-                http_service.update(cx, |service, cx| {
-                    service.set_base_url(base_url.clone(), cx);
-                });
-            }
+            self.service_manager.update_base_url(&workspace, cx);
         }
     }
 
@@ -447,23 +399,20 @@ impl WorkspaceContent {
                     // Execute the import
                     this.execute_simple_import(config.clone(), cx);
                     // Close the dialog
-                    this.show_import_dialog = false;
-                    this.import_dialog = None;
+                    this.import_handler.hide();
                     cx.notify();
                 }
                 SimpleImportDialogEvent::Cancel => {
                     // Close the dialog
-                    this.show_import_dialog = false;
-                    this.import_dialog = None;
+                    this.import_handler.hide();
                     cx.notify();
                 }
             }
         });
 
-        // Store the subscription
+        // Store the subscription and show dialog
         self._subscriptions.push(dialog_sub);
-        self.import_dialog = Some(dialog);
-        self.show_import_dialog = true;
+        self.import_handler.show(dialog);
         cx.notify();
     }
 
@@ -472,61 +421,7 @@ impl WorkspaceContent {
     fn execute_simple_import(&mut self, config: SimpleImportConfig, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |registry, cx| {
-            // Requirement 5.1: Validate content before import
-            if let Err(e) = workspace::validate_openapi_content(&config.content) {
-                eprintln!("Content validation failed: {}", e);
-                if let Some(dialog) = &self.import_dialog {
-                    dialog.update(cx, |d, _cx| {
-                        d.set_error(Some(crate::simple_import_dialog::ImportErrorType::ParseError(
-                            e.to_string(),
-                        )));
-                    });
-                }
-                return;
-            }
-
-            // Requirement 5.2: Validate target folder if specified
-            if let Some(target_folder_id) = config.target_folder {
-                match registry.get_folder(target_folder_id) {
-                    Some(folder) => {
-                        // Validate folder type - must be a service folder
-                        if folder.folder_type != FolderType::Service {
-                            eprintln!("Target folder is not a service folder");
-                            if let Some(dialog) = &self.import_dialog {
-                                dialog.update(cx, |d, _cx| {
-                                    d.set_error(Some(
-                                        crate::simple_import_dialog::ImportErrorType::ValidationError(
-                                            "目标文件夹必须是服务类型文件夹".to_string(),
-                                        ),
-                                    ));
-                                });
-                            }
-                            return;
-                        }
-                    }
-                    None => {
-                        eprintln!("Target folder not found: {}", target_folder_id);
-                        if let Some(dialog) = &self.import_dialog {
-                            dialog.update(cx, |d, _cx| {
-                                d.set_error(Some(
-                                    crate::simple_import_dialog::ImportErrorType::ImportError(
-                                        "目标文件夹不存在".to_string(),
-                                    ),
-                                ));
-                            });
-                        }
-                        return;
-                    }
-                }
-            }
-
-            let options = workspace::ImportOptions {
-                target_folder: config.target_folder,
-                create_subfolders: config.create_subfolders,
-                schema_folder_strategy: workspace::SchemaFolderStrategy::SeparateFolder,
-            };
-
-            match registry.import_openapi_with_options(&config.content, options, cx) {
+            match import_handler::execute_import(&config, registry, cx) {
                 Ok(_) => {
                     // Import successful - dialog will be closed by the event handler
                     // Implements Requirement 4.4 - dialog auto-closes on success
@@ -536,17 +431,8 @@ impl WorkspaceContent {
                     // Import failed - show error in dialog
                     // Implements Requirement 5.3 - show error details and keep dialog open
                     eprintln!("Failed to import OpenAPI: {}", e);
-                    // Update dialog with error if it exists
-                    if let Some(dialog) = &self.import_dialog {
-                        dialog.update(cx, |d, _cx| {
-                            d.set_error(Some(
-                                crate::simple_import_dialog::ImportErrorType::ImportError(format!(
-                                    "导入失败: {}",
-                                    e
-                                )),
-                            ));
-                        });
-                    }
+                    self.import_handler
+                        .set_error(ImportErrorType::ImportError(format!("导入失败: {}", e)), cx);
                 }
             }
         });
@@ -634,15 +520,10 @@ impl WorkspaceContent {
     fn close_service(&mut self, ct: ContentType, cx: &mut Context<Self>) {
         // Check if this is a Service with unsaved changes (Requirements 3.5)
         if let ContentType::Service(service) = &ct {
-            if let Some(http_service) = self.http_services.get(&service.id) {
-                // Check if the service has unsaved changes by reading its is_modified flag
-                let has_unsaved = http_service.read_with(cx, |service, _cx| service.is_modified());
-
-                if has_unsaved {
-                    // Show confirmation dialog
-                    self.show_close_confirmation(ct.clone(), cx);
-                    return;
-                }
+            if self.service_manager.has_unsaved_changes(&service.id, cx) {
+                // Show confirmation dialog
+                self.show_close_confirmation(ct.clone(), cx);
+                return;
             }
         }
 
@@ -653,6 +534,8 @@ impl WorkspaceContent {
     /// Shows the confirmation dialog for closing a service with unsaved changes
     /// Implements Requirements 3.5
     fn show_close_confirmation(&mut self, ct: ContentType, cx: &mut Context<Self>) {
+        use crate::dialogs::ConfirmDialog;
+
         let dialog = cx.new(|_cx| ConfirmDialog::unsaved_changes());
 
         // Subscribe to dialog events
@@ -660,43 +543,34 @@ impl WorkspaceContent {
             match event {
                 ConfirmDialogEvent::Confirm => {
                     // Save and then close
-                    if let Some(pending_ct) = this.pending_close_content.take() {
+                    if let Some(pending_ct) = this.service_manager.take_pending_close_content() {
                         if let ContentType::Service(service) = &pending_ct {
-                            if let Some(http_service) = this.http_services.get(&service.id) {
-                                http_service.update(cx, |service, cx| {
-                                    service.save_changes_no_window(cx);
-                                });
-                            }
+                            this.service_manager.save_service_changes(&service.id, cx);
                         }
                         this.do_close_service(pending_ct, cx);
                     }
-                    this.show_confirm_dialog = false;
-                    this.confirm_dialog = None;
+                    this.service_manager.hide_confirm_dialog();
                     cx.notify();
                 }
                 ConfirmDialogEvent::Discard => {
                     // Close without saving
-                    if let Some(pending_ct) = this.pending_close_content.take() {
+                    if let Some(pending_ct) = this.service_manager.take_pending_close_content() {
                         this.do_close_service(pending_ct, cx);
                     }
-                    this.show_confirm_dialog = false;
-                    this.confirm_dialog = None;
+                    this.service_manager.hide_confirm_dialog();
                     cx.notify();
                 }
                 ConfirmDialogEvent::Cancel => {
                     // Cancel the close operation
-                    this.pending_close_content = None;
-                    this.show_confirm_dialog = false;
-                    this.confirm_dialog = None;
+                    this.service_manager.hide_confirm_dialog();
                     cx.notify();
                 }
             }
         });
 
         self._subscriptions.push(dialog_sub);
-        self.confirm_dialog = Some(dialog);
-        self.show_confirm_dialog = true;
-        self.pending_close_content = Some(ct);
+        // Set up the confirmation dialog state in service manager
+        self.service_manager.show_close_confirmation(ct, dialog);
         cx.notify();
     }
 
@@ -709,17 +583,10 @@ impl WorkspaceContent {
                 registry.close_content(ct, cx);
             }
         });
-        match ct.clone() {
-            ContentType::ServiceFolder(_folder) => {}
-            ContentType::SchemaFolder(_folder) => {}
-            ContentType::Service(service) => match service.service_type {
-                ServiceType::Http(_) => {
-                    self.http_services.remove(&service.id);
-                }
-                ServiceType::Grpc(_) => {}
-                ServiceType::WebSocket(_) => {}
-            },
-            ContentType::Schema(_schema) => {}
+        if let ContentType::Service(service) = &ct {
+            if let ServiceType::Http(_) = service.service_type {
+                self.service_manager.remove_http_service(&service.id);
+            }
         }
         cx.notify();
     }
@@ -795,12 +662,12 @@ impl WorkspaceContent {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        match self.current_service {
-            Some(ref service) => match service {
-                ContentType::Service(service) => match service.service_type {
+        match self.service_manager.current_content() {
+            Some(content) => match content {
+                ContentType::Service(service) => match &service.service_type {
                     ServiceType::Http(_) => self
-                        .http_services
-                        .get(&service.id)
+                        .service_manager
+                        .get_http_service(&service.id)
                         .map(|service| service.clone().into_any_element())
                         .unwrap_or(div().into_any_element()),
                     ServiceType::Grpc(_) => h_flex()
@@ -876,50 +743,28 @@ impl WorkspaceContent {
                     ),
                 );
 
-            // Render with confirmation dialog overlay if visible (Requirements 3.5)
-            if self.show_confirm_dialog {
-                if let Some(dialog) = &self.confirm_dialog {
-                    return div()
-                        .size_full()
-                        .relative()
-                        .child(main_content)
-                        .child(
-                            // Modal overlay
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .bg(rgba(0x00000080))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(dialog.clone()),
-                        )
-                        .into_any_element();
-                }
-            }
-
-            // Render with import dialog overlay if visible
-            if self.show_import_dialog {
-                if let Some(dialog) = &self.import_dialog {
-                    div()
-                        .size_full()
-                        .relative()
-                        .child(main_content)
-                        .child(
-                            // Modal overlay
-                            div()
-                                .absolute()
-                                .inset_0()
-                                .bg(rgba(0x00000080))
-                                .flex()
-                                .items_center()
-                                .justify_center()
-                                .child(dialog.clone()),
-                        )
-                        .into_any_element()
+            // Determine which dialog overlay to show (if any)
+            let overlay_content: Option<AnyElement> =
+                if self.service_manager.is_confirm_dialog_visible() {
+                    self.service_manager
+                        .confirm_dialog()
+                        .map(|d| d.clone().into_any_element())
+                } else if self.import_handler.is_visible() {
+                    self.import_handler
+                        .dialog()
+                        .map(|d| d.clone().into_any_element())
                 } else {
-                    main_content.into_any_element()
-                }
+                    None
+                };
+
+            // Render with OverlayDialog if a dialog is visible
+            if let Some(dialog_content) = overlay_content {
+                div()
+                    .size_full()
+                    .relative()
+                    .child(main_content)
+                    .child(OverlayDialog::new(dialog_content).dismissable(false))
+                    .into_any_element()
             } else {
                 main_content.into_any_element()
             }

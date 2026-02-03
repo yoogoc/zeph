@@ -1,4 +1,4 @@
-use crate::{Sidebar, SidebarEvent, WorkspaceContent};
+use crate::containers::{Sidebar, SidebarEvent, WorkspaceContent};
 use gpui::*;
 use gpui_component::h_flex;
 use models::{Workspace, WorkspaceView};

@@ -2,7 +2,7 @@
 
 use gpui::*;
 use gpui_component::button::Button;
-use gpui_component::icon::Icon;
+use gpui_component::Icon;
 
 /// An empty state component that displays a centered message with optional icon and action.
 ///

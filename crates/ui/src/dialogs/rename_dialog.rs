@@ -69,6 +69,7 @@ pub struct RenameDialog {
     /// Input field for the new name
     input: Entity<InputState>,
     /// Original name (for display and comparison)
+    #[allow(dead_code)]
     original_name: SharedString,
     /// Type of entity being renamed
     entity_type: EntityType,

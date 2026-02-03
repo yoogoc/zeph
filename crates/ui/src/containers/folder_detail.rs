@@ -1,0 +1,423 @@
+//! FolderDetailPage component - main container for folder detail view.
+
+use crate::containers::{
+    CommonHeadersPanel, CommonHeadersPanelEvent, FolderOverviewPanel, FolderOverviewPanelEvent,
+    SearchParamsPanel, SearchParamsPanelEvent,
+};
+use gpui::prelude::FluentBuilder;
+use gpui::*;
+use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::tab::{Tab, TabBar, TabVariant};
+use gpui_component::StyledExt;
+use models::{Folder, Header, SearchParameter, Workspace};
+use uuid::Uuid;
+
+/// Tab options for the folder detail page
+#[derive(Debug, Clone, PartialEq)]
+pub enum FolderDetailTab {
+    Overview,
+    CommonHeaders,
+    SearchParameters,
+}
+
+impl FolderDetailTab {
+    /// Get the display name for the tab
+    pub fn display_name(&self) -> SharedString {
+        match self {
+            FolderDetailTab::Overview => shared_t!("folders.tab.overview"),
+            FolderDetailTab::CommonHeaders => shared_t!("folders.tab.common_headers"),
+            FolderDetailTab::SearchParameters => shared_t!("folders.tab.search_parameters"),
+        }
+    }
+
+    /// Get all available tabs
+    pub fn all_tabs() -> Vec<FolderDetailTab> {
+        vec![
+            FolderDetailTab::Overview,
+            FolderDetailTab::CommonHeaders,
+            FolderDetailTab::SearchParameters,
+        ]
+    }
+}
+
+/// Events emitted by the folder detail page
+#[derive(Debug, Clone)]
+pub enum FolderDetailPageEvent {
+    NavigateBack,
+    NavigateToFolder(Uuid),
+    UpdateCommonHeaders(Uuid, Vec<Header>),
+    UpdateSearchParams(Uuid, Vec<SearchParameter>),
+    UpdateFolderInfo(Uuid, String, Option<String>), // folder_id, name, description
+}
+
+/// Error types for folder detail operations
+#[derive(Debug, Clone)]
+pub enum FolderDetailError {
+    ValidationError(String),
+    DatabaseError(String),
+    NetworkError(String),
+    NotFound(String),
+    InvalidData(String),
+}
+
+impl FolderDetailError {
+    pub fn message(&self) -> String {
+        match self {
+            FolderDetailError::ValidationError(msg) => format!("Validation Error: {}", msg),
+            FolderDetailError::DatabaseError(msg) => format!("Database Error: {}", msg),
+            FolderDetailError::NetworkError(msg) => format!("Network Error: {}", msg),
+            FolderDetailError::NotFound(msg) => format!("Not Found: {}", msg),
+            FolderDetailError::InvalidData(msg) => format!("Invalid Data: {}", msg),
+        }
+    }
+
+    pub fn is_recoverable(&self) -> bool {
+        matches!(
+            self,
+            FolderDetailError::ValidationError(_) | FolderDetailError::NetworkError(_)
+        )
+    }
+}
+
+/// Main folder detail page component
+pub struct FolderDetailPage {
+    folder_id: Option<Uuid>,
+    folder: Option<Folder>,
+    workspace: Option<Workspace>,
+    active_tab: FolderDetailTab,
+    overview_panel: Entity<FolderOverviewPanel>,
+    headers_panel: Entity<CommonHeadersPanel>,
+    params_panel: Entity<SearchParamsPanel>,
+
+    // Error handling and loading states
+    is_loading: bool,
+    error_message: Option<String>,
+    last_operation: Option<String>,
+}
+
+impl EventEmitter<FolderDetailPageEvent> for FolderDetailPage {}
+
+impl FolderDetailPage {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        let overview_panel = cx.new(|_| FolderOverviewPanel::new());
+        let headers_panel = cx.new(|_| CommonHeadersPanel::new());
+        let params_panel = cx.new(|_| SearchParamsPanel::new());
+
+        // Subscribe to overview panel events
+        cx.subscribe(
+            &overview_panel,
+            |this, _panel, event: &FolderOverviewPanelEvent, cx| {
+                if let Some(folder_id) = this.folder_id {
+                    match event {
+                        FolderOverviewPanelEvent::SaveChanges(name, description) => {
+                            cx.emit(FolderDetailPageEvent::UpdateFolderInfo(
+                                folder_id,
+                                name.clone(),
+                                description.clone(),
+                            ));
+                        }
+                    }
+                }
+            },
+        )
+        .detach();
+
+        // Subscribe to child panel events
+        cx.subscribe(
+            &headers_panel,
+            |this, _panel, event: &CommonHeadersPanelEvent, cx| {
+                if let Some(folder_id) = this.folder_id {
+                    match event {
+                        CommonHeadersPanelEvent::HeadersChanged(headers) => {
+                            cx.emit(FolderDetailPageEvent::UpdateCommonHeaders(
+                                folder_id,
+                                headers.clone(),
+                            ));
+                        }
+                    }
+                }
+            },
+        )
+        .detach();
+
+        cx.subscribe(
+            &params_panel,
+            |this, _panel, event: &SearchParamsPanelEvent, cx| {
+                if let Some(folder_id) = this.folder_id {
+                    match event {
+                        SearchParamsPanelEvent::ParamsChanged(params) => {
+                            cx.emit(FolderDetailPageEvent::UpdateSearchParams(
+                                folder_id,
+                                params.clone(),
+                            ));
+                        }
+                    }
+                }
+            },
+        )
+        .detach();
+
+        Self {
+            folder_id: None,
+            folder: None,
+            workspace: None,
+            active_tab: FolderDetailTab::Overview,
+            overview_panel,
+            headers_panel,
+            params_panel,
+            is_loading: false,
+            error_message: None,
+            last_operation: None,
+        }
+    }
+
+    /// Set the folder to display
+    pub fn set_folder(&mut self, folder: Option<Folder>, cx: &mut Context<Self>) {
+        self.folder_id = folder.as_ref().map(|f| f.id);
+        self.folder = folder.clone();
+
+        // Update child panels with the new folder data
+        if let Some(folder) = &folder {
+            self.overview_panel.update(cx, |panel, _| {
+                panel.set_folder(folder.clone());
+            });
+
+            // Store headers for later initialization in the panel
+            let headers = folder.common_headers.clone();
+            self.headers_panel.update(cx, |panel, _| {
+                panel.set_headers(headers);
+            });
+
+            self.params_panel.update(cx, |panel, _| {
+                panel.set_params(folder.common_search_params.clone());
+            });
+        }
+
+        cx.notify();
+    }
+
+    /// Get the current folder ID
+    pub fn get_folder_id(&self) -> Option<Uuid> {
+        self.folder_id
+    }
+
+    /// Set the workspace for breadcrumb navigation
+    pub fn set_workspace(&mut self, workspace: Option<Workspace>) {
+        self.workspace = workspace;
+    }
+
+    /// Set the active tab
+    pub fn set_active_tab(&mut self, tab: FolderDetailTab, cx: &mut Context<Self>) {
+        self.active_tab = tab;
+        cx.notify();
+    }
+
+    /// Set loading state
+    pub fn set_loading(
+        &mut self,
+        loading: bool,
+        operation: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        self.is_loading = loading;
+        self.last_operation = operation;
+        if loading {
+            self.error_message = None; // Clear errors when starting new operation
+        }
+        cx.notify();
+    }
+
+    /// Set error message
+    pub fn set_error(&mut self, error: FolderDetailError, cx: &mut Context<Self>) {
+        self.error_message = Some(error.message());
+        self.is_loading = false;
+        cx.notify();
+    }
+
+    /// Clear error message
+    pub fn clear_error(&mut self, cx: &mut Context<Self>) {
+        self.error_message = None;
+        cx.notify();
+    }
+
+    /// Validate folder data before operations
+    #[allow(unused)]
+    fn validate_folder_data(&self) -> Result<(), FolderDetailError> {
+        if self.folder.is_none() {
+            return Err(FolderDetailError::NotFound(
+                "No folder selected".to_string(),
+            ));
+        }
+
+        if self.folder_id.is_none() {
+            return Err(FolderDetailError::InvalidData(
+                "Invalid folder ID".to_string(),
+            ));
+        }
+
+        Ok(())
+    }
+
+    /// Render the tab navigation
+    fn render_tab_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        div()
+            .h_flex()
+            .border_b_1()
+            .border_color(rgb(0xe0e0e0))
+            .child(
+                TabBar::new("response_tabs")
+                    .with_variant(TabVariant::Underline)
+                    .selected_index(
+                        FolderDetailTab::all_tabs()
+                            .iter()
+                            .position(|tab| tab == &self.active_tab)
+                            .unwrap_or(0),
+                    )
+                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                        if let Some(tab) = FolderDetailTab::all_tabs().get(*ix) {
+                            this.set_active_tab(tab.clone(), cx);
+                        }
+                    }))
+                    .children(
+                        FolderDetailTab::all_tabs()
+                            .into_iter()
+                            .map(|tab| Tab::new().label(tab.display_name())),
+                    ),
+            )
+    }
+
+    /// Render the active tab content
+    fn render_tab_content(&self, _cx: &mut Context<Self>) -> impl IntoElement {
+        match self.active_tab {
+            FolderDetailTab::Overview => div().flex_1().p_1().child(self.overview_panel.clone()),
+            FolderDetailTab::CommonHeaders => {
+                div().flex_1().p_1().child(self.headers_panel.clone())
+            }
+            FolderDetailTab::SearchParameters => {
+                div().flex_1().p_1().child(self.params_panel.clone())
+            }
+        }
+    }
+
+    /// Render error message if present
+    fn render_error_message(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        self.error_message.as_ref().map(|error| {
+            div()
+                .h_flex()
+                .items_center()
+                .gap_3()
+                .p_3()
+                .mx_4()
+                .bg(gpui::rgb(0xfef2f2))
+                .border_1()
+                .border_color(gpui::rgb(0xfecaca))
+                .rounded_md()
+                .child(
+                    gpui_component::Icon::new(gpui_component::IconName::Settings)
+                        .size_4()
+                        .text_color(gpui::rgb(0xdc2626)),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .text_sm()
+                        .text_color(gpui::rgb(0x991b1b))
+                        .child(error.clone()),
+                )
+                .child(
+                    Button::new("dismiss_error")
+                        .ghost()
+                        .compact()
+                        .icon(gpui_component::IconName::Delete)
+                        .on_click(cx.listener(|this: &mut Self, _, _, cx| {
+                            this.clear_error(cx);
+                        })),
+                )
+        })
+    }
+
+    /// Render loading indicator if present
+    fn render_loading_indicator(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
+        if self.is_loading {
+            Some(
+                div()
+                    .h_flex()
+                    .items_center()
+                    .gap_3()
+                    .p_3()
+                    .mx_4()
+                    .bg(gpui::rgb(0xf0f9ff))
+                    .border_1()
+                    .border_color(rgb(0xbae6fd))
+                    .rounded_md()
+                    .child(
+                        // Simple loading indicator - in a real app you'd use a spinner
+                        div().w_4().h_4().bg(rgb(0x0ea5e9)).rounded_full(),
+                    )
+                    .child(
+                        div().text_sm().text_color(rgb(0x0c4a6e)).child(
+                            self.last_operation
+                                .as_ref()
+                                .map(|op| format!("{}...", op))
+                                .unwrap_or_else(|| t!("common.loading").to_string()),
+                        ),
+                    ),
+            )
+        } else {
+            None
+        }
+    }
+}
+
+impl Render for FolderDetailPage {
+    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.folder.is_none() {
+            return div()
+                .flex_1()
+                .h_full()
+                .items_center()
+                .justify_center()
+                .child(
+                    div()
+                        .v_flex()
+                        .items_center()
+                        .gap_4()
+                        .child(
+                            gpui_component::Icon::new(gpui_component::IconName::Folder)
+                                .size_12()
+                                .text_color(gpui::rgb(0x9ca3af)),
+                        )
+                        .child(
+                            div()
+                                .text_lg()
+                                .text_color(gpui::rgb(0x666666))
+                                .child(shared_t!("folders.no_selected.title")),
+                        )
+                        .child(
+                            div()
+                                .text_sm()
+                                .text_color(gpui::rgb(0x9ca3af))
+                                .child(shared_t!("folders.no_selected.description")),
+                        ),
+                )
+                .into_any_element();
+        }
+
+        div()
+            .flex_1()
+            .h_full()
+            .py_2()
+            .px_4()
+            .v_flex()
+            .gap_4()
+            .when_some(self.render_error_message(cx), |container, error_msg| {
+                container.child(error_msg)
+            })
+            .when_some(self.render_loading_indicator(cx), |container, loading| {
+                container.child(loading)
+            })
+            .child(self.render_tab_navigation(cx))
+            .child(self.render_tab_content(cx))
+            .into_any_element()
+    }
+}

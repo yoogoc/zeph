@@ -11,6 +11,7 @@ use workspace::{
     SchemaPreview, ServicePreview,
 };
 
+use crate::primitives::Badge;
 use crate::FolderSelector;
 
 #[derive(Debug, Clone)]
@@ -894,17 +895,7 @@ impl ImportDialog {
                     .h_flex()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .text_xs()
-                            .px_2()
-                            .py_1()
-                            .rounded(px(3.0))
-                            .bg(self.get_method_color(&service.method))
-                            .text_color(rgb(0xffffff))
-                            .font_medium()
-                            .child(service.method.clone()),
-                    )
+                    .child(Badge::from_str(&service.method).compact(true))
                     .child(
                         div()
                             .text_sm()
@@ -956,18 +947,6 @@ impl ImportDialog {
                         )
                     }),
             )
-    }
-
-    /// Get color for HTTP method badge
-    fn get_method_color(&self, method: &str) -> gpui::Rgba {
-        match method.to_uppercase().as_str() {
-            "GET" => rgb(0x28a745),    // Green
-            "POST" => rgb(0x007bff),   // Blue
-            "PUT" => rgb(0xffc107),    // Yellow
-            "DELETE" => rgb(0xdc3545), // Red
-            "PATCH" => rgb(0x6f42c1),  // Purple
-            _ => rgb(0x6c757d),        // Gray
-        }
     }
 
     /// Enhanced schemas preview with detailed information
