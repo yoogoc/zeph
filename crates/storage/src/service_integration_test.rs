@@ -16,12 +16,9 @@ mod tests {
         http_config.query_params = vec![
             QueryParameter::new("limit", "10"),
             QueryParameter::new("page", "1"),
-            QueryParameter {
-                key: "sort".into(),
-                value: "desc".into(),
-                enabled: false,
-                description: Some("Sort order".into()),
-            },
+            QueryParameter::new("sort", "desc")
+                .with_enabled(false)
+                .with_description("Sort order"),
         ];
 
         let service = Service::new(
@@ -80,11 +77,7 @@ mod tests {
         http_config.path = "/users/{userId}/posts/{postId}".into();
         http_config.path_params = vec![
             PathParameter::new("userId", "123"),
-            PathParameter {
-                name: "postId".into(),
-                value: "456".into(),
-                description: Some("Post identifier".into()),
-            },
+            PathParameter::new("postId", "456").with_description("Post identifier"),
         ];
 
         let service = Service::new(
@@ -270,12 +263,9 @@ mod tests {
         http_config.query_params = vec![
             QueryParameter::new("limit", "50"),
             QueryParameter::new("offset", "0"),
-            QueryParameter {
-                key: "include".into(),
-                value: "profile".into(),
-                enabled: false,
-                description: Some("Include related data".into()),
-            },
+            QueryParameter::new("include", "profile")
+                .with_enabled(false)
+                .with_description("Include related data"),
         ];
         http_config.path_params = vec![
             PathParameter::new("version", "v1"),

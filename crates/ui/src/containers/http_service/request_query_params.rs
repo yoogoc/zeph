@@ -63,11 +63,12 @@ impl RequestQueryParams {
     pub fn params(&self, cx: &App) -> Vec<QueryParameter> {
         self.rows
             .iter()
-            .map(|row| QueryParameter {
-                key: row.key.read(cx).value().to_string().into(),
-                value: row.value.read(cx).value().to_string().into(),
-                enabled: row.enabled,
-                description: None,
+            .map(|row| {
+                QueryParameter::new(
+                    row.key.read(cx).value().to_string(),
+                    row.value.read(cx).value().to_string(),
+                )
+                .with_enabled(row.enabled)
             })
             .collect()
     }

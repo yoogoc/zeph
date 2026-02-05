@@ -64,7 +64,7 @@ impl ServiceManager {
     /// Checks if a service has unsaved changes
     pub fn has_unsaved_changes(&self, service_id: &Uuid, cx: &App) -> bool {
         if let Some(http_service) = self.http_services.get(service_id) {
-            http_service.read(cx).is_modified()
+            http_service.read(cx).is_modified(cx)
         } else {
             false
         }

@@ -1,9 +1,14 @@
+pub mod autosurgeon_ext;
 mod runtime;
 
+use autosurgeon::{Hydrate, Reconcile};
 use gpui::SharedString;
 pub use runtime::ContentType;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
+
+// Re-export autosurgeon extensions for convenience
+pub use autosurgeon_ext::{opt_shared_string, shared_string, vec_shared_string};
 
 // === Sync Metadata ===
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -306,21 +311,235 @@ pub enum ServiceType {
     WebSocket(WebSocketConfig),
 }
 
-// === HTTP ===
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct HttpConfig {
+// === HTTP Body Types ===
+
+/// Body content type for HTTP requests
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, Reconcile, Hydrate,
+)]
+pub enum BodyType {
+    #[default]
+    None,
+    Json,
+    Xml,
+    Text,
+    FormData,
+    UrlEncoded,
+    Binary,
+}
+
+impl BodyType {
+    pub fn as_content_type(&self) -> Option<&'static str> {
+        match self {
+            Self::None => None,
+            Self::Json => Some("application/json"),
+            Self::Xml => Some("application/xml"),
+            Self::Text => Some("text/plain"),
+            Self::FormData => Some("multipart/form-data"),
+            Self::UrlEncoded => Some("application/x-www-form-urlencoded"),
+            Self::Binary => Some("application/octet-stream"),
+        }
+    }
+}
+
+/// A chunk of body content for CRDT text support
+#[derive(Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate, PartialEq)]
+pub struct BodyChunk {
+    /// Chunk index for ordering and CRDT merging
+    #[key]
+    pub index: u32,
+    /// Text content (stored as String for serde, converted to Text in CRDT layer)
+    pub content: String,
+}
+
+/// HTTP request body with chunked storage for large content
+#[derive(Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate, PartialEq)]
+pub struct HttpBody {
+    pub body_type: BodyType,
+    /// Chunked content for efficient CRDT handling of large bodies
+    pub chunks: Vec<BodyChunk>,
+}
+
+impl Default for HttpBody {
+    fn default() -> Self {
+        Self {
+            body_type: BodyType::None,
+            chunks: vec![],
+        }
+    }
+}
+
+impl HttpBody {
+    /// Chunk size threshold: 64KB
+    const CHUNK_SIZE: usize = 65536;
+
+    /// Create a new HttpBody with the given type and empty content
+    pub fn new(body_type: BodyType) -> Self {
+        Self {
+            body_type,
+            chunks: vec![],
+        }
+    }
+
+    /// Create a body from content string, automatically chunking if needed
+    pub fn from_content(body_type: BodyType, content: &str) -> Self {
+        if content.is_empty() {
+            return Self::new(body_type);
+        }
+
+        let chunks: Vec<BodyChunk> = content
+            .as_bytes()
+            .chunks(Self::CHUNK_SIZE)
+            .enumerate()
+            .map(|(i, chunk)| BodyChunk {
+                index: i as u32,
+                content: std::str::from_utf8(chunk).unwrap_or("").to_string(),
+            })
+            .collect();
+
+        Self { body_type, chunks }
+    }
+
+    /// Merge all chunks into a single content string
+    pub fn to_content(&self) -> String {
+        let mut sorted = self.chunks.clone();
+        sorted.sort_by_key(|c| c.index);
+        sorted.iter().map(|c| c.content.as_str()).collect()
+    }
+
+    /// Check if the body is empty
+    pub fn is_empty(&self) -> bool {
+        self.chunks.is_empty() || self.chunks.iter().all(|c| c.content.is_empty())
+    }
+
+    /// Update the content, re-chunking if necessary
+    pub fn set_content(&mut self, content: &str) {
+        if content.is_empty() {
+            self.chunks.clear();
+            return;
+        }
+
+        self.chunks = content
+            .as_bytes()
+            .chunks(Self::CHUNK_SIZE)
+            .enumerate()
+            .map(|(i, chunk)| BodyChunk {
+                index: i as u32,
+                content: std::str::from_utf8(chunk).unwrap_or("").to_string(),
+            })
+            .collect();
+    }
+}
+
+// === HTTP Draft Config (CRDT-enabled) ===
+
+/// HTTP draft configuration for CRDT-based collaborative editing.
+///
+/// This struct contains only the editable fields of HttpConfig,
+/// all of which support autosurgeon's Reconcile and Hydrate traits.
+/// Use this for draft storage and undo/redo operations.
+#[derive(Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate, PartialEq)]
+pub struct HttpDraftConfig {
     pub method: HttpMethod,
+    #[autosurgeon(with = "shared_string")]
     pub path: SharedString,
-    pub parameters: Vec<Parameter>,
+    #[serde(default)]
+    pub headers: Vec<Header>,
     #[serde(default)]
     pub query_params: Vec<QueryParameter>,
     #[serde(default)]
     pub path_params: Vec<PathParameter>,
-    pub request_body: Option<RequestBody>,
-    pub responses: Vec<Response>,
-    pub security: Vec<SharedString>,
+    #[serde(default)]
+    pub body: Option<HttpBody>,
     #[serde(default = "default_use_base_url")]
     pub use_base_url: bool,
+}
+
+impl Default for HttpDraftConfig {
+    fn default() -> Self {
+        Self {
+            method: HttpMethod::Get,
+            path: "".into(),
+            headers: vec![],
+            query_params: vec![],
+            path_params: vec![],
+            body: None,
+            use_base_url: default_use_base_url(),
+        }
+    }
+}
+
+impl HttpDraftConfig {
+    /// Create a draft config from HttpConfig
+    pub fn from_http_config(config: &HttpConfig) -> Self {
+        Self {
+            method: config.method,
+            path: config.path.clone(),
+            headers: config.headers.clone(),
+            query_params: config.query_params.clone(),
+            path_params: config.path_params.clone(),
+            body: config.body.clone(),
+            use_base_url: config.use_base_url,
+        }
+    }
+
+    /// Apply draft changes to an HttpConfig, preserving OpenAPI metadata
+    pub fn apply_to_http_config(&self, config: &mut HttpConfig) {
+        config.method = self.method;
+        config.path = self.path.clone();
+        config.headers = self.headers.clone();
+        config.query_params = self.query_params.clone();
+        config.path_params = self.path_params.clone();
+        config.body = self.body.clone();
+        config.use_base_url = self.use_base_url;
+    }
+
+    /// Convert to HttpConfig (OpenAPI metadata will be empty)
+    pub fn to_http_config(&self) -> HttpConfig {
+        HttpConfig {
+            method: self.method,
+            path: self.path.clone(),
+            headers: self.headers.clone(),
+            query_params: self.query_params.clone(),
+            path_params: self.path_params.clone(),
+            body: self.body.clone(),
+            use_base_url: self.use_base_url,
+            parameters: vec![],
+            request_body: None,
+            responses: vec![],
+            security: vec![],
+        }
+    }
+}
+
+// === HTTP ===
+
+/// HTTP request configuration
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct HttpConfig {
+    pub method: HttpMethod,
+    pub path: SharedString,
+    /// Top-level headers for the request (editable by user)
+    #[serde(default)]
+    pub headers: Vec<Header>,
+    #[serde(default)]
+    pub query_params: Vec<QueryParameter>,
+    #[serde(default)]
+    pub path_params: Vec<PathParameter>,
+    /// Request body with chunked content support
+    #[serde(default)]
+    pub body: Option<HttpBody>,
+    #[serde(default = "default_use_base_url")]
+    pub use_base_url: bool,
+
+    // === OpenAPI metadata (read-only, from spec import) ===
+    #[serde(default)]
+    pub parameters: Vec<Parameter>,
+    pub request_body: Option<RequestBody>,
+    #[serde(default)]
+    pub responses: Vec<Response>,
+    #[serde(default)]
+    pub security: Vec<SharedString>,
 }
 
 fn default_use_base_url() -> bool {
@@ -332,18 +551,20 @@ impl Default for HttpConfig {
         Self {
             method: HttpMethod::Get,
             path: "".into(),
-            parameters: vec![],
+            headers: vec![],
             query_params: vec![],
             path_params: vec![],
+            body: None,
+            use_base_url: default_use_base_url(),
+            parameters: vec![],
             request_body: None,
             responses: vec![],
             security: vec![],
-            use_base_url: default_use_base_url(),
         }
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Reconcile, Hydrate)]
 pub enum HttpMethod {
     Get,
     Post,
@@ -368,7 +589,7 @@ impl HttpMethod {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Parameter {
     pub name: SharedString,
     pub location: ParameterLocation,
@@ -378,7 +599,7 @@ pub struct Parameter {
     pub example: Option<SharedString>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum ParameterLocation {
     Path,
     Query,
@@ -386,31 +607,75 @@ pub enum ParameterLocation {
     Cookie,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct RequestBody {
     pub description: Option<SharedString>,
     pub required: bool,
     pub content: Vec<MediaContent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MediaContent {
     pub media_type: SharedString,
     pub schema: Option<SharedString>,
     pub example: Option<SharedString>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Response {
     pub status_code: SharedString,
     pub description: SharedString,
     pub content: Vec<MediaContent>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// HTTP Header with CRDT support for collaborative editing
+#[derive(Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate, PartialEq)]
 pub struct Header {
+    /// Unique identifier for CRDT list merging
+    #[key]
+    #[serde(default = "default_uuid")]
+    pub id: Uuid,
+    #[autosurgeon(with = "shared_string")]
     pub key: SharedString,
+    #[autosurgeon(with = "shared_string")]
     pub value: SharedString,
+    #[serde(default = "default_enabled")]
+    pub enabled: bool,
+    #[serde(default)]
+    #[autosurgeon(with = "opt_shared_string")]
+    pub description: Option<SharedString>,
+}
+
+fn default_enabled() -> bool {
+    true
+}
+
+/// Default function for generating new UUIDs during deserialization
+/// This enables backward compatibility with old data that doesn't have id fields
+fn default_uuid() -> Uuid {
+    Uuid::new_v4()
+}
+
+impl Header {
+    pub fn new(key: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
+        Self {
+            id: Uuid::new_v4(),
+            key: key.into(),
+            value: value.into(),
+            enabled: true,
+            description: None,
+        }
+    }
+
+    pub fn with_enabled(mut self, enabled: bool) -> Self {
+        self.enabled = enabled;
+        self
+    }
+
+    pub fn with_description(mut self, description: impl Into<SharedString>) -> Self {
+        self.description = Some(description.into());
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -430,18 +695,28 @@ impl SearchParameter {
 
 // === Query and Path Parameters ===
 
-/// Query parameter with enable/disable state for HTTP requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Query parameter with enable/disable state for HTTP requests and CRDT support
+#[derive(Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate, PartialEq)]
 pub struct QueryParameter {
+    /// Unique identifier for CRDT list merging
+    #[key]
+    #[serde(default = "default_uuid")]
+    pub id: Uuid,
+    #[autosurgeon(with = "shared_string")]
     pub key: SharedString,
+    #[autosurgeon(with = "shared_string")]
     pub value: SharedString,
+    #[serde(default = "default_enabled")]
     pub enabled: bool,
+    #[serde(default)]
+    #[autosurgeon(with = "opt_shared_string")]
     pub description: Option<SharedString>,
 }
 
 impl QueryParameter {
     pub fn new(key: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
         Self {
+            id: Uuid::new_v4(),
             key: key.into(),
             value: value.into(),
             enabled: true,
@@ -460,17 +735,26 @@ impl QueryParameter {
     }
 }
 
-/// Path parameter value storage for HTTP requests
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// Path parameter value storage for HTTP requests with CRDT support
+#[derive(Debug, Clone, Serialize, Deserialize, Reconcile, Hydrate, PartialEq)]
 pub struct PathParameter {
+    /// Unique identifier for CRDT list merging
+    #[key]
+    #[serde(default = "default_uuid")]
+    pub id: Uuid,
+    #[autosurgeon(with = "shared_string")]
     pub name: SharedString,
+    #[autosurgeon(with = "shared_string")]
     pub value: SharedString,
+    #[serde(default)]
+    #[autosurgeon(with = "opt_shared_string")]
     pub description: Option<SharedString>,
 }
 
 impl PathParameter {
     pub fn new(name: impl Into<SharedString>, value: impl Into<SharedString>) -> Self {
         Self {
+            id: Uuid::new_v4(),
             name: name.into(),
             value: value.into(),
             description: None,
@@ -639,6 +923,8 @@ mod tests {
         assert_eq!(param.value.as_ref(), "10");
         assert!(param.enabled);
         assert!(param.description.is_none());
+        // New: verify id is set
+        assert!(!param.id.is_nil());
     }
 
     #[test]
@@ -674,6 +960,8 @@ mod tests {
         assert_eq!(param.name.as_ref(), "userId");
         assert_eq!(param.value.as_ref(), "123");
         assert!(param.description.is_none());
+        // New: verify id is set
+        assert!(!param.id.is_nil());
     }
 
     #[test]
@@ -690,8 +978,10 @@ mod tests {
         let config = HttpConfig::default();
         assert!(config.query_params.is_empty());
         assert!(config.path_params.is_empty());
+        assert!(config.headers.is_empty());
         assert_eq!(config.method, HttpMethod::Get);
         assert!(config.use_base_url);
+        assert!(config.body.is_none());
     }
 
     #[test]
@@ -720,5 +1010,79 @@ mod tests {
         assert_eq!(config.path_params.len(), 2);
         assert!(config.query_params[0].enabled);
         assert!(!config.query_params[1].enabled);
+    }
+
+    #[test]
+    fn test_header_new() {
+        let header = Header::new("Content-Type", "application/json");
+        assert_eq!(header.key.as_ref(), "Content-Type");
+        assert_eq!(header.value.as_ref(), "application/json");
+        assert!(header.enabled);
+        assert!(header.description.is_none());
+        assert!(!header.id.is_nil());
+    }
+
+    #[test]
+    fn test_header_builder_chain() {
+        let header = Header::new("Authorization", "Bearer token")
+            .with_enabled(false)
+            .with_description("Auth header");
+
+        assert_eq!(header.key.as_ref(), "Authorization");
+        assert!(!header.enabled);
+        assert_eq!(header.description.as_ref().unwrap().as_ref(), "Auth header");
+    }
+
+    #[test]
+    fn test_http_body_empty() {
+        let body = HttpBody::new(BodyType::Json);
+        assert!(body.is_empty());
+        assert_eq!(body.body_type, BodyType::Json);
+        assert_eq!(body.to_content(), "");
+    }
+
+    #[test]
+    fn test_http_body_small_content() {
+        let content = r#"{"key": "value"}"#;
+        let body = HttpBody::from_content(BodyType::Json, content);
+
+        assert!(!body.is_empty());
+        assert_eq!(body.chunks.len(), 1);
+        assert_eq!(body.to_content(), content);
+    }
+
+    #[test]
+    fn test_http_body_set_content() {
+        let mut body = HttpBody::new(BodyType::Text);
+        body.set_content("Hello, World!");
+
+        assert_eq!(body.to_content(), "Hello, World!");
+
+        body.set_content("");
+        assert!(body.is_empty());
+    }
+
+    #[test]
+    fn test_body_type_content_type() {
+        assert_eq!(BodyType::Json.as_content_type(), Some("application/json"));
+        assert_eq!(BodyType::Xml.as_content_type(), Some("application/xml"));
+        assert_eq!(BodyType::Text.as_content_type(), Some("text/plain"));
+        assert_eq!(BodyType::None.as_content_type(), None);
+    }
+
+    #[test]
+    fn test_http_config_with_headers_and_body() {
+        let mut config = HttpConfig::default();
+        config
+            .headers
+            .push(Header::new("Accept", "application/json"));
+        config.body = Some(HttpBody::from_content(BodyType::Json, r#"{"test": true}"#));
+
+        assert_eq!(config.headers.len(), 1);
+        assert!(config.body.is_some());
+        assert_eq!(
+            config.body.as_ref().unwrap().to_content(),
+            r#"{"test": true}"#
+        );
     }
 }

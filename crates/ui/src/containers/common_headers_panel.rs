@@ -47,10 +47,10 @@ impl HeaderInputRow {
     }
 
     fn to_header(&self, cx: &App) -> Header {
-        Header {
-            key: self.key.read(cx).value().to_string().into(),
-            value: self.value.read(cx).value().to_string().into(),
-        }
+        Header::new(
+            self.key.read(cx).value().to_string(),
+            self.value.read(cx).value().to_string(),
+        )
     }
 
     fn is_valid(&self, cx: &App) -> bool {

@@ -545,14 +545,8 @@ mod tests {
 
         // Add some common headers and search parameters
         folder.common_headers = vec![
-            Header {
-                key: "Authorization".into(),
-                value: "Bearer token".into(),
-            },
-            Header {
-                key: "Content-Type".into(),
-                value: "application/json".into(),
-            },
+            Header::new("Authorization", "Bearer token"),
+            Header::new("Content-Type", "application/json"),
         ];
 
         folder.common_search_params = vec![
@@ -627,14 +621,8 @@ mod tests {
 
         // Test updating common headers
         let headers = vec![
-            Header {
-                key: "Authorization".into(),
-                value: "Bearer test-token".into(),
-            },
-            Header {
-                key: "Content-Type".into(),
-                value: "application/json".into(),
-            },
+            Header::new("Authorization", "Bearer test-token"),
+            Header::new("Content-Type", "application/json"),
         ];
 
         folder_store
@@ -688,43 +676,28 @@ mod tests {
             .expect("Failed to insert folder");
 
         // Test empty header name
-        let invalid_headers = vec![Header {
-            key: "".into(),
-            value: "some-value".into(),
-        }];
+        let invalid_headers = vec![Header::new("", "some-value")];
         assert!(folder_store
             .update_common_headers(folder_id, invalid_headers)
             .is_err());
 
         // Test empty header value
-        let invalid_headers = vec![Header {
-            key: "Some-Header".into(),
-            value: "".into(),
-        }];
+        let invalid_headers = vec![Header::new("Some-Header", "")];
         assert!(folder_store
             .update_common_headers(folder_id, invalid_headers)
             .is_err());
 
         // Test duplicate header names
         let invalid_headers = vec![
-            Header {
-                key: "Authorization".into(),
-                value: "Bearer token1".into(),
-            },
-            Header {
-                key: "authorization".into(), // Same name, different case
-                value: "Bearer token2".into(),
-            },
+            Header::new("Authorization", "Bearer token1"),
+            Header::new("authorization", "Bearer token2"), // Same name, different case
         ];
         assert!(folder_store
             .update_common_headers(folder_id, invalid_headers)
             .is_err());
 
         // Test reserved header name
-        let invalid_headers = vec![Header {
-            key: "Host".into(),
-            value: "example.com".into(),
-        }];
+        let invalid_headers = vec![Header::new("Host", "example.com")];
         assert!(folder_store
             .update_common_headers(folder_id, invalid_headers)
             .is_err());
@@ -732,10 +705,7 @@ mod tests {
         // Test too many headers
         let mut too_many_headers = Vec::new();
         for i in 0..51 {
-            too_many_headers.push(Header {
-                key: format!("Header-{}", i).into(),
-                value: "value".into(),
-            });
+            too_many_headers.push(Header::new(format!("Header-{}", i), "value"));
         }
         assert!(folder_store
             .update_common_headers(folder_id, too_many_headers)
@@ -797,10 +767,7 @@ mod tests {
         let folder_store = FolderStore::new(db.conn());
         let nonexistent_id = Uuid::new_v4();
 
-        let headers = vec![Header {
-            key: "Authorization".into(),
-            value: "Bearer token".into(),
-        }];
+        let headers = vec![Header::new("Authorization", "Bearer token")];
 
         // Should fail when trying to update a non-existent folder
         assert!(folder_store
@@ -825,10 +792,7 @@ mod tests {
         let workspace_id = Uuid::new_v4();
         let mut folder = Folder::new(workspace_id, "Test Folder", None);
 
-        folder.common_headers = vec![Header {
-            key: "X-API-Key".into(),
-            value: "secret-key".into(),
-        }];
+        folder.common_headers = vec![Header::new("X-API-Key", "secret-key")];
 
         folder.common_search_params = vec![SearchParameter::new("limit", "100")];
 
@@ -1084,10 +1048,7 @@ mod tests {
         let mut folder = Folder::new(workspace_id, "Test Folder", None);
 
         // Set up common headers and search params
-        folder.common_headers = vec![Header {
-            key: "Authorization".into(),
-            value: "Bearer token".into(),
-        }];
+        folder.common_headers = vec![Header::new("Authorization", "Bearer token")];
         folder.common_search_params = vec![SearchParameter::new("limit", "10")];
 
         let folder_id = folder.id;

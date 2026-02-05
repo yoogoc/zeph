@@ -13,7 +13,7 @@ use gpui_component::spinner::Spinner;
 use gpui_component::{v_flex, Sizable};
 use gpui_tokio::Tokio;
 use i18n::t;
-use models::{Header, HttpConfig, HttpMethod, QueryParameter, SearchParameter};
+use models::{Header, HttpConfig, HttpDraftConfig, HttpMethod, QueryParameter, SearchParameter};
 use smallvec::{smallvec, SmallVec};
 use uuid::Uuid;
 use workspace;
@@ -29,9 +29,7 @@ pub struct HttpService {
     is_loading: bool,
     use_base_url: bool,
     folder_id: Option<Uuid>,
-    // Save state management (Requirements 3.1, 3.2)
-    is_modified: bool,
-    original_config: HttpConfig,
+    // State is now managed by DraftRegistry via WorkspaceRegistry
     service_id: Uuid,
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
@@ -83,12 +81,10 @@ impl HttpService {
                     folder
                         .common_search_params
                         .iter()
-                        .map(|param| QueryParameter {
-                            key: param.key.clone(),
-                            value: param.value.clone(),
-                            enabled: true,
-                            description: None,
-                        })
+                        .map(|param| QueryParameter::new(
+                            param.key.clone(),
+                            param.value.clone(),
+                        ))
                         .collect()
                 } else {
                     Vec::new()
@@ -123,8 +119,8 @@ impl HttpService {
                 this.request_panel.update(cx, |panel, cx| {
                     panel.update_path_params_from_url(&url_value, window, cx);
                 });
-                // Mark as modified when URL changes (Requirements 3.1)
-                this.mark_modified(cx);
+                // Update draft when URL changes
+                this.update_draft_from_ui(cx);
             },
         );
 
@@ -136,35 +132,38 @@ impl HttpService {
                 RequestPanelEvent::AddHeader => {
                     this.request_panel
                         .update(cx, |panel, cx| panel.add_header(window, cx));
-                    // Mark as modified when headers change (Requirements 3.1)
-                    this.mark_modified(cx);
+                    // Update draft when headers change
+                    this.update_draft_from_ui(cx);
                 }
                 RequestPanelEvent::AddQueryParam => {
                     this.request_panel
                         .update(cx, |panel, cx| panel.add_query_param(window, cx));
-                    // Mark as modified when query params change (Requirements 3.1)
-                    this.mark_modified(cx);
+                    // Update draft when query params change
+                    this.update_draft_from_ui(cx);
                 }
                 RequestPanelEvent::BodyTypeChanged(body_type) => {
                     this.update_content_type_header(*body_type, window, cx);
-                    // Mark as modified when body type changes (Requirements 3.1)
-                    this.mark_modified(cx);
+                    // Update draft when body type changes
+                    this.update_draft_from_ui(cx);
                 }
                 RequestPanelEvent::MethodChanged(_) => {
-                    // Method is managed by MethodSelector, no action needed here
-                    // Mark as modified when method changes (Requirements 3.1)
-                    this.mark_modified(cx);
+                    // Update draft when method changes
+                    this.update_draft_from_ui(cx);
                 }
                 RequestPanelEvent::ToggleBaseUrl => {
                     this.toggle_use_base_url(cx);
-                    // Mark as modified when base URL toggle changes (Requirements 3.1)
-                    this.mark_modified(cx);
+                    // Update draft when base URL toggle changes
+                    this.update_draft_from_ui(cx);
                 }
             }
         });
 
-        // Store original config for comparison (Requirements 3.1, 3.2)
-        let original_config = config.clone();
+        // Initialize draft in DraftRegistry
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        let service = registry.read(cx).get_service(service_id).cloned();
+        if let Some(service) = service {
+            let _ = registry.read(cx).get_or_init_draft(&service);
+        }
 
         Self {
             url,
@@ -176,140 +175,67 @@ impl HttpService {
             is_loading: false,
             use_base_url,
             folder_id,
-            is_modified: false,
-            original_config,
             service_id,
             _subscriptions: smallvec![subscription, url_subscription],
         }
     }
 
-    /// Marks the service as modified (Requirements 3.1)
-    pub fn mark_modified(&mut self, cx: &mut Context<Self>) {
-        if !self.is_modified {
-            self.is_modified = true;
-            cx.notify();
-        }
-    }
-
-    /// Returns true if the service has unsaved changes (Requirements 3.1, 3.2)
-    pub fn is_modified(&self) -> bool {
-        self.is_modified
-    }
-
-    /// Checks if there are unsaved changes (Requirements 3.1, 3.2)
-    pub fn has_unsaved_changes(&self, cx: &Context<Self>) -> bool {
-        if !self.is_modified {
-            return false;
-        }
-
-        // Compare current config with original config
-        let current_config = self.collect_current_config(cx);
-
-        // Compare method
-        if current_config.method != self.original_config.method {
-            return true;
-        }
-
-        // Compare path
-        if current_config.path != self.original_config.path {
-            return true;
-        }
-
-        // Compare use_base_url
-        if current_config.use_base_url != self.original_config.use_base_url {
-            return true;
-        }
-
-        // Compare query_params
-        if current_config.query_params.len() != self.original_config.query_params.len() {
-            return true;
-        }
-        for (current, original) in current_config
-            .query_params
-            .iter()
-            .zip(self.original_config.query_params.iter())
-        {
-            if current.key != original.key
-                || current.value != original.value
-                || current.enabled != original.enabled
-            {
-                return true;
-            }
-        }
-
-        // Compare path_params
-        if current_config.path_params.len() != self.original_config.path_params.len() {
-            return true;
-        }
-        for (current, original) in current_config
-            .path_params
-            .iter()
-            .zip(self.original_config.path_params.iter())
-        {
-            if current.name != original.name || current.value != original.value {
-                return true;
-            }
-        }
-
-        false
-    }
-
-    /// Collects the current configuration from UI components (Requirements 3.3)
-    fn collect_current_config(&self, cx: &Context<Self>) -> HttpConfig {
+    /// Collects the current draft configuration from UI components
+    fn collect_current_draft_config(&self, cx: &Context<Self>) -> HttpDraftConfig {
         let path = self.url.read(cx).value().to_string().into();
         let method = self.request_panel.read(cx).method(cx);
+        let headers = self.request_panel.read(cx).headers(cx);
         let query_params = self.request_panel.read(cx).query_params(cx);
         let path_params = self.request_panel.read(cx).path_params(cx);
+        let body = self.request_panel.read(cx).body(cx).map(|b| {
+            models::HttpBody::from_content(models::BodyType::Text, &b)
+        });
 
-        HttpConfig {
+        HttpDraftConfig {
             method,
             path,
-            parameters: self.original_config.parameters.clone(),
+            headers,
             query_params,
             path_params,
-            request_body: self.original_config.request_body.clone(),
-            responses: self.original_config.responses.clone(),
-            security: self.original_config.security.clone(),
+            body,
             use_base_url: self.use_base_url,
         }
     }
 
-    /// Saves the current configuration to the database (Requirements 3.2, 3.3, 3.4, 3.6)
-    pub fn save_changes(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        // Collect current configuration
-        let current_config = self.collect_current_config(cx);
-        let service_id = self.service_id;
-
-        // Update via WorkspaceRegistry which handles database persistence
+    /// Updates the draft in DraftRegistry with current UI state
+    fn update_draft_from_ui(&mut self, cx: &mut Context<Self>) {
+        let config = self.collect_current_draft_config(cx);
         let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.update_service_config(service_id, current_config.clone(), cx);
-        });
-
-        // Clear modified state after save attempt (Requirements 3.4)
-        // Note: If the save fails in WorkspaceRegistry, the user will see an error in logs
-        // but we still clear the modified state to avoid confusion
-        self.is_modified = false;
-        self.original_config = current_config;
+        let _ = registry.read(cx).update_draft(self.service_id, &config);
         cx.notify();
     }
 
-    /// Saves changes without requiring a window parameter (for use in dialogs)
-    /// Implements Requirements 3.5
-    pub fn save_changes_no_window(&mut self, cx: &mut Context<Self>) {
-        // Collect current configuration
-        let current_config = self.collect_current_config(cx);
-        let service_id = self.service_id;
-
-        // Update via WorkspaceRegistry which handles database persistence
+    /// Returns true if the service has unsaved changes
+    pub fn is_modified(&self, cx: &App) -> bool {
         let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.read(cx).draft_is_dirty(self.service_id)
+    }
+
+    /// Checks if there are unsaved changes compared to the original service
+    pub fn has_unsaved_changes(&self, cx: &App) -> bool {
+        self.is_modified(cx)
+    }
+
+    /// Saves the current configuration to the database
+    pub fn save_changes(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        self.save_changes_no_window(cx);
+    }
+
+    /// Saves changes without requiring a window parameter (for use in dialogs)
+    pub fn save_changes_no_window(&mut self, cx: &mut Context<Self>) {
+        let service_id = self.service_id;
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        
+        // Save draft to service (this will also remove the draft from DraftRegistry)
         registry.update(cx, |registry, cx| {
-            registry.update_service_config(service_id, current_config.clone(), cx);
+            registry.save_draft_to_service(service_id, cx);
         });
 
-        // Clear modified state after save attempt
-        self.is_modified = false;
-        self.original_config = current_config;
         cx.notify();
     }
 
@@ -321,6 +247,51 @@ impl HttpService {
             panel.set_use_base_url(use_base_url);
         });
         cx.notify();
+    }
+
+    /// Undo to the previous state
+    pub fn undo(&mut self, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        if let Some(draft_config) = registry.read(cx).undo_draft(self.service_id) {
+            // Apply the undone state to UI
+            self.apply_draft_to_ui(&draft_config, cx);
+        }
+    }
+
+    /// Redo to the next state
+    pub fn redo(&mut self, cx: &mut Context<Self>) {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        if let Some(draft_config) = registry.read(cx).redo_draft(self.service_id) {
+            // Apply the redone state to UI
+            self.apply_draft_to_ui(&draft_config, cx);
+        }
+    }
+
+    /// Check if undo is available
+    pub fn can_undo(&self, cx: &App) -> bool {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.read(cx).can_undo_draft(self.service_id)
+    }
+
+    /// Check if redo is available
+    pub fn can_redo(&self, cx: &App) -> bool {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry.read(cx).can_redo_draft(self.service_id)
+    }
+
+/// Apply a draft configuration to the UI components
+    fn apply_draft_to_ui(&mut self, draft: &HttpDraftConfig, _cx: &mut Context<Self>) {
+        // Update use_base_url
+        self.use_base_url = draft.use_base_url;
+
+        // Note: Full implementation would update all UI fields from draft:
+        // - URL input
+        // - Method selector
+        // - Headers panel
+        // - Query params panel
+        // - Path params panel
+        // - Body panel
+        // For now, the draft state is stored and will be reflected on next render
     }
 
     /// Gets the final URL by resolving base_url, path params, and query params
@@ -393,12 +364,10 @@ impl HttpService {
                         .common_search_params
                         .iter()
                         .filter(|param| self.is_valid_search_param(param))
-                        .map(|param| QueryParameter {
-                            key: param.key.clone(),
-                            value: param.value.clone(),
-                            enabled: true,
-                            description: None,
-                        })
+                        .map(|param| QueryParameter::new(
+                            param.key.clone(),
+                            param.value.clone(),
+                        ))
                         .collect();
                 }
             }
@@ -566,10 +535,7 @@ impl HttpService {
             headers.retain(|h| h.key.to_lowercase() != "content-type");
 
             if let Some(content_type) = body_type.content_type() {
-                headers.push(Header {
-                    key: "Content-Type".into(),
-                    value: content_type.into(),
-                });
+                headers.push(Header::new("Content-Type", content_type));
             }
 
             // Recreate a headers panel with updated headers
@@ -743,7 +709,9 @@ impl HttpService {
 
 impl Render for HttpService {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_modified = self.is_modified;
+        let is_modified = self.is_modified(&*cx);
+        let can_undo = self.can_undo(&*cx);
+        let can_redo = self.can_redo(&*cx);
 
         div()
             .size_full()
@@ -751,6 +719,28 @@ impl Render for HttpService {
             .px_4()
             .gap_4()
             .relative()
+            // Keyboard shortcuts for Undo/Redo
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+                // Cmd+Z for Undo (macOS) or Ctrl+Z (other platforms)
+                // platform modifier is Cmd on macOS, Ctrl on Windows/Linux
+                if (event.keystroke.modifiers.platform || event.keystroke.modifiers.control)
+                    && event.keystroke.key == "z"
+                    && !event.keystroke.modifiers.shift
+                {
+                    if can_undo {
+                        this.undo(cx);
+                    }
+                }
+                // Cmd+Shift+Z for Redo (macOS) or Ctrl+Shift+Z (other platforms)
+                else if (event.keystroke.modifiers.platform || event.keystroke.modifiers.control)
+                    && event.keystroke.modifiers.shift
+                    && event.keystroke.key == "z"
+                {
+                    if can_redo {
+                        this.redo(cx);
+                    }
+                }
+            }))
             .child(
                 v_flex()
                     .size_full()

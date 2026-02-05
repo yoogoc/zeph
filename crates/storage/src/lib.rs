@@ -1,4 +1,5 @@
 mod db;
+mod draft;
 mod environment;
 mod folder;
 mod folder_query_parameter;
@@ -13,6 +14,7 @@ mod workspace;
 mod service_integration_test;
 
 pub use db::Database;
+pub use draft::{Draft, DraftStore};
 pub use environment::{EnvironmentStore, EnvironmentVariableStore};
 pub use folder::FolderStore;
 pub use folder_query_parameter::FolderQueryParameterStore;

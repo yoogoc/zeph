@@ -46,9 +46,11 @@ impl RequestHeaders {
     pub fn headers(&self, cx: &App) -> Vec<Header> {
         self.rows
             .iter()
-            .map(|row| Header {
-                key: row.key.read(cx).value().to_string().into(),
-                value: row.value.read(cx).value().to_string().into(),
+            .map(|row| {
+                Header::new(
+                    row.key.read(cx).value().to_string(),
+                    row.value.read(cx).value().to_string(),
+                )
             })
             .collect()
     }

@@ -35,11 +35,7 @@ impl RequestPathParams {
     pub fn params(&self, cx: &App) -> Vec<PathParameter> {
         self.rows
             .iter()
-            .map(|row| PathParameter {
-                name: row.name.clone(),
-                value: row.value.read(cx).value().to_string().into(),
-                description: None,
-            })
+            .map(|row| PathParameter::new(row.name.clone(), row.value.read(cx).value().to_string()))
             .collect()
     }
 

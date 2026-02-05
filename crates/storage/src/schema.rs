@@ -134,6 +134,19 @@ CREATE TABLE IF NOT EXISTS folder_query_parameters (
 CREATE INDEX IF NOT EXISTS idx_query_params_service ON query_parameters(service_id);
 CREATE INDEX IF NOT EXISTS idx_path_params_service ON path_parameters(service_id);
 CREATE INDEX IF NOT EXISTS idx_folder_query_params_folder ON folder_query_parameters(folder_id);
+
+CREATE TABLE IF NOT EXISTS drafts (
+    service_id TEXT PRIMARY KEY,
+    workspace_id TEXT NOT NULL,
+    automerge_state BLOB NOT NULL,
+    base_version INTEGER NOT NULL,
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    FOREIGN KEY (service_id) REFERENCES services(id) ON DELETE CASCADE,
+    FOREIGN KEY (workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_drafts_workspace ON drafts(workspace_id);
 "#;
 
 #[cfg(test)]

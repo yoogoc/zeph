@@ -101,10 +101,12 @@ impl<'a> QueryParameterStore<'a> {
         )?;
 
         let rows = stmt.query_map(params![service_id.to_string()], |row| {
+            let id_str: String = row.get(0)?;
             let enabled: i32 = row.get(3)?;
             let description: Option<String> = row.get(4)?;
 
             Ok(QueryParameter {
+                id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
                 key: row.get::<_, String>(1)?.into(),
                 value: row.get::<_, String>(2)?.into(),
                 enabled: enabled != 0,

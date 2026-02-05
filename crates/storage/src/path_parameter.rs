@@ -87,9 +87,11 @@ impl<'a> PathParameterStore<'a> {
         )?;
 
         let rows = stmt.query_map(params![service_id.to_string()], |row| {
+            let id_str: String = row.get(0)?;
             let description: Option<String> = row.get(3)?;
 
             Ok(PathParameter {
+                id: Uuid::parse_str(&id_str).unwrap_or_else(|_| Uuid::new_v4()),
                 name: row.get::<_, String>(1)?.into(),
                 value: row.get::<_, String>(2)?.into(),
                 description: description.map(|s| s.into()),

@@ -1,8 +1,8 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use log::{error, info};
 use models::{
-    ContentType, CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig, HttpMethod,
-    Service, ServiceType, Workspace,
+    ContentType, CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig,
+    HttpDraftConfig, HttpMethod, Service, ServiceType, Workspace,
 };
 use std::sync::Arc;
 use storage::{
@@ -11,7 +11,10 @@ use storage::{
 };
 use uuid::Uuid;
 
+mod draft_registry;
 mod openapi;
+
+pub use draft_registry::{DraftEvent, DraftRegistry};
 pub use openapi::{
     check_name_conflicts, generate_import_preview, import_openapi, import_openapi_with_options,
     import_openapi_with_options_and_existing_folders, import_openapi_with_validation,
@@ -19,6 +22,7 @@ pub use openapi::{
     validate_openapi_content, ConflictResolution, ConflictType, ImportOptions, ImportPreview,
     ImportResult, NameConflict, OpenApiSpec, SchemaFolderStrategy, SchemaPreview, ServicePreview,
 };
+use std::cell::RefCell;
 
 #[derive(Clone, Debug)]
 pub enum WorkspaceEvent {
@@ -47,6 +51,8 @@ impl Global for GlobalWorkspaceRegistry {}
 pub struct WorkspaceRegistry {
     db: Arc<Database>,
     app_state: models::ApplicationState,
+    /// Draft registry for managing HTTP service editing state with CRDT support
+    draft_registry: RefCell<DraftRegistry>,
 }
 
 impl EventEmitter<WorkspaceEvent> for WorkspaceRegistry {}
@@ -79,7 +85,13 @@ impl WorkspaceRegistry {
         let store = WorkspaceStore::new(db.conn());
         app_state.workspaces = store.list().unwrap_or_default();
 
-        Self { db, app_state }
+        let draft_registry = RefCell::new(DraftRegistry::new(db.clone()));
+
+        Self {
+            db,
+            app_state,
+            draft_registry,
+        }
     }
 
     pub fn get_state(&self) -> &models::ApplicationState {
@@ -733,6 +745,88 @@ impl WorkspaceRegistry {
             w.active_environment_id
                 .and_then(|id| w.environments.iter().find(|e| e.id == id))
         })
+    }
+
+    // === Draft Operations ===
+
+    /// Get or initialize a draft for a service
+    pub fn get_or_init_draft(&self, service: &Service) -> anyhow::Result<HttpDraftConfig> {
+        self.draft_registry.borrow_mut().get_or_init(service)
+    }
+
+    /// Get the current draft config for a service (if it exists)
+    pub fn get_draft(&self, service_id: Uuid) -> Option<HttpDraftConfig> {
+        self.draft_registry.borrow().get(service_id)
+    }
+
+    /// Update a draft with new config
+    pub fn update_draft(&self, service_id: Uuid, config: &HttpDraftConfig) -> anyhow::Result<()> {
+        self.draft_registry.borrow_mut().update(service_id, config)
+    }
+
+    /// Create a checkpoint for undo (call this on blur events)
+    pub fn checkpoint_draft(&self, service_id: Uuid) {
+        self.draft_registry.borrow_mut().checkpoint(service_id)
+    }
+
+    /// Undo to the previous checkpoint
+    pub fn undo_draft(&self, service_id: Uuid) -> Option<HttpDraftConfig> {
+        self.draft_registry.borrow_mut().undo(service_id)
+    }
+
+    /// Redo to the next checkpoint
+    pub fn redo_draft(&self, service_id: Uuid) -> Option<HttpDraftConfig> {
+        self.draft_registry.borrow_mut().redo(service_id)
+    }
+
+    /// Check if undo is available
+    pub fn can_undo_draft(&self, service_id: Uuid) -> bool {
+        self.draft_registry.borrow().can_undo(service_id)
+    }
+
+    /// Check if redo is available
+    pub fn can_redo_draft(&self, service_id: Uuid) -> bool {
+        self.draft_registry.borrow().can_redo(service_id)
+    }
+
+    /// Check if a draft has been modified (dirty)
+    pub fn draft_is_dirty(&self, service_id: Uuid) -> bool {
+        self.draft_registry.borrow().is_dirty(service_id)
+    }
+
+    /// Check if a draft has unsaved changes compared to the original
+    pub fn draft_has_changes(&self, service_id: Uuid, original: &HttpDraftConfig) -> bool {
+        self.draft_registry
+            .borrow()
+            .has_changes(service_id, original)
+    }
+
+    /// Save draft to service and persist to database
+    pub fn save_draft_to_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
+        // Get the draft config
+        let draft_config = match self.draft_registry.borrow_mut().save_to_service(service_id) {
+            Ok(config) => config,
+            Err(e) => {
+                error!("Failed to save draft: {}", e);
+                return;
+            }
+        };
+
+        // Convert HttpDraftConfig to HttpConfig
+        let http_config = draft_config.to_http_config();
+
+        // Update the service in the database
+        self.update_service_config(service_id, http_config, cx);
+    }
+
+    /// Discard draft changes and reload from service
+    pub fn discard_draft(&self, service: &Service) -> anyhow::Result<HttpDraftConfig> {
+        self.draft_registry.borrow_mut().discard(service)
+    }
+
+    /// Check if a draft exists for a service
+    pub fn has_draft(&self, service_id: Uuid) -> bool {
+        self.draft_registry.borrow().has_draft(service_id)
     }
 
     // === Environment Variable Operations ===
