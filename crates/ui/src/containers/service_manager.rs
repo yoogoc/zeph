@@ -1,13 +1,10 @@
 //! Service management module for WorkspaceContent
 //!
-//! This module encapsulates service lifecycle management (create, open, close, rename)
-//! and related state, reducing the complexity of WorkspaceContent.
+//! This module manages HTTP service entity cache and unsaved changes confirmation.
 
 use crate::containers::HttpService;
 use crate::dialogs::ConfirmDialog;
 use gpui::*;
-#[allow(unused_imports)]
-use models::Workspace;
 use models::{ContentType, HttpConfig, ServiceType};
 use std::collections::HashMap;
 use uuid::Uuid;
@@ -16,8 +13,6 @@ use uuid::Uuid;
 pub struct ServiceManager {
     /// Cache of HTTP service entities by service ID
     http_services: HashMap<Uuid, Entity<HttpService>>,
-    /// Current active service/content
-    current_content: Option<ContentType>,
     /// Confirmation dialog for unsaved changes
     confirm_dialog: Option<Entity<ConfirmDialog>>,
     /// Whether the confirmation dialog is visible
@@ -37,21 +32,10 @@ impl ServiceManager {
     pub fn new() -> Self {
         Self {
             http_services: HashMap::new(),
-            current_content: None,
             confirm_dialog: None,
             show_confirm_dialog: false,
             pending_close_content: None,
         }
-    }
-
-    /// Returns the current active content
-    pub fn current_content(&self) -> Option<&ContentType> {
-        self.current_content.as_ref()
-    }
-
-    /// Sets the current active content
-    pub fn set_current_content(&mut self, content: Option<ContentType>) {
-        self.current_content = content;
     }
 
     /// Returns a reference to the HTTP services map
@@ -155,16 +139,8 @@ impl ServiceManager {
         http_service
     }
 
-    /// Handles content type switching and creates service instances as needed
-    pub fn set_content(
-        &mut self,
-        _workspace: &Workspace,
-        ct: &ContentType,
-        window: &mut Window,
-        cx: &mut App,
-    ) {
-        self.current_content = Some(ct.clone());
-
+    /// Ensures HTTP service entity exists for the given content (creates if needed)
+    pub fn ensure_http_service(&mut self, ct: &ContentType, window: &mut Window, cx: &mut App) {
         if let ContentType::Service(service) = ct {
             if let ServiceType::Http(config) = &service.service_type {
                 if !self.http_services.contains_key(&service.id) {
@@ -178,6 +154,5 @@ impl ServiceManager {
                 }
             }
         }
-        // No HTTP service creation needed for ServiceFolder, SchemaFolder, or Schema types
     }
 }

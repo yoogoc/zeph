@@ -10,7 +10,7 @@ use crate::{SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent};
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
-use models::{ContentType, FolderType, ServiceType, Workspace, WorkspaceView};
+use models::{ContentType, FolderType, ServiceType, WorkspaceView};
 use uuid::Uuid;
 use workspace::{WorkspaceEvent, WorkspaceServiceEvent};
 
@@ -37,18 +37,21 @@ impl WorkspaceContent {
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
 
-        let registry_sub = cx.subscribe(&workspace_registry, {
+        let registry_sub = cx.subscribe_in(&workspace_registry, window, {
             let sidebar = sidebar.clone();
             let service_tabs = service_tabs.clone();
             let env_selector = env_selector.clone();
             let folder_detail = folder_detail_page.clone();
-            move |this, registry, event: &WorkspaceEvent, cx| match event {
+            move |this, registry, event: &WorkspaceEvent, window, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
-                    // Sync current_service to target workspace's active_service
-                    this.service_manager
-                        .set_current_content(workspace.active_service.clone());
                     // Clear http_services cache to release old workspace's service instances
                     this.service_manager.clear_http_services();
+
+                    // Create HttpService for active_service if exists
+                    if let Some(active_service) = &workspace.active_service {
+                        this.service_manager
+                            .ensure_http_service(active_service, window, cx);
+                    }
 
                     sidebar.update(cx, |s, cx| {
                         s.refresh_tree(cx);
@@ -102,7 +105,7 @@ impl WorkspaceContent {
                 match event {
                     WorkspaceServiceEvent::Open(workspace, service) => {
                         this.service_manager
-                            .set_content(workspace, service, window, cx);
+                            .ensure_http_service(service, window, cx);
                         this.update_folder_detail_if_needed(service, cx);
                         service_tabs.update(cx, |s, cx| {
                             s.set_workspace(workspace.clone());
@@ -118,10 +121,8 @@ impl WorkspaceContent {
                             this.service_manager.remove_http_service(&service.id);
                         }
                         if let Some(new) = new {
-                            this.service_manager.set_content(workspace, new, window, cx);
+                            this.service_manager.ensure_http_service(new, window, cx);
                             this.update_folder_detail_if_needed(new, cx);
-                        } else {
-                            this.service_manager.set_current_content(None);
                         }
                         service_tabs.update(cx, |s, cx| {
                             s.set_workspace(workspace.clone());
@@ -461,11 +462,16 @@ impl WorkspaceContent {
 
     fn render_service_content(
         &mut self,
-        _workspace: &Workspace,
         _window: &mut Window,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        match self.service_manager.current_content() {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        let active_service = registry
+            .read(cx)
+            .get_active_workspace()
+            .and_then(|ws| ws.active_service.clone());
+
+        match active_service.as_ref() {
             Some(content) => match content {
                 ContentType::Service(service) => match &service.service_type {
                     ServiceType::Http(_) => self
@@ -515,7 +521,7 @@ impl WorkspaceContent {
         let registry = workspace::WorkspaceRegistry::global(cx);
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
-        if let Some(workspace) = workspace {
+        if let Some(_workspace) = workspace {
             let main_content = h_resizable("workspace-content")
                 .child(resizable_panel().size(px(200.)).child(self.sidebar.clone()))
                 .child(
@@ -541,7 +547,7 @@ impl WorkspaceContent {
                                             .child(div().flex_1().child(self.service_tabs.clone()))
                                             .child(div().p_2().child(self.env_selector.clone())),
                                     )
-                                    .child(self.render_service_content(&workspace, window, cx)),
+                                    .child(self.render_service_content(window, cx)),
                             ),
                     ),
                 );
