@@ -3,67 +3,51 @@ use gpui_component::button::Button;
 use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::{IconName, StyledExt, WindowExt};
-use models::{Environment, EnvironmentVariable, Workspace};
-use uuid::Uuid;
+use workspace::WorkspaceRegistry;
 
 use crate::dialogs::{EnvironmentManager, EnvironmentManagerEvent};
 
-pub enum EnvironmentSelectorEvent {
-    SelectEnvironment(Uuid),
-    CreateEnvironment(String),
-    UpdateEnvironment(Environment),
-    DeleteEnvironment(Uuid),
-    AddVariable(Uuid, EnvironmentVariable),
-    UpdateVariable(EnvironmentVariable),
-    DeleteVariable(Uuid),
-}
-
-pub struct EnvironmentSelector {
-    workspace: Option<Workspace>,
-}
-
-impl EventEmitter<EnvironmentSelectorEvent> for EnvironmentSelector {}
+pub struct EnvironmentSelector;
 
 impl EnvironmentSelector {
     pub fn new() -> Self {
-        Self { workspace: None }
-    }
-
-    pub fn set_workspace(&mut self, workspace: Workspace) {
-        self.workspace = Some(workspace);
+        Self
     }
 
     fn open_manage_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(workspace) = &self.workspace else {
+        let registry = WorkspaceRegistry::global(cx);
+        let Some(workspace) = registry.read(cx).get_active_workspace() else {
             return;
         };
         let environments = workspace.environments.clone();
 
         let manager = cx.new(|_| EnvironmentManager::new(environments));
 
-        cx.subscribe(
-            &manager,
-            |_this, _, event: &EnvironmentManagerEvent, cx| match event {
+        cx.subscribe(&manager, |_this, _, event: &EnvironmentManagerEvent, cx| {
+            let registry = WorkspaceRegistry::global(cx);
+            match event {
                 EnvironmentManagerEvent::Create(name) => {
-                    cx.emit(EnvironmentSelectorEvent::CreateEnvironment(name.clone()));
+                    registry.update(cx, |r, cx| r.create_environment(name.clone(), cx));
                 }
                 EnvironmentManagerEvent::Update(env) => {
-                    cx.emit(EnvironmentSelectorEvent::UpdateEnvironment(env.clone()));
+                    registry.update(cx, |r, cx| r.update_environment(env.clone(), cx));
                 }
                 EnvironmentManagerEvent::Delete(id) => {
-                    cx.emit(EnvironmentSelectorEvent::DeleteEnvironment(*id));
+                    registry.update(cx, |r, cx| r.delete_environment(*id, cx));
                 }
                 EnvironmentManagerEvent::AddVariable(env_id, var) => {
-                    cx.emit(EnvironmentSelectorEvent::AddVariable(*env_id, var.clone()));
+                    registry.update(cx, |r, cx| {
+                        r.add_environment_variable(*env_id, var.clone(), cx)
+                    });
                 }
                 EnvironmentManagerEvent::UpdateVariable(var) => {
-                    cx.emit(EnvironmentSelectorEvent::UpdateVariable(var.clone()));
+                    registry.update(cx, |r, cx| r.update_environment_variable(var.clone(), cx));
                 }
                 EnvironmentManagerEvent::DeleteVariable(id) => {
-                    cx.emit(EnvironmentSelectorEvent::DeleteVariable(*id));
+                    registry.update(cx, |r, cx| r.delete_environment_variable(*id, cx));
                 }
-            },
-        )
+            }
+        })
         .detach();
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
@@ -75,12 +59,10 @@ impl EnvironmentSelector {
     }
 
     fn open_create_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let this = cx.entity().downgrade();
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let input_clone = input.clone();
-            let this_clone = this.clone();
 
             dialog
                 .title(shared_t!("env.create"))
@@ -90,11 +72,8 @@ impl EnvironmentSelector {
                 .on_ok(move |_, window, cx| {
                     let name = input_clone.read(cx).value().to_string();
                     if !name.trim().is_empty() {
-                        if let Some(this) = this_clone.upgrade() {
-                            this.update(cx, |_, cx| {
-                                cx.emit(EnvironmentSelectorEvent::CreateEnvironment(name));
-                            });
-                        }
+                        let registry = WorkspaceRegistry::global(cx);
+                        registry.update(cx, |r, cx| r.create_environment(name, cx));
                     }
                     window.close_dialog(cx);
                     true
@@ -105,11 +84,12 @@ impl EnvironmentSelector {
 
 impl Render for EnvironmentSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(workspace) = &self.workspace else {
+        let registry = WorkspaceRegistry::global(cx);
+        let Some(workspace) = registry.read(cx).get_active_workspace() else {
             return div().into_any_element();
         };
 
-        let environments = &workspace.environments;
+        let environments = workspace.environments.clone();
         let active_env = workspace
             .active_environment_id
             .and_then(|id| environments.iter().find(|e| e.id == id));
@@ -137,9 +117,10 @@ impl Render for EnvironmentSelector {
                                 m = m.item(PopupMenuItem::new(name).on_click(window.listener_for(
                                     &view,
                                     move |_this, _, _, cx| {
-                                        cx.emit(EnvironmentSelectorEvent::SelectEnvironment(
-                                            env_id,
-                                        ));
+                                        let registry = WorkspaceRegistry::global(cx);
+                                        registry.update(cx, |r, cx| {
+                                            r.set_active_environment(env_id, cx)
+                                        });
                                     },
                                 )));
                             }

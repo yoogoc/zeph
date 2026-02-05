@@ -2,7 +2,7 @@ use crate::containers::import_handler::{self, ImportHandler};
 use crate::containers::service_manager::ServiceManager;
 use crate::containers::{FolderDetailPage, FolderDetailPageEvent, ServiceTabs, ServiceTabsEvent};
 use crate::dialogs::ConfirmDialogEvent;
-use crate::selectors::{EnvironmentSelector, EnvironmentSelectorEvent};
+use crate::selectors::EnvironmentSelector;
 use crate::simple_import_dialog::ImportErrorType;
 use crate::widgets::OverlayDialog;
 use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
@@ -57,8 +57,7 @@ impl WorkspaceContent {
                         s.set_workspace(workspace.clone());
                         cx.notify();
                     });
-                    env_selector.update(cx, |s, cx| {
-                        s.set_workspace(workspace.clone());
+                    env_selector.update(cx, |_, cx| {
                         cx.notify();
                     });
                     cx.notify();
@@ -78,10 +77,7 @@ impl WorkspaceContent {
                         }
                         cx.notify();
                     });
-                    env_selector.update(cx, |s, cx| {
-                        if let Some(workspace) = registry.read(cx).get_active_workspace() {
-                            s.set_workspace(workspace.clone());
-                        }
+                    env_selector.update(cx, |_, cx| {
                         cx.notify();
                     });
                     // Update folder detail page if a folder is currently being displayed
@@ -219,22 +215,6 @@ impl WorkspaceContent {
             },
         );
 
-        let env_sub = cx.subscribe(&env_selector, |this, _, event, cx| match event {
-            EnvironmentSelectorEvent::SelectEnvironment(id) => this.select_environment(*id, cx),
-            EnvironmentSelectorEvent::CreateEnvironment(name) => {
-                this.create_environment(name.clone(), cx)
-            }
-            EnvironmentSelectorEvent::UpdateEnvironment(env) => {
-                this.update_environment(env.clone(), cx)
-            }
-            EnvironmentSelectorEvent::DeleteEnvironment(id) => this.delete_environment(*id, cx),
-            EnvironmentSelectorEvent::AddVariable(env_id, var) => {
-                this.add_variable(*env_id, var.clone(), cx)
-            }
-            EnvironmentSelectorEvent::UpdateVariable(var) => this.update_variable(var.clone(), cx),
-            EnvironmentSelectorEvent::DeleteVariable(id) => this.delete_variable(*id, cx),
-        });
-
         let folder_detail_sub =
             cx.subscribe(&folder_detail_page, |this, _, event, cx| match event {
                 FolderDetailPageEvent::NavigateBack => this.navigate_back_from_folder_detail(cx),
@@ -266,7 +246,6 @@ impl WorkspaceContent {
                 registry_sub2,
                 tabs_sub,
                 sidebar_sub,
-                env_sub,
                 folder_detail_sub,
             ],
         }
@@ -290,47 +269,6 @@ impl WorkspaceContent {
         self.view = view;
         self.workspace_id = workspace_id;
         cx.notify();
-    }
-
-    // Environment operations
-    fn select_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.set_active_environment(env_id, cx));
-    }
-
-    fn create_environment(&mut self, name: String, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.create_environment(name, cx));
-    }
-
-    fn update_environment(&mut self, env: models::Environment, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.update_environment(env, cx));
-    }
-
-    fn delete_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.delete_environment(env_id, cx));
-    }
-
-    fn add_variable(
-        &mut self,
-        env_id: Uuid,
-        var: models::EnvironmentVariable,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.add_environment_variable(env_id, var, cx));
-    }
-
-    fn update_variable(&mut self, var: models::EnvironmentVariable, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.update_environment_variable(var, cx));
-    }
-
-    fn delete_variable(&mut self, var_id: Uuid, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.delete_environment_variable(var_id, cx));
     }
 
     fn import_openapi(&mut self, config: ImportConfig, cx: &mut Context<Self>) {
