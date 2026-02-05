@@ -53,11 +53,13 @@ impl ServiceManager {
     }
 
     /// Returns a reference to the HTTP services map
+    #[allow(unused)]
     pub fn http_services(&self) -> &HashMap<Uuid, Entity<HttpService>> {
         &self.http_services
     }
 
     /// Returns a mutable reference to the HTTP services map
+    #[allow(unused)]
     pub fn http_services_mut(&mut self) -> &mut HashMap<Uuid, Entity<HttpService>> {
         &mut self.http_services
     }
@@ -68,6 +70,7 @@ impl ServiceManager {
     }
 
     /// Inserts an HTTP service
+    #[allow(unused)]
     pub fn insert_http_service(&mut self, id: Uuid, service: Entity<HttpService>) {
         self.http_services.insert(id, service);
     }
@@ -93,6 +96,7 @@ impl ServiceManager {
     }
 
     /// Returns the pending close content
+    #[allow(unused)]
     pub fn pending_close_content(&self) -> Option<&ContentType> {
         self.pending_close_content.as_ref()
     }

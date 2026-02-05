@@ -17,6 +17,7 @@ struct QueryParamRow {
     key: Entity<InputState>,
     value: Entity<InputState>,
     enabled: bool,
+    #[allow(unused)]
     is_folder_param: bool,
 }
 

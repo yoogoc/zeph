@@ -3,10 +3,10 @@ use crate::loader::TranslationLoader;
 use crate::paths::get_data_dir;
 use crate::store::TranslationStore;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 // Global store for the initialized translation store
-static mut GLOBAL_STORE: Option<Arc<TranslationStore>> = None;
+static GLOBAL_STORE: OnceLock<Arc<TranslationStore>> = OnceLock::new();
 
 /// Initialize the i18n system with runtime loading
 ///
@@ -71,10 +71,8 @@ pub fn init_with_dir(data_dir: PathBuf) -> Result<Arc<TranslationStore>> {
     // Create store with English as default
     let store = Arc::new(TranslationStore::new(translations, "en".to_string()));
 
-    // Store globally
-    unsafe {
-        GLOBAL_STORE = Some(Arc::clone(&store));
-    }
+    // Store globally (ignore error if already initialized)
+    let _ = GLOBAL_STORE.set(Arc::clone(&store));
 
     tracing::info!("i18n system initialized successfully");
 
@@ -85,7 +83,7 @@ pub fn init_with_dir(data_dir: PathBuf) -> Result<Arc<TranslationStore>> {
 ///
 /// Returns None if init() hasn't been called yet
 pub fn get_store() -> Option<Arc<TranslationStore>> {
-    unsafe { GLOBAL_STORE.as_ref().cloned() }
+    GLOBAL_STORE.get().cloned()
 }
 
 #[cfg(test)]
