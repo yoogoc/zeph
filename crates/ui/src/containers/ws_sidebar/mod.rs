@@ -3,7 +3,7 @@ mod utils;
 
 use crate::dialogs::{EntityType, RenameDialog, RenameDialogEvent};
 use crate::ws_sidebar::popup_menu::popup_menu;
-use crate::{ImportConfig, SimpleImportConfig};
+use crate::SimpleImportConfig;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
@@ -11,46 +11,31 @@ use gpui_component::list::ListItem;
 use gpui_component::menu::DropdownMenu;
 use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
 use gpui_component::{h_flex, v_flex, IconName, Sizable};
-use models::{FolderType, Workspace};
+use models::FolderType;
 use std::collections::HashMap;
 use utils::build_tree;
 use utils::cal_icon;
 pub use utils::TreeId;
 use uuid::Uuid;
+use workspace::WorkspaceRegistry;
 
 pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
-    workspace: Option<Workspace>,
     rename_dialog: Option<Entity<RenameDialog>>,
 }
 
 #[derive(Debug, Clone)]
 #[allow(unused)]
 pub enum WorkspaceSidebarEvent {
+    // Events that need UI coordination from parent
     OpenService(Uuid),
     OpenSchema(Uuid),
-    OpenFolderDetail(Uuid), // New event for opening folder details
-    CreateService(SharedString, Option<Uuid>),
-    CreateSchema(SharedString, Option<Uuid>),
-    CreateFolder(SharedString, Option<Uuid>, FolderType),
-    // ToggleFolder(Uuid),
-    ImportOpenApi(ImportConfig),
-    // New menu events
-    DeleteService(Uuid),
-    DeleteSchema(Uuid),
-    DeleteFolder(Uuid),
-    // Import dialog events
-    ShowImportDialog(Option<Uuid>), // Show import dialog with optional target folder ID
-    ExecuteImport(SimpleImportConfig), // Execute import with the given configuration
-    // Rename events - Requirements 1.1, 1.2, 2.1, 2.2
-    // These events are emitted when the user initiates a rename from the context menu
-    RenameService(Uuid),
-    RenameFolder(Uuid),
-    // Confirm rename events - emitted when the user confirms the new name in the dialog
-    ConfirmRenameService(Uuid, SharedString),
-    ConfirmRenameFolder(Uuid, SharedString),
+    OpenFolderDetail(Uuid),
+    // Import dialog events (need import_handler from parent)
+    ShowImportDialog(Option<Uuid>),
+    ExecuteImport(SimpleImportConfig),
 }
 
 impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
@@ -61,18 +46,69 @@ impl WorkspaceSidebar {
         Self {
             tree,
             hovered: None,
-            workspace: None,
             tree_map: HashMap::new(),
             rename_dialog: None,
         }
     }
 
-    pub fn set_workspace(&mut self, workspace: Workspace, cx: &mut Context<Self>) {
+    pub fn refresh_tree(&mut self, cx: &mut Context<Self>) {
         self.tree_map.clear();
-        self.workspace = Some(workspace.clone());
-        self.tree.update(cx, |this, cx| {
-            this.set_items(build_tree(workspace), cx);
+        let registry = WorkspaceRegistry::global(cx);
+        let workspace = registry.read(cx).get_active_workspace().cloned();
+        if let Some(workspace) = workspace {
+            self.tree.update(cx, |this, cx| {
+                this.set_items(build_tree(workspace), cx);
+            });
+        }
+    }
+
+    // Direct operations on WorkspaceRegistry
+    pub fn create_service(&self, name: SharedString, folder_id: Option<Uuid>, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.create_service(name, folder_id, cx));
+    }
+
+    pub fn create_schema(&self, name: SharedString, folder_id: Option<Uuid>, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.create_schema(name, folder_id, cx));
+    }
+
+    pub fn create_folder(
+        &self,
+        name: SharedString,
+        parent_id: Option<Uuid>,
+        folder_type: FolderType,
+        cx: &mut App,
+    ) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| {
+            r.create_folder(name, parent_id, folder_type, cx)
         });
+    }
+
+    pub fn delete_service(&self, id: Uuid, _cx: &mut App) {
+        // TODO: Implement when WorkspaceRegistry.delete_service is available
+        eprintln!("Delete service requested: {}", id);
+    }
+
+    pub fn delete_schema(&self, id: Uuid, _cx: &mut App) {
+        // TODO: Implement when WorkspaceRegistry.delete_schema is available
+        eprintln!("Delete schema requested: {}", id);
+    }
+
+    pub fn delete_folder(&self, id: Uuid, _cx: &mut App) {
+        // TODO: Implement when WorkspaceRegistry.delete_folder is available
+        eprintln!("Delete folder requested: {}", id);
+    }
+
+    pub fn rename_service(&self, id: Uuid, new_name: SharedString, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.rename_service(id, new_name, cx));
+    }
+
+    pub fn rename_folder(&self, id: Uuid, new_name: SharedString, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| r.rename_folder(id, new_name, cx));
     }
 
     pub fn set_ix(&mut self, item: TreeId, cx: &mut Context<Self>) {
@@ -99,13 +135,6 @@ impl WorkspaceSidebar {
 
         cx.notify();
     }
-    pub fn handle_context_menu_event(
-        &mut self,
-        event: WorkspaceSidebarEvent,
-        cx: &mut Context<Self>,
-    ) {
-        cx.emit(event);
-    }
 
     /// Show the rename dialog for a Service
     /// Implements Requirements 1.1, 1.2
@@ -115,42 +144,36 @@ impl WorkspaceSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Find the service in the workspace to get its current name
-        if let Some(workspace) = &self.workspace {
-            if let Some(service) = workspace.services.iter().find(|s| s.id == service_id) {
-                let current_name = service.name.clone();
+        let registry = WorkspaceRegistry::global(cx);
+        let Some(workspace) = registry.read(cx).get_active_workspace() else {
+            return;
+        };
+        let Some(service) = workspace.services.iter().find(|s| s.id == service_id) else {
+            return;
+        };
+        let current_name = service.name.clone();
 
-                // Create the rename dialog
-                let dialog =
-                    cx.new(|cx| RenameDialog::new(current_name, EntityType::Service, window, cx));
+        let dialog = cx.new(|cx| RenameDialog::new(current_name, EntityType::Service, window, cx));
 
-                // Subscribe to dialog events
-                cx.subscribe_in(&dialog, window, move |this, _dialog, event, _window, cx| {
-                    match event {
-                        RenameDialogEvent::Confirm(new_name) => {
-                            // Close the dialog
-                            this.rename_dialog = None;
-                            // Emit event to update the service name in the database
-                            // This will be handled by the parent component (WorkspaceArea)
-                            cx.emit(WorkspaceSidebarEvent::ConfirmRenameService(
-                                service_id,
-                                new_name.clone(),
-                            ));
-                            cx.notify();
-                        }
-                        RenameDialogEvent::Cancel => {
-                            // Just close the dialog
-                            this.rename_dialog = None;
-                            cx.notify();
-                        }
-                    }
-                })
-                .detach();
+        cx.subscribe_in(
+            &dialog,
+            window,
+            move |this, _dialog, event, _window, cx| match event {
+                RenameDialogEvent::Confirm(new_name) => {
+                    this.rename_dialog = None;
+                    this.rename_service(service_id, new_name.clone(), cx);
+                    cx.notify();
+                }
+                RenameDialogEvent::Cancel => {
+                    this.rename_dialog = None;
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
 
-                self.rename_dialog = Some(dialog);
-                cx.notify();
-            }
-        }
+        self.rename_dialog = Some(dialog);
+        cx.notify();
     }
 
     /// Show the rename dialog for a Folder
@@ -161,61 +184,36 @@ impl WorkspaceSidebar {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        // Find the folder in the workspace to get its current name
-        if let Some(workspace) = &self.workspace {
-            if let Some(folder) = workspace.folders.iter().find(|f| f.id == folder_id) {
-                let current_name = folder.name.clone();
+        let registry = WorkspaceRegistry::global(cx);
+        let Some(workspace) = registry.read(cx).get_active_workspace() else {
+            return;
+        };
+        let Some(folder) = workspace.folders.iter().find(|f| f.id == folder_id) else {
+            return;
+        };
+        let current_name = folder.name.clone();
 
-                // Create the rename dialog
-                let dialog =
-                    cx.new(|cx| RenameDialog::new(current_name, EntityType::Folder, window, cx));
+        let dialog = cx.new(|cx| RenameDialog::new(current_name, EntityType::Folder, window, cx));
 
-                // Subscribe to dialog events
-                cx.subscribe_in(&dialog, window, move |this, _dialog, event, _window, cx| {
-                    match event {
-                        RenameDialogEvent::Confirm(new_name) => {
-                            // Close the dialog
-                            this.rename_dialog = None;
-                            // Emit event to update the folder name in the database
-                            // This will be handled by the parent component (WorkspaceArea)
-                            cx.emit(WorkspaceSidebarEvent::ConfirmRenameFolder(
-                                folder_id,
-                                new_name.clone(),
-                            ));
-                            cx.notify();
-                        }
-                        RenameDialogEvent::Cancel => {
-                            // Just close the dialog
-                            this.rename_dialog = None;
-                            cx.notify();
-                        }
-                    }
-                })
-                .detach();
+        cx.subscribe_in(
+            &dialog,
+            window,
+            move |this, _dialog, event, _window, cx| match event {
+                RenameDialogEvent::Confirm(new_name) => {
+                    this.rename_dialog = None;
+                    this.rename_folder(folder_id, new_name.clone(), cx);
+                    cx.notify();
+                }
+                RenameDialogEvent::Cancel => {
+                    this.rename_dialog = None;
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
 
-                self.rename_dialog = Some(dialog);
-                cx.notify();
-            }
-        }
-    }
-
-    /// Handle rename events by showing the appropriate dialog
-    /// Implements Requirements 1.1, 1.2, 2.1, 2.2
-    pub fn handle_rename_event(
-        &mut self,
-        event: &WorkspaceSidebarEvent,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        match event {
-            WorkspaceSidebarEvent::RenameService(service_id) => {
-                self.show_rename_service_dialog(*service_id, window, cx);
-            }
-            WorkspaceSidebarEvent::RenameFolder(folder_id) => {
-                self.show_rename_folder_dialog(*folder_id, window, cx);
-            }
-            _ => {}
-        }
+        self.rename_dialog = Some(dialog);
+        cx.notify();
     }
 
     // 渲染树节点
@@ -227,7 +225,9 @@ impl WorkspaceSidebar {
         cx: &mut Context<Self>,
     ) -> ListItem {
         let item = entry.item();
-        let icon = cal_icon(entry, &self.workspace);
+        let registry = WorkspaceRegistry::global(cx);
+        let workspace = registry.read(cx).get_active_workspace().cloned();
+        let icon = cal_icon(entry, &workspace);
         let item_id = item.id.clone();
         ListItem::new(ix)
             .selected(selected)

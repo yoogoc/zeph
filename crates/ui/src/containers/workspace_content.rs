@@ -6,7 +6,7 @@ use crate::selectors::EnvironmentSelector;
 use crate::simple_import_dialog::ImportErrorType;
 use crate::widgets::OverlayDialog;
 use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
-use crate::{ImportConfig, SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent};
+use crate::{SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent};
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
@@ -51,7 +51,7 @@ impl WorkspaceContent {
                     this.service_manager.clear_http_services();
 
                     sidebar.update(cx, |s, cx| {
-                        s.set_workspace(workspace.clone(), cx);
+                        s.refresh_tree(cx);
                     });
                     service_tabs.update(cx, |s, cx| {
                         s.set_workspace(workspace.clone());
@@ -67,9 +67,7 @@ impl WorkspaceContent {
                     // Update all UI components with the latest workspace data
                     // Implements Requirements 1.4, 2.4, 8.1, 8.2
                     sidebar.update(cx, |s, cx| {
-                        if let Some(workspace) = registry.read(cx).get_active_workspace() {
-                            s.set_workspace(workspace.clone(), cx);
-                        }
+                        s.refresh_tree(cx);
                     });
                     service_tabs.update(cx, |s, cx| {
                         if let Some(workspace) = registry.read(cx).get_active_workspace() {
@@ -154,63 +152,15 @@ impl WorkspaceContent {
         let sidebar_sub = cx.subscribe_in(
             &sidebar,
             window,
-            |this, sidebar_entity, event, window, cx| match event {
+            |this, _sidebar_entity, event, window, cx| match event {
                 WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
                 WorkspaceSidebarEvent::OpenSchema(_id) => {}
                 WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
-                WorkspaceSidebarEvent::CreateService(name, folder_id) => {
-                    this.create_service(name.clone(), *folder_id, cx)
-                }
-                WorkspaceSidebarEvent::CreateSchema(name, folder_id) => {
-                    this.create_schema(name.clone(), *folder_id, cx)
-                }
-                WorkspaceSidebarEvent::CreateFolder(name, parent_id, folder_type) => {
-                    this.create_folder(name.clone(), *parent_id, folder_type.clone(), cx)
-                }
-                WorkspaceSidebarEvent::ImportOpenApi(config) => {
-                    this.import_openapi(config.clone(), cx)
-                }
-                // New menu events - for now just log them, actual implementation will be added later
-                WorkspaceSidebarEvent::DeleteService(id) => {
-                    // TODO: Implement service deletion
-                    eprintln!("Delete service requested: {}", id);
-                }
-                WorkspaceSidebarEvent::DeleteSchema(id) => {
-                    // TODO: Implement schema deletion
-                    eprintln!("Delete schema requested: {}", id);
-                }
-                WorkspaceSidebarEvent::DeleteFolder(id) => {
-                    // TODO: Implement folder deletion
-                    eprintln!("Delete folder requested: {}", id);
-                }
-                // Import dialog events
-                // Implements Requirements 1.1, 1.2, 1.3, 1.4, 3.4
                 WorkspaceSidebarEvent::ShowImportDialog(folder_id) => {
                     this.show_import_dialog(*folder_id, window, cx);
                 }
-                // Implements Requirements 3.4, 4.4, 4.5
                 WorkspaceSidebarEvent::ExecuteImport(config) => {
                     this.execute_simple_import(config.clone(), cx);
-                }
-                // Rename events - show the rename dialog
-                // Implements Requirements 1.1, 1.2, 2.1, 2.2
-                WorkspaceSidebarEvent::RenameService(_id) => {
-                    sidebar_entity.update(cx, |sidebar, cx| {
-                        sidebar.handle_rename_event(event, window, cx);
-                    });
-                }
-                WorkspaceSidebarEvent::RenameFolder(_id) => {
-                    sidebar_entity.update(cx, |sidebar, cx| {
-                        sidebar.handle_rename_event(event, window, cx);
-                    });
-                }
-                // Confirm rename events - update the database
-                // Implements Requirements 1.3, 2.3
-                WorkspaceSidebarEvent::ConfirmRenameService(id, new_name) => {
-                    this.rename_service(*id, new_name.clone(), cx);
-                }
-                WorkspaceSidebarEvent::ConfirmRenameFolder(id, new_name) => {
-                    this.rename_folder(*id, new_name.clone(), cx);
                 }
             },
         );
@@ -269,20 +219,6 @@ impl WorkspaceContent {
         self.view = view;
         self.workspace_id = workspace_id;
         cx.notify();
-    }
-
-    fn import_openapi(&mut self, config: ImportConfig, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            let options = workspace::ImportOptions {
-                target_folder: config.target_folder,
-                create_subfolders: config.create_subfolders,
-                schema_folder_strategy: config.schema_folder_strategy,
-            };
-            if let Err(e) = registry.import_openapi_with_options(&config.content, options, cx) {
-                eprintln!("Failed to import OpenAPI: {}", e);
-            }
-        });
     }
 
     /// Show the simplified import dialog
@@ -357,61 +293,6 @@ impl WorkspaceContent {
         });
     }
 
-    fn create_service(
-        &mut self,
-        name: SharedString,
-        folder_id: Option<Uuid>,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.create_service(name, folder_id, cx);
-        });
-    }
-
-    fn create_schema(
-        &mut self,
-        name: SharedString,
-        folder_id: Option<Uuid>,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.create_schema(name, folder_id, cx);
-        });
-    }
-
-    fn create_folder(
-        &mut self,
-        name: SharedString,
-        parent_id: Option<Uuid>,
-        folder_type: FolderType,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.create_folder(name, parent_id, folder_type, cx);
-        });
-    }
-
-    /// Rename a service
-    /// Implements Requirements 1.3
-    fn rename_service(&mut self, service_id: Uuid, new_name: SharedString, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.rename_service(service_id, new_name, cx);
-        });
-    }
-
-    /// Rename a folder
-    /// Implements Requirements 2.3
-    fn rename_folder(&mut self, folder_id: Uuid, new_name: SharedString, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.rename_folder(folder_id, new_name, cx);
-        });
-    }
-
     /// Rename a service from tab editing
     /// Implements Requirements 1.7: Tab title editing saves to database
     fn rename_service_from_tab(
@@ -422,7 +303,10 @@ impl WorkspaceContent {
     ) {
         // Only handle Service content type
         if let ContentType::Service(service) = content_type {
-            self.rename_service(service.id, new_name, cx);
+            let registry = workspace::WorkspaceRegistry::global(cx);
+            registry.update(cx, |registry, cx| {
+                registry.rename_service(service.id, new_name, cx);
+            });
         }
     }
 

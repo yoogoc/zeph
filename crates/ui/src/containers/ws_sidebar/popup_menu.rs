@@ -14,170 +14,174 @@ pub fn popup_menu(
     let mut menu = menu;
     let id = TreeId::new(item.id.clone());
 
-    let mut detail = None;
-    let mut create_service = None;
-    let mut create_schema = None;
-    let mut create_folder = None;
-    let mut rename = None;
-    let mut delete = None;
-    let mut import_openapi = None;
+    // Event-based actions (need parent coordination)
+    let mut detail_event: Option<WorkspaceSidebarEvent> = None;
+    let mut import_event: Option<WorkspaceSidebarEvent> = None;
+
+    // Direct action parameters
+    let mut create_service_params: Option<(SharedString, Option<uuid::Uuid>)> = None;
+    let mut create_schema_params: Option<(SharedString, Option<uuid::Uuid>)> = None;
+    let mut create_folder_params: Option<(SharedString, Option<uuid::Uuid>, FolderType)> = None;
+    let mut rename_service_id: Option<uuid::Uuid> = None;
+    let mut rename_folder_id: Option<uuid::Uuid> = None;
+    let mut delete_service_id: Option<uuid::Uuid> = None;
+    let mut delete_schema_id: Option<uuid::Uuid> = None;
+    let mut delete_folder_id: Option<uuid::Uuid> = None;
+
     match id {
         TreeId::ServiceRoot => {
-            create_service = Some(WorkspaceSidebarEvent::CreateService(
-                "New Service".into(),
-                None,
-            ));
-            create_folder = Some(WorkspaceSidebarEvent::CreateFolder(
-                "New Folder".into(),
-                None,
-                FolderType::Service,
-            ));
-            // Implements Requirement 1.3, 1.4 - Import OpenAPI from service root with no target folder
-            import_openapi = Some(WorkspaceSidebarEvent::ShowImportDialog(None));
+            create_service_params = Some(("New Service".into(), None));
+            create_folder_params = Some(("New Folder".into(), None, FolderType::Service));
+            import_event = Some(WorkspaceSidebarEvent::ShowImportDialog(None));
         }
         TreeId::SchemaRoot => {
-            create_schema = Some(WorkspaceSidebarEvent::CreateSchema(
-                "New Schema".into(),
-                None,
-            ));
-            create_folder = Some(WorkspaceSidebarEvent::CreateFolder(
-                "New Folder".into(),
-                None,
-                FolderType::Schema,
-            ));
+            create_schema_params = Some(("New Schema".into(), None));
+            create_folder_params = Some(("New Folder".into(), None, FolderType::Schema));
         }
         TreeId::Service(id) => {
-            detail = Some(WorkspaceSidebarEvent::OpenService(id));
-            // Implements Requirements 1.1, 2.1 - Add Rename menu item for Service
-            rename = Some(WorkspaceSidebarEvent::RenameService(id));
-            delete = Some(WorkspaceSidebarEvent::DeleteService(id));
+            detail_event = Some(WorkspaceSidebarEvent::OpenService(id));
+            rename_service_id = Some(id);
+            delete_service_id = Some(id);
         }
         TreeId::Schema(id) => {
-            detail = Some(WorkspaceSidebarEvent::OpenSchema(id));
-            delete = Some(WorkspaceSidebarEvent::DeleteSchema(id));
+            detail_event = Some(WorkspaceSidebarEvent::OpenSchema(id));
+            delete_schema_id = Some(id);
         }
         TreeId::ServiceFolder(id) => {
-            detail = Some(WorkspaceSidebarEvent::OpenFolderDetail(id.clone()));
-            create_service = Some(WorkspaceSidebarEvent::CreateService(
-                "New Service".into(),
-                Some(id.clone()),
-            ));
-            create_folder = Some(WorkspaceSidebarEvent::CreateFolder(
-                "New Folder".into(),
-                Some(id.clone()),
-                FolderType::Service,
-            ));
-            // Implements Requirement 1.1, 1.2 - Import OpenAPI with target folder preset
-            import_openapi = Some(WorkspaceSidebarEvent::ShowImportDialog(Some(id.clone())));
-            // Implements Requirements 1.1, 2.1 - Add Rename menu item for Folder
-            rename = Some(WorkspaceSidebarEvent::RenameFolder(id.clone()));
-            delete = Some(WorkspaceSidebarEvent::DeleteFolder(id));
+            detail_event = Some(WorkspaceSidebarEvent::OpenFolderDetail(id));
+            create_service_params = Some(("New Service".into(), Some(id)));
+            create_folder_params = Some(("New Folder".into(), Some(id), FolderType::Service));
+            import_event = Some(WorkspaceSidebarEvent::ShowImportDialog(Some(id)));
+            rename_folder_id = Some(id);
+            delete_folder_id = Some(id);
         }
         TreeId::SchemaFolder(id) => {
-            detail = Some(WorkspaceSidebarEvent::OpenFolderDetail(id));
-            create_schema = Some(WorkspaceSidebarEvent::CreateSchema(
-                "New Schema".into(),
-                Some(id),
-            ));
-            create_folder = Some(WorkspaceSidebarEvent::CreateFolder(
-                "New Folder".into(),
-                Some(id),
-                FolderType::Schema,
-            ));
-            // Implements Requirements 1.1, 2.1 - Add Rename menu item for Folder
-            rename = Some(WorkspaceSidebarEvent::RenameFolder(id));
-            delete = Some(WorkspaceSidebarEvent::DeleteFolder(id));
+            detail_event = Some(WorkspaceSidebarEvent::OpenFolderDetail(id));
+            create_schema_params = Some(("New Schema".into(), Some(id)));
+            create_folder_params = Some(("New Folder".into(), Some(id), FolderType::Schema));
+            rename_folder_id = Some(id);
+            delete_folder_id = Some(id);
         }
     }
 
-    if let Some(event) = detail {
+    // Event-based: View Details (needs parent to open tabs)
+    if let Some(event) = detail_event {
         menu = menu.item(
             PopupMenuItem::new("View Details").on_click(window.listener_for(
-                &view,
-                move |this, _, _window, cx| {
-                    this.handle_context_menu_event(event.clone(), cx);
-
+                view,
+                move |_this, _, _, cx| {
+                    cx.emit(event.clone());
                     cx.stop_propagation();
                 },
             )),
         );
     }
-    if let Some(event) = create_service {
+
+    // Direct: Create Service
+    if let Some((name, folder_id)) = create_service_params {
         menu = menu.item(
             PopupMenuItem::new("New Service").on_click(window.listener_for(
-                &view,
-                move |this, _, _window, cx| {
-                    this.handle_context_menu_event(event.clone(), cx);
-
+                view,
+                move |this, _, _, cx| {
+                    this.create_service(name.clone(), folder_id, cx);
                     cx.stop_propagation();
                 },
             )),
-        )
+        );
     }
 
-    if let Some(event) = create_schema {
+    // Direct: Create Schema
+    if let Some((name, folder_id)) = create_schema_params {
         menu = menu.item(
             PopupMenuItem::new("New Schema").on_click(window.listener_for(
-                &view,
-                move |this, _, _window, cx| {
-                    this.handle_context_menu_event(event.clone(), cx);
-
+                view,
+                move |this, _, _, cx| {
+                    this.create_schema(name.clone(), folder_id, cx);
                     cx.stop_propagation();
                 },
             )),
-        )
+        );
     }
 
-    if let Some(event) = create_folder {
+    // Direct: Create Folder
+    if let Some((name, parent_id, folder_type)) = create_folder_params {
         menu = menu.item(
             PopupMenuItem::new("New Folder").on_click(window.listener_for(
-                &view,
-                move |this, _, _window, cx| {
-                    this.handle_context_menu_event(event.clone(), cx);
-
+                view,
+                move |this, _, _, cx| {
+                    this.create_folder(name.clone(), parent_id, folder_type.clone(), cx);
                     cx.stop_propagation();
                 },
             )),
-        )
+        );
     }
 
-    // Import OpenAPI menu item
-    // Implements Requirements 1.1, 1.2, 1.3, 1.4
-    if let Some(event) = import_openapi {
+    // Event-based: Import OpenAPI (needs parent's import_handler)
+    if let Some(event) = import_event {
         menu = menu.item(
             PopupMenuItem::new("导入 OpenAPI").on_click(window.listener_for(
-                &view,
-                move |this, _, _window, cx| {
-                    this.handle_context_menu_event(event.clone(), cx);
-
+                view,
+                move |_this, _, _, cx| {
+                    cx.emit(event.clone());
                     cx.stop_propagation();
                 },
             )),
-        )
+        );
     }
 
-    // Rename menu item
-    // Implements Requirements 1.1, 2.1 - Add Rename menu item for Service and Folder
-    if let Some(event) = rename {
+    // Direct: Rename Service
+    if let Some(service_id) = rename_service_id {
         menu = menu.item(PopupMenuItem::new("Rename").on_click(window.listener_for(
-            &view,
-            move |this, _, _window, cx| {
-                this.handle_context_menu_event(event.clone(), cx);
-
+            view,
+            move |this, _, window, cx| {
+                this.show_rename_service_dialog(service_id, window, cx);
                 cx.stop_propagation();
             },
-        )))
+        )));
     }
 
-    if let Some(event) = delete {
-        menu = menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
-            &view,
-            move |this, _, _window, cx| {
-                this.handle_context_menu_event(event.clone(), cx);
-
+    // Direct: Rename Folder
+    if let Some(folder_id) = rename_folder_id {
+        menu = menu.item(PopupMenuItem::new("Rename").on_click(window.listener_for(
+            view,
+            move |this, _, window, cx| {
+                this.show_rename_folder_dialog(folder_id, window, cx);
                 cx.stop_propagation();
             },
-        )))
+        )));
+    }
+
+    // Direct: Delete Service
+    if let Some(service_id) = delete_service_id {
+        menu = menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
+            view,
+            move |this, _, _, cx| {
+                this.delete_service(service_id, cx);
+                cx.stop_propagation();
+            },
+        )));
+    }
+
+    // Direct: Delete Schema
+    if let Some(schema_id) = delete_schema_id {
+        menu = menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
+            view,
+            move |this, _, _, cx| {
+                this.delete_schema(schema_id, cx);
+                cx.stop_propagation();
+            },
+        )));
+    }
+
+    // Direct: Delete Folder
+    if let Some(folder_id) = delete_folder_id {
+        menu = menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
+            view,
+            move |this, _, _, cx| {
+                this.delete_folder(folder_id, cx);
+                cx.stop_propagation();
+            },
+        )));
     }
 
     menu
