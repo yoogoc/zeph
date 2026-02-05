@@ -1,13 +1,14 @@
+use crate::containers::import_handler;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputState};
-use gpui_component::{Disableable, IconName, StyledExt};
+use gpui_component::{Disableable, IconName, StyledExt, WindowExt};
 use gpui_tokio::Tokio;
 use std::time::Duration;
 use uuid::Uuid;
-use workspace::parse_openapi;
+use workspace::{parse_openapi, WorkspaceRegistry};
 
 /// Configuration for the simple import dialog
 #[derive(Debug, Clone)]
@@ -56,14 +57,6 @@ impl ImportErrorType {
     }
 }
 
-/// Events emitted by the SimpleImportDialog
-/// Implements Requirements 3.1, 3.2, 3.3 - only Import and Cancel events
-#[derive(Debug, Clone)]
-pub enum SimpleImportDialogEvent {
-    Import(SimpleImportConfig),
-    Cancel,
-}
-
 /// Simplified import dialog component
 /// Implements Requirements 2.1, 2.2, 2.3, 2.5 for dialog UI
 pub struct SimpleImportDialog {
@@ -89,10 +82,13 @@ pub struct SimpleImportDialog {
     downloaded_content: Option<String>,
 }
 
-impl EventEmitter<SimpleImportDialogEvent> for SimpleImportDialog {}
-
 impl SimpleImportDialog {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        folder_id: Option<Uuid>,
+        folder_name: Option<SharedString>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let content_input = cx.new(|cx| {
             InputState::new(window, cx)
                 .placeholder("粘贴 OpenAPI JSON/YAML 内容或 URL...")
@@ -101,25 +97,14 @@ impl SimpleImportDialog {
 
         Self {
             content_input,
-            target_folder_id: None,
-            target_folder_name: None,
+            target_folder_id: folder_id,
+            target_folder_name: folder_name,
             create_subfolders: true,
             is_loading: false,
             error: None,
             service_count: None,
             downloaded_content: None,
         }
-    }
-
-    /// Set the target folder for import
-    /// Implements Requirement 2.2 - display preset target folder name
-    pub fn set_target_folder(
-        &mut self,
-        folder_id: Option<Uuid>,
-        folder_name: Option<SharedString>,
-    ) {
-        self.target_folder_id = folder_id;
-        self.target_folder_name = folder_name;
     }
 
     /// Set loading state
@@ -565,8 +550,8 @@ impl SimpleImportDialog {
                 Button::new("cancel_import")
                     .ghost()
                     .child("取消")
-                    .on_click(cx.listener(|_this, _, _, cx| {
-                        cx.emit(SimpleImportDialogEvent::Cancel);
+                    .on_click(cx.listener(|_this, _, window, cx| {
+                        window.close_dialog(cx);
                     })),
             )
             .child(
@@ -589,11 +574,15 @@ impl SimpleImportDialog {
                         if is_url(trimmed) {
                             // If we already have downloaded content, use it
                             if let Some(downloaded) = &this.downloaded_content {
-                                cx.emit(SimpleImportDialogEvent::Import(SimpleImportConfig {
-                                    content: downloaded.clone(),
-                                    target_folder: this.target_folder_id,
-                                    create_subfolders: this.create_subfolders,
-                                }));
+                                this.execute_import(
+                                    SimpleImportConfig {
+                                        content: downloaded.clone(),
+                                        target_folder: this.target_folder_id,
+                                        create_subfolders: this.create_subfolders,
+                                    },
+                                    window,
+                                    cx,
+                                );
                             } else {
                                 // Start URL download
                                 // Implements Requirements 6.2, 6.5 for URL download with loading state
@@ -615,17 +604,21 @@ impl SimpleImportDialog {
                                     async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
                                         let result = task.await.unwrap();
 
-                                        this.update_in(cx, |this, _, cx| {
+                                        this.update_in(cx, |this, window, cx| {
                                             this.is_loading = false;
 
                                             match result {
                                                 Ok(content) => {
-                                                    // Emit import event with downloaded content
-                                                    cx.emit(SimpleImportDialogEvent::Import(SimpleImportConfig {
-                                                        content,
-                                                        target_folder,
-                                                        create_subfolders,
-                                                    }));
+                                                    // Execute import with downloaded content
+                                                    this.execute_import(
+                                                        SimpleImportConfig {
+                                                            content,
+                                                            target_folder,
+                                                            create_subfolders,
+                                                        },
+                                                        window,
+                                                        cx,
+                                                    );
                                                 }
                                                 Err(e) => {
                                                     this.error = Some(ImportErrorType::NetworkError(e.to_string()));
@@ -638,14 +631,41 @@ impl SimpleImportDialog {
                             }
                         } else {
                             // Direct content import
-                            cx.emit(SimpleImportDialogEvent::Import(SimpleImportConfig {
-                                content: input_content,
-                                target_folder: this.target_folder_id,
-                                create_subfolders: this.create_subfolders,
-                            }));
+                            this.execute_import(
+                                SimpleImportConfig {
+                                    content: input_content,
+                                    target_folder: this.target_folder_id,
+                                    create_subfolders: this.create_subfolders,
+                                },
+                                window,
+                                cx,
+                            );
                         }
                     })),
             )
+    }
+
+    /// Execute the import operation
+    fn execute_import(
+        &mut self,
+        config: SimpleImportConfig,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            match import_handler::execute_import(&config, registry, cx) {
+                Ok(_) => {
+                    println!("OpenAPI import completed successfully");
+                    window.close_dialog(cx);
+                }
+                Err(e) => {
+                    eprintln!("Failed to import OpenAPI: {}", e);
+                    self.error = Some(ImportErrorType::ImportError(format!("导入失败: {}", e)));
+                    cx.notify();
+                }
+            }
+        });
     }
 }
 
@@ -655,45 +675,13 @@ impl Render for SimpleImportDialog {
         self.update_preview(cx);
 
         div()
-            .w(px(550.0))
-            .max_h(px(700.0))
-            .bg(rgb(0xffffff))
-            .border_1()
-            .border_color(rgb(0xdee2e6))
-            .rounded_lg()
-            .shadow_lg()
             .v_flex()
-            .child(
-                // Header
-                div().p_4().border_b_1().border_color(rgb(0xe9ecef)).child(
-                    div()
-                        .text_lg()
-                        .font_semibold()
-                        .text_color(rgb(0x212529))
-                        .child("导入 OpenAPI"),
-                ),
-            )
-            .child(
-                // Content
-                div()
-                    .flex_1()
-                    .overflow_y_hidden()
-                    .p_4()
-                    .v_flex()
-                    .gap_4()
-                    .child(self.render_content_input(cx))
-                    .child(self.render_target_folder(cx))
-                    .child(self.render_options(cx))
-                    .child(self.render_error(cx)),
-            )
-            .child(
-                // Footer
-                div()
-                    .p_4()
-                    .border_t_1()
-                    .border_color(rgb(0xe9ecef))
-                    .child(self.render_actions(cx)),
-            )
+            .gap_4()
+            .child(self.render_content_input(cx))
+            .child(self.render_target_folder(cx))
+            .child(self.render_options(cx))
+            .child(self.render_error(cx))
+            .child(self.render_actions(cx))
     }
 }
 

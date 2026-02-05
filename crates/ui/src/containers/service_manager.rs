@@ -1,9 +1,8 @@
 //! Service management module for WorkspaceContent
 //!
-//! This module manages HTTP service entity cache and unsaved changes confirmation.
+//! This module manages HTTP service entity cache.
 
 use crate::containers::HttpService;
-use crate::dialogs::ConfirmDialog;
 use gpui::*;
 use models::{ContentType, HttpConfig, ServiceType};
 use std::collections::HashMap;
@@ -13,12 +12,6 @@ use uuid::Uuid;
 pub struct ServiceManager {
     /// Cache of HTTP service entities by service ID
     http_services: HashMap<Uuid, Entity<HttpService>>,
-    /// Confirmation dialog for unsaved changes
-    confirm_dialog: Option<Entity<ConfirmDialog>>,
-    /// Whether the confirmation dialog is visible
-    show_confirm_dialog: bool,
-    /// Content pending close (waiting for user confirmation)
-    pending_close_content: Option<ContentType>,
 }
 
 impl Default for ServiceManager {
@@ -32,9 +25,6 @@ impl ServiceManager {
     pub fn new() -> Self {
         Self {
             http_services: HashMap::new(),
-            confirm_dialog: None,
-            show_confirm_dialog: false,
-            pending_close_content: None,
         }
     }
 
@@ -69,42 +59,6 @@ impl ServiceManager {
     /// Clears all HTTP services
     pub fn clear_http_services(&mut self) {
         self.http_services.clear();
-    }
-
-    /// Checks if the confirmation dialog is visible
-    pub fn is_confirm_dialog_visible(&self) -> bool {
-        self.show_confirm_dialog
-    }
-
-    /// Returns a reference to the confirmation dialog if it exists
-    pub fn confirm_dialog(&self) -> Option<&Entity<ConfirmDialog>> {
-        self.confirm_dialog.as_ref()
-    }
-
-    /// Returns the pending close content
-    #[allow(unused)]
-    pub fn pending_close_content(&self) -> Option<&ContentType> {
-        self.pending_close_content.as_ref()
-    }
-
-    /// Takes the pending close content, leaving None in its place
-    pub fn take_pending_close_content(&mut self) -> Option<ContentType> {
-        self.pending_close_content.take()
-    }
-
-    /// Sets up state for showing the confirmation dialog
-    /// The dialog entity should be created and subscribed by the caller
-    pub fn show_close_confirmation(&mut self, ct: ContentType, dialog: Entity<ConfirmDialog>) {
-        self.confirm_dialog = Some(dialog);
-        self.show_confirm_dialog = true;
-        self.pending_close_content = Some(ct);
-    }
-
-    /// Hides the confirmation dialog
-    pub fn hide_confirm_dialog(&mut self) {
-        self.confirm_dialog = None;
-        self.show_confirm_dialog = false;
-        self.pending_close_content = None;
     }
 
     /// Checks if a service has unsaved changes

@@ -1,18 +1,16 @@
 mod popup_menu;
 mod utils;
 
-use crate::containers::import_handler;
-use crate::dialogs::{EntityType, RenameDialog, RenameDialogEvent};
-use crate::simple_import_dialog::ImportErrorType;
 use crate::ws_sidebar::popup_menu::popup_menu;
-use crate::{SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent};
+use crate::SimpleImportDialog;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
+use gpui_component::input::{Input, InputState};
 use gpui_component::list::ListItem;
 use gpui_component::menu::DropdownMenu;
 use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
-use gpui_component::{h_flex, v_flex, IconName, Sizable};
+use gpui_component::{h_flex, v_flex, IconName, Sizable, StyledExt, WindowExt};
 use models::{ContentType, FolderType};
 use std::collections::HashMap;
 use utils::build_tree;
@@ -25,8 +23,6 @@ pub struct WorkspaceSidebar {
     tree: Entity<TreeState>,
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
-    rename_dialog: Option<Entity<RenameDialog>>,
-    import_dialog: Option<Entity<SimpleImportDialog>>,
     _subscription: Subscription,
 }
 
@@ -50,8 +46,6 @@ impl WorkspaceSidebar {
             tree,
             hovered: None,
             tree_map: HashMap::new(),
-            rename_dialog: None,
-            import_dialog: None,
             _subscription: subscription,
         }
     }
@@ -187,27 +181,42 @@ impl WorkspaceSidebar {
         };
         let current_name = service.name.clone();
 
-        let dialog = cx.new(|cx| RenameDialog::new(current_name, EntityType::Service, window, cx));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
+        input.update(cx, |state, cx| {
+            state.set_value(current_name.to_string(), window, cx);
+        });
 
-        cx.subscribe_in(
-            &dialog,
-            window,
-            move |this, _dialog, event, _window, cx| match event {
-                RenameDialogEvent::Confirm(new_name) => {
-                    this.rename_dialog = None;
-                    this.rename_service(service_id, new_name.clone(), cx);
-                    cx.notify();
-                }
-                RenameDialogEvent::Cancel => {
-                    this.rename_dialog = None;
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
+        let this = cx.entity().downgrade();
 
-        self.rename_dialog = Some(dialog);
-        cx.notify();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input_clone = input.clone();
+            let this_clone = this.clone();
+
+            dialog
+                .title("重命名 Service")
+                .w(px(450.0))
+                .confirm()
+                .child(
+                    div()
+                        .v_flex()
+                        .gap_2()
+                        .child(div().text_sm().font_semibold().child("名称"))
+                        .child(Input::new(&input).w_full()),
+                )
+                .on_ok(move |_, window, cx| {
+                    let new_name = input_clone.read(cx).value();
+                    if new_name.trim().is_empty() || new_name.len() > 255 {
+                        return false; // 验证失败，不关闭
+                    }
+                    if let Some(this) = this_clone.upgrade() {
+                        this.update(cx, |this, cx| {
+                            this.rename_service(service_id, new_name, cx);
+                        });
+                    }
+                    window.close_dialog(cx);
+                    true
+                })
+        });
     }
 
     /// Show the rename dialog for a Folder
@@ -227,27 +236,42 @@ impl WorkspaceSidebar {
         };
         let current_name = folder.name.clone();
 
-        let dialog = cx.new(|cx| RenameDialog::new(current_name, EntityType::Folder, window, cx));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
+        input.update(cx, |state, cx| {
+            state.set_value(current_name.to_string(), window, cx);
+        });
 
-        cx.subscribe_in(
-            &dialog,
-            window,
-            move |this, _dialog, event, _window, cx| match event {
-                RenameDialogEvent::Confirm(new_name) => {
-                    this.rename_dialog = None;
-                    this.rename_folder(folder_id, new_name.clone(), cx);
-                    cx.notify();
-                }
-                RenameDialogEvent::Cancel => {
-                    this.rename_dialog = None;
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
+        let this = cx.entity().downgrade();
 
-        self.rename_dialog = Some(dialog);
-        cx.notify();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            let input_clone = input.clone();
+            let this_clone = this.clone();
+
+            dialog
+                .title("重命名 Folder")
+                .w(px(450.0))
+                .confirm()
+                .child(
+                    div()
+                        .v_flex()
+                        .gap_2()
+                        .child(div().text_sm().font_semibold().child("名称"))
+                        .child(Input::new(&input).w_full()),
+                )
+                .on_ok(move |_, window, cx| {
+                    let new_name = input_clone.read(cx).value();
+                    if new_name.trim().is_empty() || new_name.len() > 255 {
+                        return false; // 验证失败，不关闭
+                    }
+                    if let Some(this) = this_clone.upgrade() {
+                        this.update(cx, |this, cx| {
+                            this.rename_folder(folder_id, new_name, cx);
+                        });
+                    }
+                    window.close_dialog(cx);
+                    true
+                })
+        });
     }
 
     /// Show the import dialog
@@ -265,54 +289,15 @@ impl WorkspaceSidebar {
                 .map(|f| SharedString::from(f.name.clone()))
         });
 
-        let dialog = cx.new(|cx| {
-            let mut dialog = SimpleImportDialog::new(window, cx);
-            dialog.set_target_folder(folder_id, folder_name);
+        let dialog_entity =
+            cx.new(|cx| SimpleImportDialog::new(folder_id, folder_name, window, cx));
+
+        window.open_dialog(cx, move |dialog, _window, _cx| {
             dialog
+                .title(shared_t!("openapi.import.title"))
+                .w(px(600.0))
+                .child(dialog_entity.clone())
         });
-
-        cx.subscribe_in(
-            &dialog,
-            window,
-            move |this, _, event, _window, cx| match event {
-                SimpleImportDialogEvent::Import(config) => {
-                    this.execute_import(config.clone(), cx);
-                }
-                SimpleImportDialogEvent::Cancel => {
-                    this.import_dialog = None;
-                    cx.notify();
-                }
-            },
-        )
-        .detach();
-
-        self.import_dialog = Some(dialog);
-        cx.notify();
-    }
-
-    /// Execute import directly
-    fn execute_import(&mut self, config: SimpleImportConfig, cx: &mut Context<Self>) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            match import_handler::execute_import(&config, registry, cx) {
-                Ok(_) => {
-                    self.import_dialog = None;
-                    println!("OpenAPI import completed successfully");
-                }
-                Err(e) => {
-                    eprintln!("Failed to import OpenAPI: {}", e);
-                    if let Some(dialog) = &self.import_dialog {
-                        dialog.update(cx, |d, _cx| {
-                            d.set_error(Some(ImportErrorType::ImportError(format!(
-                                "导入失败: {}",
-                                e
-                            ))));
-                        });
-                    }
-                }
-            }
-        });
-        cx.notify();
     }
 
     // 渲染树节点
@@ -418,41 +403,8 @@ impl Render for WorkspaceSidebar {
                                         this.render_item(entry, ix, selected, cx)
                                     })
                                 }
-                            })), // .on_mouse_down_out(cx.listener(move |this, _, _, cx| {
-                                 //     this.hovered = None;
-                                 //     cx.notify();
-                                 // })),
+                            })),
                     ),
             )
-            // Render rename dialog as an overlay if it exists
-            .when_some(self.rename_dialog.clone(), |el, dialog| {
-                el.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .bg(rgba(0x00000080)) // Semi-transparent black overlay
-                        .child(dialog),
-                )
-            })
-            // Render import dialog as an overlay if it exists
-            .when_some(self.import_dialog.clone(), |el, dialog| {
-                el.child(
-                    div()
-                        .absolute()
-                        .top_0()
-                        .left_0()
-                        .size_full()
-                        .flex()
-                        .items_center()
-                        .justify_center()
-                        .bg(rgba(0x00000080)) // Semi-transparent black overlay
-                        .child(dialog),
-                )
-            })
     }
 }

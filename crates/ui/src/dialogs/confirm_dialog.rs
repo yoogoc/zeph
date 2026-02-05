@@ -1,6 +1,6 @@
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::{h_flex, v_flex, StyledExt};
+use gpui_component::{h_flex, v_flex};
 use i18n::t;
 
 /// Event emitted by the confirmation dialog
@@ -15,7 +15,6 @@ pub enum ConfirmDialogEvent {
 
 /// A generic confirmation dialog with three options
 pub struct ConfirmDialog {
-    title: SharedString,
     message: SharedString,
     confirm_label: SharedString,
     discard_label: SharedString,
@@ -28,7 +27,6 @@ impl ConfirmDialog {
     /// Creates a new confirmation dialog for unsaved changes
     pub fn unsaved_changes() -> Self {
         Self {
-            title: t!("service.confirm_close.title").into(),
             message: t!("service.confirm_close.message").into(),
             confirm_label: t!("service.confirm_close.save").into(),
             discard_label: t!("service.confirm_close.dont_save").into(),
@@ -38,14 +36,12 @@ impl ConfirmDialog {
 
     /// Creates a new confirmation dialog with custom labels
     pub fn new(
-        title: impl Into<SharedString>,
         message: impl Into<SharedString>,
         confirm_label: impl Into<SharedString>,
         discard_label: impl Into<SharedString>,
         cancel_label: impl Into<SharedString>,
     ) -> Self {
         Self {
-            title: title.into(),
             message: message.into(),
             confirm_label: confirm_label.into(),
             discard_label: discard_label.into(),
@@ -57,29 +53,9 @@ impl ConfirmDialog {
 impl Render for ConfirmDialog {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
-            .w(px(400.))
-            .bg(white())
-            .rounded_lg()
-            .shadow_lg()
-            .overflow_hidden()
-            .child(
-                // Header
-                div()
-                    .px_4()
-                    .py_3()
-                    .border_b_1()
-                    .border_color(rgb(0xe0e0e0))
-                    .child(
-                        div()
-                            .text_lg()
-                            .font_bold()
-                            .text_color(rgb(0x333333))
-                            .child(self.title.clone()),
-                    ),
-            )
             .child(
                 // Body
-                div().px_4().py_4().child(
+                div().py_4().child(
                     div()
                         .text_sm()
                         .text_color(rgb(0x666666))
@@ -89,7 +65,6 @@ impl Render for ConfirmDialog {
             .child(
                 // Footer with buttons
                 div()
-                    .px_4()
                     .py_3()
                     .border_t_1()
                     .border_color(rgb(0xe0e0e0))

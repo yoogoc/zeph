@@ -7,7 +7,7 @@ mod common_headers_panel;
 mod folder_detail;
 mod folder_overview_panel;
 pub mod http_service;
-mod import_handler;
+pub mod import_handler;
 mod search_params_panel;
 mod service_manager;
 mod service_tabs;

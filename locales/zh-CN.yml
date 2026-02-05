@@ -208,6 +208,7 @@ url:
 
 openapi:
   import:
+    title: "导入 OpenAPI"
     parameters:
       success: "从 OpenAPI 规范导入了 %{count} 个参数"
       query: "查询参数"

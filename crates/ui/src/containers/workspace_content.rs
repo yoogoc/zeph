@@ -1,12 +1,11 @@
 use crate::containers::service_manager::ServiceManager;
 use crate::containers::{FolderDetailPage, ServiceTabs, ServiceTabsEvent};
-use crate::dialogs::ConfirmDialogEvent;
+use crate::dialogs::{ConfirmDialog, ConfirmDialogEvent};
 use crate::selectors::EnvironmentSelector;
-use crate::widgets::OverlayDialog;
 use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar};
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
-use gpui_component::{h_flex, v_flex};
+use gpui_component::{h_flex, v_flex, WindowExt};
 use models::{ContentType, ServiceType, WorkspaceView};
 use uuid::Uuid;
 use workspace::{WorkspaceEvent, WorkspaceServiceEvent};
@@ -77,16 +76,16 @@ impl WorkspaceContent {
             }
         });
 
-        let tabs_sub = cx.subscribe(&service_tabs, {
+        let tabs_sub = cx.subscribe_in(&service_tabs, window, {
             let sidebar = sidebar.clone();
-            move |this, _, event, cx| match event {
+            move |this, _, event, window, cx| match event {
                 ServiceTabsEvent::Select(ct) => {
                     sidebar.update(cx, |s, cx| {
                         s.set_ix(TreeId::from_content(ct), cx);
                     });
                     this.set_active_service(ct.clone(), cx);
                 }
-                ServiceTabsEvent::Close(ct) => this.close_service(ct.clone(), cx),
+                ServiceTabsEvent::Close(ct) => this.close_service(ct.clone(), window, cx),
                 ServiceTabsEvent::Rename(ct, new_name) => {
                     this.rename_service_from_tab(ct.clone(), new_name.clone(), cx);
                 }
@@ -142,12 +141,12 @@ impl WorkspaceContent {
         }
     }
 
-    fn close_service(&mut self, ct: ContentType, cx: &mut Context<Self>) {
+    fn close_service(&mut self, ct: ContentType, window: &mut Window, cx: &mut Context<Self>) {
         // Check if this is a Service with unsaved changes (Requirements 3.5)
         if let ContentType::Service(service) = &ct {
             if self.service_manager.has_unsaved_changes(&service.id, cx) {
                 // Show confirmation dialog
-                self.show_close_confirmation(ct.clone(), cx);
+                self.show_close_confirmation(ct.clone(), window, cx);
                 return;
             }
         }
@@ -158,45 +157,44 @@ impl WorkspaceContent {
 
     /// Shows the confirmation dialog for closing a service with unsaved changes
     /// Implements Requirements 3.5
-    fn show_close_confirmation(&mut self, ct: ContentType, cx: &mut Context<Self>) {
-        use crate::dialogs::ConfirmDialog;
+    fn show_close_confirmation(
+        &mut self,
+        ct: ContentType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let dialog_entity = cx.new(|_cx| ConfirmDialog::unsaved_changes());
+        let ct_for_handler = ct.clone();
 
-        let dialog = cx.new(|_cx| ConfirmDialog::unsaved_changes());
-
-        // Subscribe to dialog events
-        let dialog_sub = cx.subscribe(&dialog, move |this, _, event: &ConfirmDialogEvent, cx| {
-            match event {
-                ConfirmDialogEvent::Confirm => {
-                    // Save and then close
-                    if let Some(pending_ct) = this.service_manager.take_pending_close_content() {
-                        if let ContentType::Service(service) = &pending_ct {
+        cx.subscribe_in(
+            &dialog_entity,
+            window,
+            move |this, _, event: &ConfirmDialogEvent, window, cx| {
+                match event {
+                    ConfirmDialogEvent::Confirm => {
+                        // Save and then close
+                        if let ContentType::Service(service) = &ct_for_handler {
                             this.service_manager.save_service_changes(&service.id, cx);
                         }
-                        this.do_close_service(pending_ct, cx);
+                        this.do_close_service(ct_for_handler.clone(), cx);
                     }
-                    this.service_manager.hide_confirm_dialog();
-                    cx.notify();
-                }
-                ConfirmDialogEvent::Discard => {
-                    // Close without saving
-                    if let Some(pending_ct) = this.service_manager.take_pending_close_content() {
-                        this.do_close_service(pending_ct, cx);
+                    ConfirmDialogEvent::Discard => {
+                        // Close without saving
+                        this.do_close_service(ct_for_handler.clone(), cx);
                     }
-                    this.service_manager.hide_confirm_dialog();
-                    cx.notify();
+                    ConfirmDialogEvent::Cancel => {
+                        // Cancel the close operation - do nothing
+                    }
                 }
-                ConfirmDialogEvent::Cancel => {
-                    // Cancel the close operation
-                    this.service_manager.hide_confirm_dialog();
-                    cx.notify();
-                }
-            }
-        });
+                window.close_dialog(cx);
+                cx.notify();
+            },
+        )
+        .detach();
 
-        self._subscriptions.push(dialog_sub);
-        // Set up the confirmation dialog state in service manager
-        self.service_manager.show_close_confirmation(ct, dialog);
-        cx.notify();
+        window.open_dialog(cx, move |dialog, _window, _cx| {
+            dialog.title(shared_t!("service.confirm_close.title")).child(dialog_entity.clone())
+        });
     }
 
     /// Actually closes the service (without checking for unsaved changes)
@@ -286,7 +284,7 @@ impl WorkspaceContent {
         let workspace = registry.read(cx).get_active_workspace().cloned();
 
         if let Some(_workspace) = workspace {
-            let main_content = h_resizable("workspace-content")
+            h_resizable("workspace-content")
                 .child(resizable_panel().size(px(200.)).child(self.sidebar.clone()))
                 .child(
                     resizable_panel().child(
@@ -314,23 +312,8 @@ impl WorkspaceContent {
                                     .child(self.render_service_content(window, cx)),
                             ),
                     ),
-                );
-
-            // Render with OverlayDialog if confirm dialog is visible
-            if self.service_manager.is_confirm_dialog_visible() {
-                if let Some(dialog) = self.service_manager.confirm_dialog() {
-                    div()
-                        .size_full()
-                        .relative()
-                        .child(main_content)
-                        .child(OverlayDialog::new(dialog.clone()).dismissable(false))
-                        .into_any_element()
-                } else {
-                    main_content.into_any_element()
-                }
-            } else {
-                main_content.into_any_element()
-            }
+                )
+                .into_any_element()
         } else {
             div()
                 .p_4()
