@@ -6,11 +6,6 @@ use models::PathParameter;
 
 use super::param_utils::detect_path_params;
 
-#[allow(unused)]
-pub enum RequestPathParamsEvent {
-    Changed(Vec<PathParameter>),
-}
-
 struct PathParamRow {
     name: SharedString,
     value: Entity<InputState>,
@@ -19,8 +14,6 @@ struct PathParamRow {
 pub struct RequestPathParams {
     rows: Vec<PathParamRow>,
 }
-
-impl EventEmitter<RequestPathParamsEvent> for RequestPathParams {}
 
 impl RequestPathParams {
     pub fn new(params: Vec<PathParameter>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -78,7 +71,6 @@ impl RequestPathParams {
             })
             .collect();
 
-        cx.emit(RequestPathParamsEvent::Changed(self.params(cx)));
         cx.notify();
     }
 }

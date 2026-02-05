@@ -17,6 +17,7 @@ use models::{Header, HttpConfig, HttpMethod, QueryParameter, SearchParameter};
 use smallvec::{smallvec, SmallVec};
 use uuid::Uuid;
 use workspace;
+use crate::url_utils::get_base_url;
 
 pub struct HttpService {
     url: Entity<InputState>,
@@ -36,20 +37,6 @@ pub struct HttpService {
 }
 
 impl HttpService {
-    /// Gets the base_url directly from WorkspaceRegistry
-    fn get_base_url(cx: &App) -> SharedString {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry
-            .read(cx)
-            .get_active_workspace()
-            .and_then(|ws| {
-                ws.active_environment_id
-                    .and_then(|env_id| ws.environments.iter().find(|e| e.id == env_id))
-                    .map(|env| env.base_url.clone())
-            })
-            .unwrap_or_default()
-    }
-
     pub fn new(
         service_id: Uuid,
         config: HttpConfig,
@@ -339,7 +326,7 @@ impl HttpService {
     /// Gets the final URL by resolving base_url, path params, and query params
     pub fn final_url(&self, cx: &Context<Self>) -> String {
         let path = self.url.read(cx).value().to_string();
-        let base_url = Self::get_base_url(cx);
+        let base_url = get_base_url(cx);
         let mut resolved_url = url_utils::resolve_url(&base_url, &path, self.use_base_url);
 
         // Apply path parameter substitution
@@ -629,7 +616,7 @@ impl HttpService {
         let body = self.request_panel.read(cx).body(cx);
 
         // Build request info with final resolved URL (Requirements 6.1, 6.2, 9.3)
-        let base_url = Self::get_base_url(cx);
+        let base_url = get_base_url(cx);
         let mut request_info_text = format!("{:?} {}\n", method, url);
         if self.use_base_url
             && !base_url.is_empty()

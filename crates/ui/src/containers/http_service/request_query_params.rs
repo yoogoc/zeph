@@ -6,13 +6,6 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::{Disableable, StyledExt};
 use models::QueryParameter;
 
-#[allow(unused)]
-pub enum RequestQueryParamsEvent {
-    Remove(usize),
-    Changed(Vec<QueryParameter>),
-    ToggleEnabled(usize),
-}
-
 struct QueryParamRow {
     key: Entity<InputState>,
     value: Entity<InputState>,
@@ -25,8 +18,6 @@ pub struct RequestQueryParams {
     rows: Vec<QueryParamRow>,
     folder_params: Vec<QueryParameter>,
 }
-
-impl EventEmitter<RequestQueryParamsEvent> for RequestQueryParams {}
 
 impl RequestQueryParams {
     pub fn new(
@@ -84,7 +75,6 @@ impl RequestQueryParams {
     pub fn toggle_enabled(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(row) = self.rows.get_mut(index) {
             row.enabled = !row.enabled;
-            cx.emit(RequestQueryParamsEvent::ToggleEnabled(index));
             cx.notify();
         }
     }
@@ -111,8 +101,8 @@ impl Render for RequestQueryParams {
                             div()
                                 .p_2()
                                 .rounded_md()
-                                .bg(gpui::rgb(0xf8f9fa))
-                                .text_color(gpui::rgb(0x6c757d))
+                                .bg(rgb(0xf8f9fa))
+                                .text_color(rgb(0x6c757d))
                                 .text_sm()
                                 .child(param.key.to_string()),
                         ),
@@ -122,8 +112,8 @@ impl Render for RequestQueryParams {
                             div()
                                 .p_2()
                                 .rounded_md()
-                                .bg(gpui::rgb(0xf8f9fa))
-                                .text_color(gpui::rgb(0x6c757d))
+                                .bg(rgb(0xf8f9fa))
+                                .text_color(rgb(0x6c757d))
                                 .text_sm()
                                 .child(param.value.to_string()),
                         ),
@@ -136,7 +126,7 @@ impl Render for RequestQueryParams {
                             .items_center()
                             .justify_center()
                             .text_xs()
-                            .text_color(gpui::rgb(0x6c757d))
+                            .text_color(rgb(0x6c757d))
                             .child("📁"),
                     )
             }))
@@ -162,7 +152,6 @@ impl Render for RequestQueryParams {
                             .h(px(24.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rows.remove(i);
-                                cx.emit(RequestQueryParamsEvent::Remove(i));
                                 cx.notify();
                             })),
                     )
@@ -174,7 +163,7 @@ impl Render for RequestQueryParams {
                         div()
                             .p_4()
                             .text_center()
-                            .text_color(gpui::rgb(0x6c757d))
+                            .text_color(rgb(0x6c757d))
                             .text_sm()
                             .child(shared_t!("query_params.empty")),
                     )

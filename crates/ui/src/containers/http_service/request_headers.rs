@@ -5,12 +5,6 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::StyledExt;
 use models::Header;
 
-#[allow(unused)]
-pub enum RequestHeadersEvent {
-    Remove(usize),
-    Changed(Vec<Header>),
-}
-
 struct HeaderRow {
     key: Entity<InputState>,
     value: Entity<InputState>,
@@ -19,8 +13,6 @@ struct HeaderRow {
 pub struct RequestHeaders {
     rows: Vec<HeaderRow>,
 }
-
-impl EventEmitter<RequestHeadersEvent> for RequestHeaders {}
 
 impl RequestHeaders {
     pub fn new(headers: Vec<Header>, window: &mut Window, cx: &mut Context<Self>) -> Self {
@@ -81,7 +73,6 @@ impl Render for RequestHeaders {
                             .h(px(24.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rows.remove(i);
-                                cx.emit(RequestHeadersEvent::Remove(i));
                                 cx.notify();
                             })),
                     )
@@ -91,7 +82,7 @@ impl Render for RequestHeaders {
                     div()
                         .p_4()
                         .text_center()
-                        .text_color(gpui::rgb(0x6c757d))
+                        .text_color(rgb(0x6c757d))
                         .text_sm()
                         .child(shared_t!("header.empty")),
                 )

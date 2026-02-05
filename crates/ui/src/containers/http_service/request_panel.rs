@@ -12,7 +12,7 @@ use gpui_component::input::{Input, InputState};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{h_flex, v_flex, Disableable, IconName, StyledExt};
 use models::{Header, HttpMethod, PathParameter, QueryParameter};
-use workspace;
+use crate::url_utils::get_base_url;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum RequestTab {
@@ -23,12 +23,12 @@ enum RequestTab {
     Path,
 }
 
-#[allow(unused)]
 pub enum RequestPanelEvent {
     Send,
     AddHeader,
     AddQueryParam,
     BodyTypeChanged(BodyType),
+    #[allow(unused)]
     MethodChanged(HttpMethod),
     ToggleBaseUrl,
 }
@@ -49,20 +49,6 @@ pub struct RequestPanel {
 impl EventEmitter<RequestPanelEvent> for RequestPanel {}
 
 impl RequestPanel {
-    /// Gets the base_url directly from WorkspaceRegistry
-    fn get_base_url(cx: &App) -> SharedString {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry
-            .read(cx)
-            .get_active_workspace()
-            .and_then(|ws| {
-                ws.active_environment_id
-                    .and_then(|env_id| ws.environments.iter().find(|e| e.id == env_id))
-                    .map(|env| env.base_url.clone())
-            })
-            .unwrap_or_default()
-    }
-
     pub fn new(
         method: HttpMethod,
         url: Entity<InputState>,
@@ -94,12 +80,6 @@ impl RequestPanel {
             RequestBodyEvent::BodyChanged(_) => {}
         });
 
-        let headers_sub = cx.subscribe(&headers_panel, |_this, _, _event, _cx| {});
-
-        let query_params_sub = cx.subscribe(&query_params_panel, |_this, _, _event, _cx| {});
-
-        let path_params_sub = cx.subscribe(&path_params_panel, |_this, _, _event, _cx| {});
-
         Self {
             url,
             method_selector,
@@ -113,9 +93,6 @@ impl RequestPanel {
             _subscriptions: vec![
                 method_sub,
                 body_sub,
-                headers_sub,
-                query_params_sub,
-                path_params_sub,
             ],
         }
     }
@@ -126,14 +103,6 @@ impl RequestPanel {
 
     pub fn set_use_base_url(&mut self, use_base_url: bool) {
         self.use_base_url = use_base_url;
-    }
-
-    /// Gets the final URL by resolving base_url and user-entered path
-    #[allow(unused)]
-    pub fn final_url(&self, cx: &App) -> String {
-        let path = self.url.read(cx).value().to_string();
-        let base_url = Self::get_base_url(cx);
-        url_utils::resolve_url(&base_url, &path, self.use_base_url)
     }
 
     pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -189,7 +158,7 @@ impl Render for RequestPanel {
         let active_tab = self.active_tab;
         let is_loading = self.is_loading;
         let use_base_url = self.use_base_url;
-        let base_url = Self::get_base_url(cx);
+        let base_url = get_base_url(cx);
         let show_final_url_preview = use_base_url
             && !base_url.is_empty()
             && !url_utils::is_absolute_url(&self.url.read(cx).value().to_string());
