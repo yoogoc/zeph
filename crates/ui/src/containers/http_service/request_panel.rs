@@ -16,11 +16,11 @@ use models::{Header, HttpMethod, PathParameter, QueryParameter};
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum RequestTab {
+    Path,
     #[default]
+    Query,
     Body,
     Headers,
-    Query,
-    Path,
 }
 
 pub enum RequestPanelEvent {
@@ -245,26 +245,34 @@ impl Render for RequestPanel {
                 v_flex()
                     .gap_2()
                     .child({
-                        let mut tab_bar = TabBar::new("request_tabs")
-                            .with_variant(TabVariant::Underline)
-                            .child(Tab::new().label(shared_t!("request.body")))
-                            .child(Tab::new().label(shared_t!("request.header")))
-                            .child(Tab::new().label(shared_t!("request.query")));
+                        let mut tab_bar =
+                            TabBar::new("request_tabs").with_variant(TabVariant::Underline);
 
                         // Only show Path tab when path parameters are detected
                         if has_path_params {
                             tab_bar = tab_bar.child(Tab::new().label(shared_t!("request.path")));
                         }
 
+                        tab_bar = tab_bar
+                            .child(Tab::new().label(shared_t!("request.query")))
+                            .child(Tab::new().label(shared_t!("request.body")))
+                            .child(Tab::new().label(shared_t!("request.header")));
+
                         tab_bar
                             .selected_index(active_tab as usize)
                             .on_click(cx.listener(move |this, ix: &usize, _, cx| {
                                 this.active_tab = match *ix {
-                                    0 => RequestTab::Body,
-                                    1 => RequestTab::Headers,
-                                    2 => RequestTab::Query,
-                                    3 if has_path_params => RequestTab::Path,
-                                    _ => RequestTab::Body,
+                                    0 if has_path_params => RequestTab::Path,
+                                    1 => RequestTab::Query,
+                                    2 => RequestTab::Body,
+                                    3 => RequestTab::Headers,
+                                    _ => {
+                                        if has_path_params {
+                                            RequestTab::Path
+                                        } else {
+                                            RequestTab::Query
+                                        }
+                                    }
                                 };
                                 cx.notify();
                             }))
