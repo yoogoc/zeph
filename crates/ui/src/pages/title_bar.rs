@@ -69,6 +69,7 @@ impl Render for TitleBar {
                     .w_full()
                     .items_center()
                     .justify_between()
+                    .pr_4()
                     .child(
                         TabBar::new("workspace_tabs")
                             .with_variant(TabVariant::Pill)
@@ -126,8 +127,6 @@ impl Render for TitleBar {
                         ),
                     ),
             )
-            .py_2()
-            .pr_4()
             .border_b_0()
     }
 }
