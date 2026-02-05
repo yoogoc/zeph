@@ -11,6 +11,7 @@ use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::StyledExt;
 use models::{Folder, Header, SearchParameter, Workspace};
 use uuid::Uuid;
+use workspace::WorkspaceRegistry;
 
 /// Tab options for the folder detail page
 #[derive(Debug, Clone, PartialEq)]
@@ -40,14 +41,10 @@ impl FolderDetailTab {
     }
 }
 
-/// Events emitted by the folder detail page
+/// Events emitted by the folder detail page (only for actions requiring parent coordination)
 #[derive(Debug, Clone)]
 pub enum FolderDetailPageEvent {
-    NavigateBack,
-    NavigateToFolder(Uuid),
-    UpdateCommonHeaders(Uuid, Vec<Header>),
-    UpdateSearchParams(Uuid, Vec<SearchParameter>),
-    UpdateFolderInfo(Uuid, String, Option<String>), // folder_id, name, description
+    // Currently no events needed - all operations handled directly via WorkspaceRegistry
 }
 
 /// Error types for folder detail operations
@@ -103,18 +100,19 @@ impl FolderDetailPage {
         let headers_panel = cx.new(|_| CommonHeadersPanel::new());
         let params_panel = cx.new(|_| SearchParamsPanel::new());
 
-        // Subscribe to overview panel events
+        // Subscribe to overview panel events - directly update via WorkspaceRegistry
         cx.subscribe(
             &overview_panel,
             |this, _panel, event: &FolderOverviewPanelEvent, cx| {
                 if let Some(folder_id) = this.folder_id {
                     match event {
                         FolderOverviewPanelEvent::SaveChanges(name, description) => {
-                            cx.emit(FolderDetailPageEvent::UpdateFolderInfo(
+                            this.update_folder_info(
                                 folder_id,
                                 name.clone(),
                                 description.clone(),
-                            ));
+                                cx,
+                            );
                         }
                     }
                 }
@@ -122,17 +120,14 @@ impl FolderDetailPage {
         )
         .detach();
 
-        // Subscribe to child panel events
+        // Subscribe to child panel events - directly update via WorkspaceRegistry
         cx.subscribe(
             &headers_panel,
             |this, _panel, event: &CommonHeadersPanelEvent, cx| {
                 if let Some(folder_id) = this.folder_id {
                     match event {
                         CommonHeadersPanelEvent::HeadersChanged(headers) => {
-                            cx.emit(FolderDetailPageEvent::UpdateCommonHeaders(
-                                folder_id,
-                                headers.clone(),
-                            ));
+                            this.update_common_headers(folder_id, headers.clone(), cx);
                         }
                     }
                 }
@@ -146,10 +141,7 @@ impl FolderDetailPage {
                 if let Some(folder_id) = this.folder_id {
                     match event {
                         SearchParamsPanelEvent::ParamsChanged(params) => {
-                            cx.emit(FolderDetailPageEvent::UpdateSearchParams(
-                                folder_id,
-                                params.clone(),
-                            ));
+                            this.update_search_params(folder_id, params.clone(), cx);
                         }
                     }
                 }
@@ -169,6 +161,34 @@ impl FolderDetailPage {
             error_message: None,
             last_operation: None,
         }
+    }
+
+    // Direct operations on WorkspaceRegistry
+    fn update_folder_info(
+        &self,
+        folder_id: Uuid,
+        name: String,
+        description: Option<String>,
+        cx: &mut App,
+    ) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| {
+            r.update_folder_info(folder_id, name, description, cx);
+        });
+    }
+
+    fn update_common_headers(&self, folder_id: Uuid, headers: Vec<Header>, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| {
+            r.update_folder_common_headers(folder_id, headers, cx);
+        });
+    }
+
+    fn update_search_params(&self, folder_id: Uuid, params: Vec<SearchParameter>, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |r, cx| {
+            r.update_folder_search_params(folder_id, params, cx);
+        });
     }
 
     /// Set the folder to display

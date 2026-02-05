@@ -1,6 +1,6 @@
 use crate::containers::import_handler::{self, ImportHandler};
 use crate::containers::service_manager::ServiceManager;
-use crate::containers::{FolderDetailPage, FolderDetailPageEvent, ServiceTabs, ServiceTabsEvent};
+use crate::containers::{FolderDetailPage, ServiceTabs, ServiceTabsEvent};
 use crate::dialogs::ConfirmDialogEvent;
 use crate::selectors::EnvironmentSelector;
 use crate::simple_import_dialog::ImportErrorType;
@@ -166,23 +166,6 @@ impl WorkspaceContent {
             },
         );
 
-        let folder_detail_sub =
-            cx.subscribe(&folder_detail_page, |this, _, event, cx| match event {
-                FolderDetailPageEvent::NavigateBack => this.navigate_back_from_folder_detail(cx),
-                FolderDetailPageEvent::NavigateToFolder(folder_id) => {
-                    this.open_folder_detail(*folder_id, cx)
-                }
-                FolderDetailPageEvent::UpdateCommonHeaders(folder_id, headers) => {
-                    this.update_folder_common_headers(*folder_id, headers.clone(), cx)
-                }
-                FolderDetailPageEvent::UpdateSearchParams(folder_id, params) => {
-                    this.update_folder_search_params(*folder_id, params.clone(), cx)
-                }
-                FolderDetailPageEvent::UpdateFolderInfo(folder_id, name, description) => {
-                    this.update_folder_info(*folder_id, name.clone(), description.clone(), cx)
-                }
-            });
-
         Self {
             workspace_id: None,
             view: WorkspaceView::Services,
@@ -192,13 +175,7 @@ impl WorkspaceContent {
             env_selector,
             folder_detail: folder_detail_page,
             import_handler: ImportHandler::new(),
-            _subscriptions: vec![
-                registry_sub,
-                registry_sub2,
-                tabs_sub,
-                sidebar_sub,
-                folder_detail_sub,
-            ],
+            _subscriptions: vec![registry_sub, registry_sub2, tabs_sub, sidebar_sub],
         }
     }
 
@@ -414,49 +391,6 @@ impl WorkspaceContent {
                 }
                 cx.notify();
             }
-        });
-    }
-
-    fn navigate_back_from_folder_detail(&mut self, cx: &mut Context<Self>) {
-        // Navigate back to services view
-        self.view = WorkspaceView::Services;
-        cx.notify();
-    }
-
-    fn update_folder_common_headers(
-        &mut self,
-        folder_id: Uuid,
-        headers: Vec<models::Header>,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.update_folder_common_headers(folder_id, headers, cx);
-        });
-    }
-
-    fn update_folder_search_params(
-        &mut self,
-        folder_id: Uuid,
-        params: Vec<models::SearchParameter>,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.update_folder_search_params(folder_id, params, cx);
-        });
-    }
-
-    fn update_folder_info(
-        &mut self,
-        folder_id: Uuid,
-        name: String,
-        description: Option<String>,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.update_folder_info(folder_id, name, description, cx);
         });
     }
 
