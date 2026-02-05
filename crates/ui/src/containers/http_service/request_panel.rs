@@ -67,7 +67,8 @@ impl RequestPanel {
         let headers_panel = cx.new(|cx| RequestHeaders::new(headers, window, cx));
         let query_params_panel =
             cx.new(|cx| RequestQueryParams::new(query_params, folder_query_params, window, cx));
-        let path_params_panel = cx.new(|cx| RequestPathParams::new(path_params, window, cx));
+        let pp = path_params.clone();
+        let path_params_panel = cx.new(|cx| RequestPathParams::new(pp, window, cx));
 
         let method_sub = cx.subscribe(&method_selector, |_this, _, event, cx| match event {
             MethodSelectorEvent::Changed(method) => {
@@ -82,6 +83,13 @@ impl RequestPanel {
             RequestBodyEvent::BodyChanged(_) => {}
         });
 
+        // Determine default tab based on path params
+        let active_tab = if path_params.clone().is_empty() {
+            RequestTab::Query
+        } else {
+            RequestTab::Path
+        };
+
         Self {
             url,
             method_selector,
@@ -89,7 +97,7 @@ impl RequestPanel {
             headers_panel,
             query_params_panel,
             path_params_panel,
-            active_tab: RequestTab::default(),
+            active_tab,
             is_loading: false,
             is_modified: false,
             use_base_url,
@@ -259,22 +267,35 @@ impl Render for RequestPanel {
                             .child(Tab::new().label(shared_t!("request.header")));
 
                         tab_bar
-                            .selected_index(active_tab as usize)
+                            .selected_index(if has_path_params {
+                                active_tab as usize
+                            } else {
+                                // Without Path tab: Query=0, Body=1, Headers=2
+                                match active_tab {
+                                    RequestTab::Query => 0,
+                                    RequestTab::Body => 1,
+                                    RequestTab::Headers => 2,
+                                    _ => 0,
+                                }
+                            })
                             .on_click(cx.listener(move |this, ix: &usize, _, cx| {
-                                this.active_tab = match *ix {
-                                    0 if has_path_params => RequestTab::Path,
-                                    1 => RequestTab::Query,
-                                    2 => RequestTab::Body,
-                                    3 => RequestTab::Headers,
-                                    _ => {
-                                        if has_path_params {
-                                            RequestTab::Path
-                                        } else {
-                                            RequestTab::Query
-                                        }
+                                this.active_tab = if has_path_params {
+                                    match *ix {
+                                        0 => RequestTab::Path,
+                                        1 => RequestTab::Query,
+                                        2 => RequestTab::Body,
+                                        3 => RequestTab::Headers,
+                                        _ => RequestTab::Path,
+                                    }
+                                } else {
+                                    match *ix {
+                                        0 => RequestTab::Query,
+                                        1 => RequestTab::Body,
+                                        2 => RequestTab::Headers,
+                                        _ => RequestTab::Query,
                                     }
                                 };
-                                cx.notify();
+                                cx.notify()
                             }))
                             .suffix(match active_tab {
                                 RequestTab::Headers => Button::new("add_header")
