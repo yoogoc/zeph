@@ -25,6 +25,7 @@ enum RequestTab {
 
 pub enum RequestPanelEvent {
     Send,
+    Save,
     AddHeader,
     AddQueryParam,
     BodyTypeChanged(BodyType),
@@ -42,6 +43,7 @@ pub struct RequestPanel {
     path_params_panel: Entity<RequestPathParams>,
     active_tab: RequestTab,
     is_loading: bool,
+    is_modified: bool,
     use_base_url: bool,
     _subscriptions: Vec<Subscription>,
 }
@@ -89,6 +91,7 @@ impl RequestPanel {
             path_params_panel,
             active_tab: RequestTab::default(),
             is_loading: false,
+            is_modified: false,
             use_base_url,
             _subscriptions: vec![method_sub, body_sub],
         }
@@ -100,6 +103,10 @@ impl RequestPanel {
 
     pub fn set_use_base_url(&mut self, use_base_url: bool) {
         self.use_base_url = use_base_url;
+    }
+
+    pub fn set_modified(&mut self, is_modified: bool) {
+        self.is_modified = is_modified;
     }
 
     pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -223,6 +230,14 @@ impl Render for RequestPanel {
                             .disabled(is_loading)
                             .on_click(cx.listener(|_, _, _, cx| {
                                 cx.emit(RequestPanelEvent::Send);
+                            })),
+                    )
+                    .child(
+                        Button::new("save_request")
+                            .label(shared_t!("common.save"))
+                            .disabled(!self.is_modified)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(RequestPanelEvent::Save);
                             })),
                     ),
             )

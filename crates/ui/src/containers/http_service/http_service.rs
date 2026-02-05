@@ -129,6 +129,9 @@ impl HttpService {
                 RequestPanelEvent::Send => {
                     this.send_request(window, cx);
                 }
+                RequestPanelEvent::Save => {
+                    this.save_changes(window, cx);
+                }
                 RequestPanelEvent::AddHeader => {
                     this.request_panel
                         .update(cx, |panel, cx| panel.add_header(window, cx));
@@ -207,6 +210,11 @@ impl HttpService {
         let config = self.collect_current_draft_config(cx);
         let registry = workspace::WorkspaceRegistry::global(cx);
         let _ = registry.read(cx).update_draft(self.service_id, &config);
+        // Sync is_modified state to RequestPanel for save button
+        let is_modified = self.is_modified(cx);
+        self.request_panel.update(cx, |panel, _cx| {
+            panel.set_modified(is_modified);
+        });
         cx.notify();
     }
 
@@ -234,6 +242,12 @@ impl HttpService {
         // Save draft to service (this will also remove the draft from DraftRegistry)
         registry.update(cx, |registry, cx| {
             registry.save_draft_to_service(service_id, cx);
+        });
+
+        // Sync is_modified state to RequestPanel (should be false after save)
+        let is_modified = self.is_modified(cx);
+        self.request_panel.update(cx, |panel, _cx| {
+            panel.set_modified(is_modified);
         });
 
         cx.notify();
@@ -709,7 +723,6 @@ impl HttpService {
 
 impl Render for HttpService {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let is_modified = self.is_modified(&*cx);
         let can_undo = self.can_undo(&*cx);
         let can_redo = self.can_redo(&*cx);
 
@@ -745,37 +758,7 @@ impl Render for HttpService {
                 v_flex()
                     .size_full()
                     .gap_2()
-                    // Save button bar (Requirements 3.2)
-                    .when(is_modified, |this| {
-                        this.child(
-                            div()
-                                .flex()
-                                .items_center()
-                                .justify_end()
-                                .gap_2()
-                                .px_2()
-                                .py_1()
-                                .bg(gpui::rgb(0xFFF3CD))
-                                .border_1()
-                                .border_color(gpui::rgb(0xFFE69C))
-                                .rounded_md()
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .text_sm()
-                                        .text_color(gpui::rgb(0x856404))
-                                        .child(t!("service.unsaved_changes").to_string()),
-                                )
-                                .child(
-                                    Button::new("save-service")
-                                        .label(t!("common.save"))
-                                        .primary()
-                                        .on_click(cx.listener(|this, _, window, cx| {
-                                            this.save_changes(window, cx);
-                                        })),
-                                ),
-                        )
-                    })
+                    
                     // Main content area
                     .child(
                         v_resizable("http-service")
