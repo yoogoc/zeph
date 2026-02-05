@@ -296,9 +296,6 @@ impl WorkspaceContent {
     fn select_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.set_active_environment(env_id, cx));
-
-        // Update base_url for all existing HttpService instances
-        self.update_http_services_base_url(cx);
     }
 
     fn create_environment(&mut self, name: String, cx: &mut Context<Self>) {
@@ -309,17 +306,11 @@ impl WorkspaceContent {
     fn update_environment(&mut self, env: models::Environment, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.update_environment(env, cx));
-
-        // Update base_url for all existing HttpService instances if the active environment was updated
-        self.update_http_services_base_url(cx);
     }
 
     fn delete_environment(&mut self, env_id: Uuid, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.delete_environment(env_id, cx));
-
-        // Update base_url for all existing HttpService instances (in case the deleted env was active)
-        self.update_http_services_base_url(cx);
     }
 
     fn add_variable(
@@ -340,16 +331,6 @@ impl WorkspaceContent {
     fn delete_variable(&mut self, var_id: Uuid, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
         registry.update(cx, |r, cx| r.delete_environment_variable(var_id, cx));
-    }
-
-    /// Updates the base_url for all existing HttpService instances when the environment changes
-    fn update_http_services_base_url(&mut self, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        let workspace = registry.read(cx).get_active_workspace().cloned();
-
-        if let Some(workspace) = workspace {
-            self.service_manager.update_base_url(&workspace, cx);
-        }
     }
 
     fn import_openapi(&mut self, config: ImportConfig, cx: &mut Context<Self>) {

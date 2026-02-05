@@ -26,7 +26,6 @@ pub struct HttpService {
     request_panel: Entity<RequestPanel>,
     response_panel: Entity<ResponsePanel>,
     is_loading: bool,
-    base_url: SharedString,
     use_base_url: bool,
     folder_id: Option<Uuid>,
     // Save state management (Requirements 3.1, 3.2)
@@ -37,10 +36,23 @@ pub struct HttpService {
 }
 
 impl HttpService {
+    /// Gets the base_url directly from WorkspaceRegistry
+    fn get_base_url(cx: &App) -> SharedString {
+        let registry = workspace::WorkspaceRegistry::global(cx);
+        registry
+            .read(cx)
+            .get_active_workspace()
+            .and_then(|ws| {
+                ws.active_environment_id
+                    .and_then(|env_id| ws.environments.iter().find(|e| e.id == env_id))
+                    .map(|env| env.base_url.clone())
+            })
+            .unwrap_or_default()
+    }
+
     pub fn new(
         service_id: Uuid,
         config: HttpConfig,
-        base_url: Option<SharedString>,
         folder_id: Option<Uuid>,
         window: &mut Window,
         cx: &mut Context<Self>,
@@ -110,7 +122,6 @@ impl HttpService {
                 config.path_params.clone(),
                 folder_query_params,
                 use_base_url,
-                base_url.clone().unwrap_or_default(),
                 window,
                 cx,
             )
@@ -176,7 +187,6 @@ impl HttpService {
             request_panel,
             response_panel,
             is_loading: false,
-            base_url: base_url.unwrap_or_default(),
             use_base_url,
             folder_id,
             is_modified: false,
@@ -316,15 +326,6 @@ impl HttpService {
         cx.notify();
     }
 
-    /// Updates the base_url when the environment changes
-    pub fn set_base_url(&mut self, base_url: SharedString, cx: &mut Context<Self>) {
-        self.base_url = base_url.clone();
-        self.request_panel.update(cx, |panel, _cx| {
-            panel.set_base_url(base_url);
-        });
-        cx.notify();
-    }
-
     /// Toggles the use_base_url mode
     pub fn toggle_use_base_url(&mut self, cx: &mut Context<Self>) {
         self.use_base_url = !self.use_base_url;
@@ -338,7 +339,8 @@ impl HttpService {
     /// Gets the final URL by resolving base_url, path params, and query params
     pub fn final_url(&self, cx: &Context<Self>) -> String {
         let path = self.url.read(cx).value().to_string();
-        let mut resolved_url = url_utils::resolve_url(&self.base_url, &path, self.use_base_url);
+        let base_url = Self::get_base_url(cx);
+        let mut resolved_url = url_utils::resolve_url(&base_url, &path, self.use_base_url);
 
         // Apply path parameter substitution
         let path_params = self.request_panel.read(cx).path_params(cx);
@@ -627,12 +629,13 @@ impl HttpService {
         let body = self.request_panel.read(cx).body(cx);
 
         // Build request info with final resolved URL (Requirements 6.1, 6.2, 9.3)
+        let base_url = Self::get_base_url(cx);
         let mut request_info_text = format!("{:?} {}\n", method, url);
         if self.use_base_url
-            && !self.base_url.is_empty()
+            && !base_url.is_empty()
             && !url_utils::is_absolute_url(&user_entered_url)
         {
-            request_info_text.push_str(&format!("({}: {})\n", t!("env.base_url"), self.base_url));
+            request_info_text.push_str(&format!("({}: {})\n", t!("env.base_url"), base_url));
         }
         request_info_text.push('\n');
         for h in &headers {

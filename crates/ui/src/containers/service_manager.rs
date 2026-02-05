@@ -6,7 +6,9 @@
 use crate::containers::HttpService;
 use crate::dialogs::ConfirmDialog;
 use gpui::*;
-use models::{ContentType, HttpConfig, ServiceType, Workspace};
+#[allow(unused_imports)]
+use models::Workspace;
+use models::{ContentType, HttpConfig, ServiceType};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -139,33 +141,16 @@ impl ServiceManager {
         }
     }
 
-    /// Updates the base URL for all HTTP services when the environment changes
-    pub fn update_base_url(&self, workspace: &Workspace, cx: &mut App) {
-        let base_url = workspace
-            .active_environment_id
-            .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
-            .map(|env| env.base_url.clone())
-            .unwrap_or_default();
-
-        for http_service in self.http_services.values() {
-            http_service.update(cx, |service, cx| {
-                service.set_base_url(base_url.clone(), cx);
-            });
-        }
-    }
-
     /// Creates an HTTP service entity for the given service configuration
     pub fn create_http_service(
         &mut self,
         service_id: Uuid,
         config: HttpConfig,
-        base_url: Option<SharedString>,
         folder_id: Option<Uuid>,
         window: &mut Window,
         cx: &mut App,
     ) -> Entity<HttpService> {
-        let http_service =
-            cx.new(|cx| HttpService::new(service_id, config, base_url, folder_id, window, cx));
+        let http_service = cx.new(|cx| HttpService::new(service_id, config, folder_id, window, cx));
         self.http_services.insert(service_id, http_service.clone());
         http_service
     }
@@ -173,16 +158,11 @@ impl ServiceManager {
     /// Handles content type switching and creates service instances as needed
     pub fn set_content(
         &mut self,
-        workspace: &Workspace,
+        _workspace: &Workspace,
         ct: &ContentType,
         window: &mut Window,
         cx: &mut App,
     ) {
-        let base_url = workspace
-            .active_environment_id
-            .and_then(|env_id| workspace.environments.iter().find(|e| e.id == env_id))
-            .map(|env| env.base_url.clone());
-
         self.current_content = Some(ct.clone());
 
         if let ContentType::Service(service) = ct {
@@ -191,7 +171,6 @@ impl ServiceManager {
                     self.create_http_service(
                         service.id,
                         config.clone(),
-                        base_url,
                         service.folder_id,
                         window,
                         cx,
