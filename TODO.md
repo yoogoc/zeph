@@ -8,8 +8,8 @@
 - [x] 设置页面 - 语言I18n
 - [ ] 设置请求 - 超时/SSL 证书验证/自动跟随重定向/发送无缓存头
 - [ ] 设置代理 - 代理模式
-- [ ] 重做导入openapi，可以通过文件或url导入
+- [x] 重做导入openapi，可以通过文件或url导入
 - [ ] 重构组件，区分Render和RenderOnce
 - [ ] 输入框可以生成example数据
-- [ ] 切换环境，现在流程是EnvironmentSelector emit一个EnvironmentSelectorEvent事件，WorkspaceContent监听这个事件，然后再推送给WorkspaceRegistry，这个步骤是非常冗余的，EnvironmentSelector直接修改WorkspaceRegistry即可
-- [ ] 关于http_service和request_panel中的base_url, 可以直接通过变量获取，无需引入变量，这样可以降低复杂性
+- [x] 切换环境，现在流程是EnvironmentSelector emit一个EnvironmentSelectorEvent事件，WorkspaceContent监听这个事件，然后再推送给WorkspaceRegistry，这个步骤是非常冗余的，EnvironmentSelector直接修改WorkspaceRegistry即可
+- [x] 关于http_service和request_panel中的base_url, 可以直接通过变量获取，无需引入变量，这样可以降低复杂性
