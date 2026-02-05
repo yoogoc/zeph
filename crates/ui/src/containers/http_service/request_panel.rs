@@ -5,14 +5,14 @@ use super::request_headers::RequestHeaders;
 use super::request_path_params::RequestPathParams;
 use super::request_query_params::RequestQueryParams;
 use super::url_utils;
+use crate::url_utils::get_base_url;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
-use gpui_component::{h_flex, v_flex, Disableable, IconName, StyledExt};
+use gpui_component::{h_flex, v_flex, Disableable, IconName};
 use models::{Header, HttpMethod, PathParameter, QueryParameter};
-use crate::url_utils::get_base_url;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 enum RequestTab {
@@ -90,10 +90,7 @@ impl RequestPanel {
             active_tab: RequestTab::default(),
             is_loading: false,
             use_base_url,
-            _subscriptions: vec![
-                method_sub,
-                body_sub,
-            ],
+            _subscriptions: vec![method_sub, body_sub],
         }
     }
 
@@ -181,73 +178,53 @@ impl Render for RequestPanel {
             .w_full()
             .gap_4()
             .child(
-                v_flex()
-                    .gap_1()
+                h_flex()
+                    .gap_2()
                     .child(
                         h_flex()
-                            .gap_2()
-                            .child(
-                                h_flex()
-                                    .flex_1()
-                                    .p_2()
-                                    .gap_1()
-                                    .bg(white())
-                                    .border_1()
-                                    .border_color(rgb(0xdee2e6))
-                                    .rounded_md()
-                                    .text_sm()
-                                    .child(self.method_selector.clone())
-                                    .child(Input::new(&self.url))
-                                    .child(
-                                        Button::new("toggle_base_url")
-                                            .icon(IconName::Globe)
-                                            .ghost()
-                                            .tooltip(tooltip_text)
-                                            .when(use_base_url, |btn| btn.primary())
-                                            .on_click(cx.listener(|_, _, _, cx| {
-                                                cx.emit(RequestPanelEvent::ToggleBaseUrl);
-                                            })),
-                                    ),
-                            )
-                            .child(
-                                Button::new("send_request")
-                                    .primary()
-                                    .label(if is_loading {
-                                        shared_t!("request.sending")
-                                    } else {
-                                        shared_t!("request.send")
-                                    })
-                                    .disabled(is_loading)
-                                    .on_click(cx.listener(|_, _, _, cx| {
-                                        cx.emit(RequestPanelEvent::Send);
-                                    })),
-                            ),
-                    )
-                    .when(show_final_url_preview, |el| {
-                        let base_url_display = base_url.trim_end_matches('/').to_string();
-                        let path_display = self
-                            .url
-                            .read(cx)
-                            .value()
-                            .to_string()
-                            .trim_start_matches('/')
-                            .to_string();
-                        el.child(
-                            div()
-                                .h_flex()
-                                .gap_1()
-                                .px_2()
-                                .text_xs()
-                                .text_color(gpui::rgb(0x6c757d))
-                                .child(
+                            .flex_1()
+                            .p_2()
+                            .gap_1()
+                            .bg(white())
+                            .border_1()
+                            .border_color(rgb(0xdee2e6))
+                            .rounded_md()
+                            .text_sm()
+                            .child(self.method_selector.clone())
+                            .when(show_final_url_preview, |el| {
+                                let base_url_display = base_url.trim_end_matches('/').to_string();
+                                el.child(
                                     div()
+                                        .text_sm()
                                         .text_color(gpui::rgb(0x28a745))
                                         .child(base_url_display),
                                 )
-                                .child("/")
-                                .child(path_display),
-                        )
-                    }),
+                            })
+                            .child(Input::new(&self.url))
+                            .child(
+                                Button::new("toggle_base_url")
+                                    .icon(IconName::Globe)
+                                    .ghost()
+                                    .tooltip(tooltip_text)
+                                    .when(use_base_url, |btn| btn.primary())
+                                    .on_click(cx.listener(|_, _, _, cx| {
+                                        cx.emit(RequestPanelEvent::ToggleBaseUrl);
+                                    })),
+                            ),
+                    )
+                    .child(
+                        Button::new("send_request")
+                            .primary()
+                            .label(if is_loading {
+                                shared_t!("request.sending")
+                            } else {
+                                shared_t!("request.send")
+                            })
+                            .disabled(is_loading)
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(RequestPanelEvent::Send);
+                            })),
+                    ),
             )
             .child(
                 v_flex()
