@@ -1,16 +1,13 @@
-use crate::containers::import_handler::{self, ImportHandler};
 use crate::containers::service_manager::ServiceManager;
 use crate::containers::{FolderDetailPage, ServiceTabs, ServiceTabsEvent};
 use crate::dialogs::ConfirmDialogEvent;
 use crate::selectors::EnvironmentSelector;
-use crate::simple_import_dialog::ImportErrorType;
 use crate::widgets::OverlayDialog;
-use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar, WorkspaceSidebarEvent};
-use crate::{SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent};
+use crate::ws_sidebar::{TreeId, WorkspaceSidebar as WsSidebar};
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
-use models::{ContentType, FolderType, ServiceType, WorkspaceView};
+use models::{ContentType, ServiceType, WorkspaceView};
 use uuid::Uuid;
 use workspace::{WorkspaceEvent, WorkspaceServiceEvent};
 
@@ -23,26 +20,22 @@ pub struct WorkspaceContent {
     sidebar: Entity<WsSidebar>,
     env_selector: Entity<EnvironmentSelector>,
     folder_detail: Entity<FolderDetailPage>,
-    /// Import handler manages import dialog state
-    import_handler: ImportHandler,
     _subscriptions: Vec<Subscription>,
 }
 
 impl WorkspaceContent {
     pub fn new(_workspace_id: Option<Uuid>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let sidebar = cx.new(|cx| WsSidebar::new(cx));
-        let service_tabs = cx.new(|_| ServiceTabs::new());
+        let service_tabs = cx.new(|cx| ServiceTabs::new(cx));
         let env_selector = cx.new(|_| EnvironmentSelector::new());
         let folder_detail_page = cx.new(|cx| FolderDetailPage::new(cx));
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
 
+        // Subscribe to WorkspaceEvent for http_services cache management
+        // UI components (sidebar, service_tabs, env_selector, folder_detail) handle their own subscriptions
         let registry_sub = cx.subscribe_in(&workspace_registry, window, {
-            let sidebar = sidebar.clone();
-            let service_tabs = service_tabs.clone();
-            let env_selector = env_selector.clone();
-            let folder_detail = folder_detail_page.clone();
-            move |this, registry, event: &WorkspaceEvent, window, cx| match event {
+            move |this, _registry, event: &WorkspaceEvent, window, cx| match event {
                 WorkspaceEvent::Open(workspace) => {
                     // Clear http_services cache to release old workspace's service instances
                     this.service_manager.clear_http_services();
@@ -52,68 +45,22 @@ impl WorkspaceContent {
                         this.service_manager
                             .ensure_http_service(active_service, window, cx);
                     }
-
-                    sidebar.update(cx, |s, cx| {
-                        s.refresh_tree(cx);
-                    });
-                    service_tabs.update(cx, |s, cx| {
-                        s.set_workspace(workspace.clone());
-                        cx.notify();
-                    });
-                    env_selector.update(cx, |_, cx| {
-                        cx.notify();
-                    });
                     cx.notify();
                 }
-                _ => {
-                    // Handle WorkspaceEvent::Reload and WorkspaceEvent::Close
-                    // Update all UI components with the latest workspace data
-                    // Implements Requirements 1.4, 2.4, 8.1, 8.2
-                    sidebar.update(cx, |s, cx| {
-                        s.refresh_tree(cx);
-                    });
-                    service_tabs.update(cx, |s, cx| {
-                        if let Some(workspace) = registry.read(cx).get_active_workspace() {
-                            s.set_workspace(workspace.clone());
-                        }
-                        cx.notify();
-                    });
-                    env_selector.update(cx, |_, cx| {
-                        cx.notify();
-                    });
-                    // Update folder detail page if a folder is currently being displayed
-                    folder_detail.update(cx, |detail, cx| {
-                        if let Some(folder_id) = detail.get_folder_id() {
-                            if let Some(workspace) = registry.read(cx).get_active_workspace() {
-                                // Find the updated folder in the workspace
-                                if let Some(updated_folder) =
-                                    workspace.folders.iter().find(|f| f.id == folder_id)
-                                {
-                                    detail.set_folder(Some(updated_folder.clone()), cx);
-                                }
-                            }
-                        }
-                    });
-                    cx.notify()
-                }
+                _ => cx.notify(),
             }
         });
 
         let registry_sub2 = cx.subscribe_in(&workspace_registry, window, {
-            let service_tabs = service_tabs.clone();
             move |this, _registry, event: &WorkspaceServiceEvent, window, cx| {
                 match event {
-                    WorkspaceServiceEvent::Open(workspace, service) => {
+                    WorkspaceServiceEvent::Open(_workspace, service) => {
                         this.service_manager
                             .ensure_http_service(service, window, cx);
                         this.update_folder_detail_if_needed(service, cx);
-                        service_tabs.update(cx, |s, cx| {
-                            s.set_workspace(workspace.clone());
-                            cx.notify();
-                        });
                     }
                     WorkspaceServiceEvent::Switch {
-                        workspace,
+                        workspace: _,
                         old,
                         new,
                     } => {
@@ -124,10 +71,6 @@ impl WorkspaceContent {
                             this.service_manager.ensure_http_service(new, window, cx);
                             this.update_folder_detail_if_needed(new, cx);
                         }
-                        service_tabs.update(cx, |s, cx| {
-                            s.set_workspace(workspace.clone());
-                            cx.notify();
-                        });
                     }
                 }
                 cx.notify();
@@ -150,22 +93,6 @@ impl WorkspaceContent {
             }
         });
 
-        let sidebar_sub = cx.subscribe_in(
-            &sidebar,
-            window,
-            |this, _sidebar_entity, event, window, cx| match event {
-                WorkspaceSidebarEvent::OpenService(id) => this.open_service(*id, cx),
-                WorkspaceSidebarEvent::OpenSchema(_id) => {}
-                WorkspaceSidebarEvent::OpenFolderDetail(id) => this.open_folder_detail(*id, cx),
-                WorkspaceSidebarEvent::ShowImportDialog(folder_id) => {
-                    this.show_import_dialog(*folder_id, window, cx);
-                }
-                WorkspaceSidebarEvent::ExecuteImport(config) => {
-                    this.execute_simple_import(config.clone(), cx);
-                }
-            },
-        );
-
         Self {
             workspace_id: None,
             view: WorkspaceView::Services,
@@ -174,8 +101,7 @@ impl WorkspaceContent {
             sidebar,
             env_selector,
             folder_detail: folder_detail_page,
-            import_handler: ImportHandler::new(),
-            _subscriptions: vec![registry_sub, registry_sub2, tabs_sub, sidebar_sub],
+            _subscriptions: vec![registry_sub, registry_sub2, tabs_sub],
         }
     }
 
@@ -199,78 +125,6 @@ impl WorkspaceContent {
         cx.notify();
     }
 
-    /// Show the simplified import dialog
-    /// Implements Requirements 1.1, 1.2, 1.3, 1.4, 3.4
-    fn show_import_dialog(
-        &mut self,
-        folder_id: Option<Uuid>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        // Get folder name if folder_id is provided
-        let folder_name = if let Some(id) = folder_id {
-            let registry = workspace::WorkspaceRegistry::global(cx);
-            registry
-                .read(cx)
-                .get_folder(id)
-                .map(|f| SharedString::from(f.name.clone()))
-        } else {
-            None
-        };
-
-        // Create the import dialog
-        let dialog = cx.new(|cx| {
-            let mut dialog = SimpleImportDialog::new(window, cx);
-            dialog.set_target_folder(folder_id, folder_name);
-            dialog
-        });
-
-        // Subscribe to dialog events
-        let dialog_sub = cx.subscribe(&dialog, |this, _, event: &SimpleImportDialogEvent, cx| {
-            match event {
-                SimpleImportDialogEvent::Import(config) => {
-                    // Execute the import
-                    this.execute_simple_import(config.clone(), cx);
-                    // Close the dialog
-                    this.import_handler.hide();
-                    cx.notify();
-                }
-                SimpleImportDialogEvent::Cancel => {
-                    // Close the dialog
-                    this.import_handler.hide();
-                    cx.notify();
-                }
-            }
-        });
-
-        // Store the subscription and show dialog
-        self._subscriptions.push(dialog_sub);
-        self.import_handler.show(dialog);
-        cx.notify();
-    }
-
-    /// Execute import using SimpleImportConfig
-    /// Implements Requirements 3.4, 4.4, 4.5, 5.1, 5.2
-    fn execute_simple_import(&mut self, config: SimpleImportConfig, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            match import_handler::execute_import(&config, registry, cx) {
-                Ok(_) => {
-                    // Import successful - dialog will be closed by the event handler
-                    // Implements Requirement 4.4 - dialog auto-closes on success
-                    println!("OpenAPI import completed successfully");
-                }
-                Err(e) => {
-                    // Import failed - show error in dialog
-                    // Implements Requirement 5.3 - show error details and keep dialog open
-                    eprintln!("Failed to import OpenAPI: {}", e);
-                    self.import_handler
-                        .set_error(ImportErrorType::ImportError(format!("导入失败: {}", e)), cx);
-                }
-            }
-        });
-    }
-
     /// Rename a service from tab editing
     /// Implements Requirements 1.7: Tab title editing saves to database
     fn rename_service_from_tab(
@@ -286,16 +140,6 @@ impl WorkspaceContent {
                 registry.rename_service(service.id, new_name, cx);
             });
         }
-    }
-
-    fn open_service(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            if let Some(service) = registry.get_service(id) {
-                registry.open_content(ContentType::Service(service.clone()), cx);
-                cx.notify();
-            }
-        });
     }
 
     fn close_service(&mut self, ct: ContentType, cx: &mut Context<Self>) {
@@ -378,20 +222,6 @@ impl WorkspaceContent {
             registry.set_active_content(ct, cx);
         });
         cx.notify();
-    }
-
-    fn open_folder_detail(&mut self, id: Uuid, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            if let Some(folder) = registry.get_folder(id) {
-                if folder.folder_type == FolderType::Service {
-                    registry.open_content(ContentType::ServiceFolder(folder.clone()), cx);
-                } else {
-                    registry.open_content(ContentType::SchemaFolder(folder.clone()), cx);
-                }
-                cx.notify();
-            }
-        });
     }
 
     fn render_service_content(
@@ -486,28 +316,18 @@ impl WorkspaceContent {
                     ),
                 );
 
-            // Determine which dialog overlay to show (if any)
-            let overlay_content: Option<AnyElement> =
-                if self.service_manager.is_confirm_dialog_visible() {
-                    self.service_manager
-                        .confirm_dialog()
-                        .map(|d| d.clone().into_any_element())
-                } else if self.import_handler.is_visible() {
-                    self.import_handler
-                        .dialog()
-                        .map(|d| d.clone().into_any_element())
+            // Render with OverlayDialog if confirm dialog is visible
+            if self.service_manager.is_confirm_dialog_visible() {
+                if let Some(dialog) = self.service_manager.confirm_dialog() {
+                    div()
+                        .size_full()
+                        .relative()
+                        .child(main_content)
+                        .child(OverlayDialog::new(dialog.clone()).dismissable(false))
+                        .into_any_element()
                 } else {
-                    None
-                };
-
-            // Render with OverlayDialog if a dialog is visible
-            if let Some(dialog_content) = overlay_content {
-                div()
-                    .size_full()
-                    .relative()
-                    .child(main_content)
-                    .child(OverlayDialog::new(dialog_content).dismissable(false))
-                    .into_any_element()
+                    main_content.into_any_element()
+                }
             } else {
                 main_content.into_any_element()
             }

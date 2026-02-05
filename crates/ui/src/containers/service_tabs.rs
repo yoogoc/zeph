@@ -4,7 +4,8 @@ use gpui_component::button::{Button, ButtonRounded};
 use gpui_component::input::{Input, InputState};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{IconName, Sizable};
-use models::{ContentType, Workspace};
+use models::ContentType;
+use workspace::WorkspaceRegistry;
 
 pub enum ServiceTabsEvent {
     Select(ContentType),
@@ -13,24 +14,29 @@ pub enum ServiceTabsEvent {
 }
 
 pub struct ServiceTabs {
-    workspace: Option<Workspace>,
     editing_tab: Option<ContentType>,
     edit_input: Option<Entity<InputState>>,
+    _subscription: Subscription,
 }
 
 impl EventEmitter<ServiceTabsEvent> for ServiceTabs {}
 
 impl ServiceTabs {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut Context<Self>) -> Self {
+        // Subscribe to WorkspaceRegistry to auto-refresh when workspace changes
+        let registry = WorkspaceRegistry::global(cx);
+        let subscription = cx.subscribe(
+            &registry,
+            |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
+                cx.notify();
+            },
+        );
+
         Self {
-            workspace: None,
             editing_tab: None,
             edit_input: None,
+            _subscription: subscription,
         }
-    }
-
-    pub fn set_workspace(&mut self, workspace: Workspace) {
-        self.workspace = Some(workspace);
     }
 
     /// Start editing a tab title
@@ -89,7 +95,8 @@ impl ServiceTabs {
 
 impl Render for ServiceTabs {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let Some(workspace) = &self.workspace else {
+        let registry = WorkspaceRegistry::global(cx);
+        let Some(workspace) = registry.read(cx).get_active_workspace() else {
             return div().into_any_element();
         };
 
@@ -98,10 +105,10 @@ impl Render for ServiceTabs {
         }
 
         let service_ids: Vec<_> = workspace.opened_services.clone();
-        let selected_index = workspace
-            .active_service
-            .clone()
-            .and_then(|id| workspace.opened_services.iter().position(|s| s.eq(&id)))
+        let active_service = workspace.active_service.clone();
+        let selected_index = active_service
+            .as_ref()
+            .and_then(|active| service_ids.iter().position(|s| s.eq(active)))
             .unwrap_or(0);
 
         let tabs: Vec<_> = workspace
@@ -192,9 +199,10 @@ impl Render for ServiceTabs {
                     .on_click(cx.listener(move |this, index: &usize, window, cx| {
                         if let Some(ct) = service_ids.get(*index) {
                             // Check if clicking on already selected tab
-                            let is_already_selected = this
-                                .workspace
-                                .as_ref()
+                            let registry = WorkspaceRegistry::global(cx);
+                            let is_already_selected = registry
+                                .read(cx)
+                                .get_active_workspace()
                                 .and_then(|ws| ws.active_service.as_ref())
                                 .map_or(false, |active| active.eq(ct));
 

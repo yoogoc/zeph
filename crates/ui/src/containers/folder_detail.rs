@@ -9,7 +9,7 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::StyledExt;
-use models::{Folder, Header, SearchParameter, Workspace};
+use models::{Folder, Header, SearchParameter};
 use uuid::Uuid;
 use workspace::WorkspaceRegistry;
 
@@ -79,8 +79,6 @@ impl FolderDetailError {
 /// Main folder detail page component
 pub struct FolderDetailPage {
     folder_id: Option<Uuid>,
-    folder: Option<Folder>,
-    workspace: Option<Workspace>,
     active_tab: FolderDetailTab,
     overview_panel: Entity<FolderOverviewPanel>,
     headers_panel: Entity<CommonHeadersPanel>,
@@ -90,6 +88,8 @@ pub struct FolderDetailPage {
     is_loading: bool,
     error_message: Option<String>,
     last_operation: Option<String>,
+
+    _subscription: Subscription,
 }
 
 impl EventEmitter<FolderDetailPageEvent> for FolderDetailPage {}
@@ -149,10 +149,23 @@ impl FolderDetailPage {
         )
         .detach();
 
+        // Subscribe to WorkspaceRegistry to auto-refresh when workspace changes
+        let registry = WorkspaceRegistry::global(cx);
+        let subscription = cx.subscribe(
+            &registry,
+            |this, _registry, event: &workspace::WorkspaceEvent, cx| {
+                if matches!(event, workspace::WorkspaceEvent::Reload) {
+                    // Refresh folder data when workspace reloads
+                    if let Some(folder_id) = this.folder_id {
+                        this.refresh_folder_data(folder_id, cx);
+                    }
+                }
+                cx.notify();
+            },
+        );
+
         Self {
             folder_id: None,
-            folder: None,
-            workspace: None,
             active_tab: FolderDetailTab::Overview,
             overview_panel,
             headers_panel,
@@ -160,7 +173,29 @@ impl FolderDetailPage {
             is_loading: false,
             error_message: None,
             last_operation: None,
+            _subscription: subscription,
         }
+    }
+
+    /// Refresh folder data from WorkspaceRegistry
+    fn refresh_folder_data(&mut self, folder_id: Uuid, cx: &mut Context<Self>) {
+        let registry = WorkspaceRegistry::global(cx);
+        if let Some(folder) = registry.read(cx).get_folder(folder_id).cloned() {
+            self.update_panels_with_folder(&folder, cx);
+        }
+    }
+
+    /// Update child panels with folder data
+    fn update_panels_with_folder(&mut self, folder: &Folder, cx: &mut Context<Self>) {
+        self.overview_panel.update(cx, |panel, _| {
+            panel.set_folder(folder.clone());
+        });
+        self.headers_panel.update(cx, |panel, _| {
+            panel.set_headers(folder.common_headers.clone());
+        });
+        self.params_panel.update(cx, |panel, _| {
+            panel.set_params(folder.common_search_params.clone());
+        });
     }
 
     // Direct operations on WorkspaceRegistry
@@ -194,23 +229,10 @@ impl FolderDetailPage {
     /// Set the folder to display
     pub fn set_folder(&mut self, folder: Option<Folder>, cx: &mut Context<Self>) {
         self.folder_id = folder.as_ref().map(|f| f.id);
-        self.folder = folder.clone();
 
         // Update child panels with the new folder data
         if let Some(folder) = &folder {
-            self.overview_panel.update(cx, |panel, _| {
-                panel.set_folder(folder.clone());
-            });
-
-            // Store headers for later initialization in the panel
-            let headers = folder.common_headers.clone();
-            self.headers_panel.update(cx, |panel, _| {
-                panel.set_headers(headers);
-            });
-
-            self.params_panel.update(cx, |panel, _| {
-                panel.set_params(folder.common_search_params.clone());
-            });
+            self.update_panels_with_folder(folder, cx);
         }
 
         cx.notify();
@@ -219,11 +241,6 @@ impl FolderDetailPage {
     /// Get the current folder ID
     pub fn get_folder_id(&self) -> Option<Uuid> {
         self.folder_id
-    }
-
-    /// Set the workspace for breadcrumb navigation
-    pub fn set_workspace(&mut self, workspace: Option<Workspace>) {
-        self.workspace = workspace;
     }
 
     /// Set the active tab
@@ -263,15 +280,9 @@ impl FolderDetailPage {
     /// Validate folder data before operations
     #[allow(unused)]
     fn validate_folder_data(&self) -> Result<(), FolderDetailError> {
-        if self.folder.is_none() {
+        if self.folder_id.is_none() {
             return Err(FolderDetailError::NotFound(
                 "No folder selected".to_string(),
-            ));
-        }
-
-        if self.folder_id.is_none() {
-            return Err(FolderDetailError::InvalidData(
-                "Invalid folder ID".to_string(),
             ));
         }
 
@@ -391,7 +402,13 @@ impl FolderDetailPage {
 
 impl Render for FolderDetailPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        if self.folder.is_none() {
+        // Get folder from WorkspaceRegistry
+        let folder = self.folder_id.and_then(|id| {
+            let registry = WorkspaceRegistry::global(cx);
+            registry.read(cx).get_folder(id).cloned()
+        });
+
+        if folder.is_none() {
             return div()
                 .flex_1()
                 .h_full()

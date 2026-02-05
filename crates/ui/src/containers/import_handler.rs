@@ -1,67 +1,12 @@
-//! Import handling module for WorkspaceContent
+//! Import execution utilities
 //!
-//! This module encapsulates the import dialog state and related logic,
-//! reducing the complexity of WorkspaceContent.
+//! This module provides utility functions for executing OpenAPI imports.
+//! The import dialog UI is managed by WorkspaceSidebar.
 
-use crate::simple_import_dialog::{ImportErrorType, SimpleImportConfig, SimpleImportDialog};
-use gpui::*;
+use crate::simple_import_dialog::{ImportErrorType, SimpleImportConfig};
+use gpui::Context;
 use models::FolderType;
 use uuid::Uuid;
-
-/// Manages the import dialog state and lifecycle
-pub struct ImportHandler {
-    /// The import dialog entity
-    dialog: Option<Entity<SimpleImportDialog>>,
-    /// Whether the import dialog is visible
-    visible: bool,
-}
-
-impl Default for ImportHandler {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl ImportHandler {
-    /// Creates a new ImportHandler
-    pub fn new() -> Self {
-        Self {
-            dialog: None,
-            visible: false,
-        }
-    }
-
-    /// Returns whether the import dialog is visible
-    pub fn is_visible(&self) -> bool {
-        self.visible
-    }
-
-    /// Returns a reference to the dialog entity if it exists
-    pub fn dialog(&self) -> Option<&Entity<SimpleImportDialog>> {
-        self.dialog.as_ref()
-    }
-
-    /// Shows the import dialog with the given entity
-    pub fn show(&mut self, dialog: Entity<SimpleImportDialog>) {
-        self.dialog = Some(dialog);
-        self.visible = true;
-    }
-
-    /// Hides and clears the import dialog
-    pub fn hide(&mut self) {
-        self.dialog = None;
-        self.visible = false;
-    }
-
-    /// Sets an error on the dialog if it exists
-    pub fn set_error(&self, error: ImportErrorType, cx: &mut App) {
-        if let Some(dialog) = &self.dialog {
-            dialog.update(cx, |d, _cx| {
-                d.set_error(Some(error));
-            });
-        }
-    }
-}
 
 /// Validates the target folder for import
 /// Returns Ok(()) if valid, or an ImportErrorType if invalid

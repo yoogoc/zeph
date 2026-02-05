@@ -1,8 +1,16 @@
-use crate::ws_sidebar::{TreeId, WorkspaceSidebar, WorkspaceSidebarEvent};
+use crate::ws_sidebar::{TreeId, WorkspaceSidebar};
 use gpui::*;
 use gpui_component::menu::{PopupMenu, PopupMenuItem};
 use gpui_component::tree::TreeItem;
 use models::FolderType;
+
+/// Detail action type for View Details menu item
+#[derive(Clone)]
+enum DetailAction {
+    Service(uuid::Uuid),
+    Schema(uuid::Uuid),
+    Folder(uuid::Uuid),
+}
 
 pub fn popup_menu(
     menu: PopupMenu,
@@ -14,11 +22,8 @@ pub fn popup_menu(
     let mut menu = menu;
     let id = TreeId::new(item.id.clone());
 
-    // Event-based actions (need parent coordination)
-    let mut detail_event: Option<WorkspaceSidebarEvent> = None;
-    let mut import_event: Option<WorkspaceSidebarEvent> = None;
-
     // Direct action parameters
+    let mut detail_action: Option<DetailAction> = None;
     let mut create_service_params: Option<(SharedString, Option<uuid::Uuid>)> = None;
     let mut create_schema_params: Option<(SharedString, Option<uuid::Uuid>)> = None;
     let mut create_folder_params: Option<(SharedString, Option<uuid::Uuid>, FolderType)> = None;
@@ -27,36 +32,37 @@ pub fn popup_menu(
     let mut delete_service_id: Option<uuid::Uuid> = None;
     let mut delete_schema_id: Option<uuid::Uuid> = None;
     let mut delete_folder_id: Option<uuid::Uuid> = None;
+    let mut import_folder_id: Option<Option<uuid::Uuid>> = None;
 
     match id {
         TreeId::ServiceRoot => {
             create_service_params = Some(("New Service".into(), None));
             create_folder_params = Some(("New Folder".into(), None, FolderType::Service));
-            import_event = Some(WorkspaceSidebarEvent::ShowImportDialog(None));
+            import_folder_id = Some(None);
         }
         TreeId::SchemaRoot => {
             create_schema_params = Some(("New Schema".into(), None));
             create_folder_params = Some(("New Folder".into(), None, FolderType::Schema));
         }
         TreeId::Service(id) => {
-            detail_event = Some(WorkspaceSidebarEvent::OpenService(id));
+            detail_action = Some(DetailAction::Service(id));
             rename_service_id = Some(id);
             delete_service_id = Some(id);
         }
         TreeId::Schema(id) => {
-            detail_event = Some(WorkspaceSidebarEvent::OpenSchema(id));
+            detail_action = Some(DetailAction::Schema(id));
             delete_schema_id = Some(id);
         }
         TreeId::ServiceFolder(id) => {
-            detail_event = Some(WorkspaceSidebarEvent::OpenFolderDetail(id));
+            detail_action = Some(DetailAction::Folder(id));
             create_service_params = Some(("New Service".into(), Some(id)));
             create_folder_params = Some(("New Folder".into(), Some(id), FolderType::Service));
-            import_event = Some(WorkspaceSidebarEvent::ShowImportDialog(Some(id)));
+            import_folder_id = Some(Some(id));
             rename_folder_id = Some(id);
             delete_folder_id = Some(id);
         }
         TreeId::SchemaFolder(id) => {
-            detail_event = Some(WorkspaceSidebarEvent::OpenFolderDetail(id));
+            detail_action = Some(DetailAction::Folder(id));
             create_schema_params = Some(("New Schema".into(), Some(id)));
             create_folder_params = Some(("New Folder".into(), Some(id), FolderType::Schema));
             rename_folder_id = Some(id);
@@ -64,13 +70,17 @@ pub fn popup_menu(
         }
     }
 
-    // Event-based: View Details (needs parent to open tabs)
-    if let Some(event) = detail_event {
+    // Direct: View Details
+    if let Some(action) = detail_action {
         menu = menu.item(
             PopupMenuItem::new("View Details").on_click(window.listener_for(
                 view,
-                move |_this, _, _, cx| {
-                    cx.emit(event.clone());
+                move |this, _, _, cx| {
+                    match &action {
+                        DetailAction::Service(id) => this.open_service(*id, cx),
+                        DetailAction::Schema(id) => this.open_schema(*id, cx),
+                        DetailAction::Folder(id) => this.open_folder_detail(*id, cx),
+                    }
                     cx.stop_propagation();
                 },
             )),
@@ -116,13 +126,13 @@ pub fn popup_menu(
         );
     }
 
-    // Event-based: Import OpenAPI (needs parent's import_handler)
-    if let Some(event) = import_event {
+    // Direct: Import OpenAPI
+    if let Some(folder_id) = import_folder_id {
         menu = menu.item(
             PopupMenuItem::new("导入 OpenAPI").on_click(window.listener_for(
                 view,
-                move |_this, _, _, cx| {
-                    cx.emit(event.clone());
+                move |this, _, window, cx| {
+                    this.show_import_dialog(folder_id, window, cx);
                     cx.stop_propagation();
                 },
             )),

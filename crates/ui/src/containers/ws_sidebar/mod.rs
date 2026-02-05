@@ -1,9 +1,11 @@
 mod popup_menu;
 mod utils;
 
+use crate::containers::import_handler;
 use crate::dialogs::{EntityType, RenameDialog, RenameDialogEvent};
+use crate::simple_import_dialog::ImportErrorType;
 use crate::ws_sidebar::popup_menu::popup_menu;
-use crate::SimpleImportConfig;
+use crate::{SimpleImportConfig, SimpleImportDialog, SimpleImportDialogEvent};
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
@@ -11,7 +13,7 @@ use gpui_component::list::ListItem;
 use gpui_component::menu::DropdownMenu;
 use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
 use gpui_component::{h_flex, v_flex, IconName, Sizable};
-use models::FolderType;
+use models::{ContentType, FolderType};
 use std::collections::HashMap;
 use utils::build_tree;
 use utils::cal_icon;
@@ -24,30 +26,33 @@ pub struct WorkspaceSidebar {
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
     rename_dialog: Option<Entity<RenameDialog>>,
+    import_dialog: Option<Entity<SimpleImportDialog>>,
+    _subscription: Subscription,
 }
-
-#[derive(Debug, Clone)]
-#[allow(unused)]
-pub enum WorkspaceSidebarEvent {
-    // Events that need UI coordination from parent
-    OpenService(Uuid),
-    OpenSchema(Uuid),
-    OpenFolderDetail(Uuid),
-    // Import dialog events (need import_handler from parent)
-    ShowImportDialog(Option<Uuid>),
-    ExecuteImport(SimpleImportConfig),
-}
-
-impl EventEmitter<WorkspaceSidebarEvent> for WorkspaceSidebar {}
 
 impl WorkspaceSidebar {
     pub fn new(cx: &mut Context<Self>) -> Self {
         let tree = cx.new(|cx| TreeState::new(cx));
+
+        // Subscribe to WorkspaceRegistry to auto-refresh when workspace changes
+        let registry = WorkspaceRegistry::global(cx);
+        let subscription = cx.subscribe(
+            &registry,
+            |this, _registry, event: &workspace::WorkspaceEvent, cx| match event {
+                workspace::WorkspaceEvent::Open(_) | workspace::WorkspaceEvent::Reload => {
+                    this.refresh_tree(cx);
+                }
+                _ => {}
+            },
+        );
+
         Self {
             tree,
             hovered: None,
             tree_map: HashMap::new(),
             rename_dialog: None,
+            import_dialog: None,
+            _subscription: subscription,
         }
     }
 
@@ -111,6 +116,35 @@ impl WorkspaceSidebar {
         registry.update(cx, |r, cx| r.rename_folder(id, new_name, cx));
     }
 
+    /// Open a service by ID
+    pub fn open_service(&self, id: Uuid, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            if let Some(service) = registry.get_service(id) {
+                registry.open_content(ContentType::Service(service.clone()), cx);
+            }
+        });
+    }
+
+    /// Open a schema by ID
+    pub fn open_schema(&self, _id: Uuid, _cx: &mut App) {
+        // TODO: Implement when WorkspaceRegistry.get_schema is available
+    }
+
+    /// Open a folder detail page by ID
+    pub fn open_folder_detail(&self, id: Uuid, cx: &mut App) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            if let Some(folder) = registry.get_folder(id) {
+                if folder.folder_type == FolderType::Service {
+                    registry.open_content(ContentType::ServiceFolder(folder.clone()), cx);
+                } else {
+                    registry.open_content(ContentType::SchemaFolder(folder.clone()), cx);
+                }
+            }
+        });
+    }
+
     pub fn set_ix(&mut self, item: TreeId, cx: &mut Context<Self>) {
         self.tree.update(cx, |this, cx| {
             this.set_selected_item(Some(&TreeItem::new(item.to_string().clone(), "")), cx);
@@ -122,13 +156,13 @@ impl WorkspaceSidebar {
         self.tree_map.insert(item.id.clone(), ix);
         match TreeId::new(selected_item.id) {
             TreeId::Service(id) => {
-                cx.emit(WorkspaceSidebarEvent::OpenService(id));
+                self.open_service(id, cx);
             }
             TreeId::Schema(id) => {
-                cx.emit(WorkspaceSidebarEvent::OpenSchema(id));
+                self.open_schema(id, cx);
             }
             TreeId::ServiceFolder(id) | TreeId::SchemaFolder(id) => {
-                cx.emit(WorkspaceSidebarEvent::OpenFolderDetail(id));
+                self.open_folder_detail(id, cx);
             }
             _ => {}
         }
@@ -213,6 +247,71 @@ impl WorkspaceSidebar {
         .detach();
 
         self.rename_dialog = Some(dialog);
+        cx.notify();
+    }
+
+    /// Show the import dialog
+    pub fn show_import_dialog(
+        &mut self,
+        folder_id: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let folder_name = folder_id.and_then(|id| {
+            let registry = WorkspaceRegistry::global(cx);
+            registry
+                .read(cx)
+                .get_folder(id)
+                .map(|f| SharedString::from(f.name.clone()))
+        });
+
+        let dialog = cx.new(|cx| {
+            let mut dialog = SimpleImportDialog::new(window, cx);
+            dialog.set_target_folder(folder_id, folder_name);
+            dialog
+        });
+
+        cx.subscribe_in(
+            &dialog,
+            window,
+            move |this, _, event, _window, cx| match event {
+                SimpleImportDialogEvent::Import(config) => {
+                    this.execute_import(config.clone(), cx);
+                }
+                SimpleImportDialogEvent::Cancel => {
+                    this.import_dialog = None;
+                    cx.notify();
+                }
+            },
+        )
+        .detach();
+
+        self.import_dialog = Some(dialog);
+        cx.notify();
+    }
+
+    /// Execute import directly
+    fn execute_import(&mut self, config: SimpleImportConfig, cx: &mut Context<Self>) {
+        let registry = WorkspaceRegistry::global(cx);
+        registry.update(cx, |registry, cx| {
+            match import_handler::execute_import(&config, registry, cx) {
+                Ok(_) => {
+                    self.import_dialog = None;
+                    println!("OpenAPI import completed successfully");
+                }
+                Err(e) => {
+                    eprintln!("Failed to import OpenAPI: {}", e);
+                    if let Some(dialog) = &self.import_dialog {
+                        dialog.update(cx, |d, _cx| {
+                            d.set_error(Some(ImportErrorType::ImportError(format!(
+                                "导入失败: {}",
+                                e
+                            ))));
+                        });
+                    }
+                }
+            }
+        });
         cx.notify();
     }
 
@@ -327,6 +426,21 @@ impl Render for WorkspaceSidebar {
             )
             // Render rename dialog as an overlay if it exists
             .when_some(self.rename_dialog.clone(), |el, dialog| {
+                el.child(
+                    div()
+                        .absolute()
+                        .top_0()
+                        .left_0()
+                        .size_full()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .bg(rgba(0x00000080)) // Semi-transparent black overlay
+                        .child(dialog),
+                )
+            })
+            // Render import dialog as an overlay if it exists
+            .when_some(self.import_dialog.clone(), |el, dialog| {
                 el.child(
                     div()
                         .absolute()
