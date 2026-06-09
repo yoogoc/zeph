@@ -41,7 +41,6 @@ impl HomePage {
             dialog
                 .title(shared_t!("workspaces.create"))
                 .w(px(400.0))
-                .confirm()
                 .child(
                     div()
                         .v_flex()

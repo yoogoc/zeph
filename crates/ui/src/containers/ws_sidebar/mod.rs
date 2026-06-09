@@ -195,7 +195,6 @@ impl WorkspaceSidebar {
             dialog
                 .title("重命名 Service")
                 .w(px(450.0))
-                .confirm()
                 .child(
                     div()
                         .v_flex()
@@ -250,7 +249,6 @@ impl WorkspaceSidebar {
             dialog
                 .title("重命名 Folder")
                 .w(px(450.0))
-                .confirm()
                 .child(
                     div()
                         .v_flex()

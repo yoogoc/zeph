@@ -6,6 +6,7 @@ publish.workspace = true
 
 [dependencies]
 gpui.workspace = true
+gpui_platform.workspace = true
 gpui_tokio.workspace = true
 reqwest_client.workspace = true
 gpui-component.workspace = true

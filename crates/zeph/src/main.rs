@@ -17,7 +17,7 @@ fn main() {
 
     i18n::set_locale("zh-CN");
 
-    let app = Application::new()
+    let app = gpui_platform::application()
         .with_assets(gpui_component_assets::Assets)
         .with_http_client(Arc::new(reqwest_client::ReqwestClient::new()));
 

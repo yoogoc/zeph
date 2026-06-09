@@ -67,7 +67,6 @@ impl EnvironmentSelector {
             dialog
                 .title(shared_t!("env.create"))
                 .w(px(400.0))
-                .confirm()
                 .child(Input::new(&input).w_full())
                 .on_ok(move |_, window, cx| {
                     let name = input_clone.read(cx).value().to_string();
