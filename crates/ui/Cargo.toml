@@ -7,6 +7,7 @@ publish.workspace = true
 [dependencies]
 models = { path = "../models" }
 workspace = { path = "../workspace" }
+register = { path = "../register" }
 gpui.workspace = true
 gpui-component.workspace = true
 gpui_tokio.workspace = true

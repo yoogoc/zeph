@@ -1,53 +1,53 @@
+use crate::state::ServiceState;
 use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::{IconName, StyledExt, WindowExt};
-use workspace::WorkspaceRegistry;
 
 use crate::dialogs::{EnvironmentManager, EnvironmentManagerEvent};
 
-pub struct EnvironmentSelector;
+pub struct EnvironmentSelector {
+    service_state: Entity<ServiceState>,
+}
 
 impl EnvironmentSelector {
-    pub fn new() -> Self {
-        Self
+    pub fn new(service_state: Entity<ServiceState>) -> Self {
+        Self { service_state }
     }
 
     fn open_manage_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let registry = WorkspaceRegistry::global(cx);
-        let Some(workspace) = registry.read(cx).get_active_workspace() else {
-            return;
-        };
-        let environments = workspace.environments.clone();
+        let environments = self.service_state.read(cx).environments.clone();
 
         let manager = cx.new(|_| EnvironmentManager::new(environments));
 
-        cx.subscribe(&manager, |_this, _, event: &EnvironmentManagerEvent, cx| {
-            let registry = WorkspaceRegistry::global(cx);
-            match event {
+        let service_state = self.service_state.clone();
+        cx.subscribe(
+            &manager,
+            move |_this, _, event: &EnvironmentManagerEvent, cx| match event {
                 EnvironmentManagerEvent::Create(name) => {
-                    registry.update(cx, |r, cx| r.create_environment(name.clone(), cx));
+                    service_state.update(cx, |s, cx| s.create_environment(name.clone(), cx));
                 }
                 EnvironmentManagerEvent::Update(env) => {
-                    registry.update(cx, |r, cx| r.update_environment(env.clone(), cx));
+                    service_state.update(cx, |s, cx| s.update_environment(env.clone(), cx));
                 }
                 EnvironmentManagerEvent::Delete(id) => {
-                    registry.update(cx, |r, cx| r.delete_environment(*id, cx));
+                    service_state.update(cx, |s, cx| s.delete_environment(*id, cx));
                 }
                 EnvironmentManagerEvent::AddVariable(env_id, var) => {
-                    registry.update(cx, |r, cx| {
-                        r.add_environment_variable(*env_id, var.clone(), cx)
+                    service_state.update(cx, |s, cx| {
+                        s.add_environment_variable(*env_id, var.clone(), cx)
                     });
                 }
                 EnvironmentManagerEvent::UpdateVariable(var) => {
-                    registry.update(cx, |r, cx| r.update_environment_variable(var.clone(), cx));
+                    service_state
+                        .update(cx, |s, cx| s.update_environment_variable(var.clone(), cx));
                 }
                 EnvironmentManagerEvent::DeleteVariable(id) => {
-                    registry.update(cx, |r, cx| r.delete_environment_variable(*id, cx));
+                    service_state.update(cx, |s, cx| s.delete_environment_variable(*id, cx));
                 }
-            }
-        })
+            },
+        )
         .detach();
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
@@ -60,9 +60,11 @@ impl EnvironmentSelector {
 
     fn open_create_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
+        let service_state = self.service_state.clone();
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let input_clone = input.clone();
+            let ss = service_state.clone();
 
             dialog
                 .title(shared_t!("env.create"))
@@ -71,8 +73,7 @@ impl EnvironmentSelector {
                 .on_ok(move |_, window, cx| {
                     let name = input_clone.read(cx).value().to_string();
                     if !name.trim().is_empty() {
-                        let registry = WorkspaceRegistry::global(cx);
-                        registry.update(cx, |r, cx| r.create_environment(name, cx));
+                        ss.update(cx, |s, cx| s.create_environment(name, cx));
                     }
                     window.close_dialog(cx);
                     true
@@ -83,13 +84,10 @@ impl EnvironmentSelector {
 
 impl Render for EnvironmentSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let registry = WorkspaceRegistry::global(cx);
-        let Some(workspace) = registry.read(cx).get_active_workspace() else {
-            return div().into_any_element();
-        };
+        let ss = self.service_state.read(cx);
 
-        let environments = workspace.environments.clone();
-        let active_env = workspace
+        let environments = ss.environments.clone();
+        let active_env = ss
             .active_environment_id
             .and_then(|id| environments.iter().find(|e| e.id == id));
 
@@ -97,7 +95,10 @@ impl Render for EnvironmentSelector {
             .map(|e| e.name.to_string())
             .unwrap_or_else(|| t!("env.not_found").to_string());
 
+        drop(ss);
+
         let view = cx.entity();
+        let service_state = self.service_state.clone();
 
         div()
             .h_flex()
@@ -108,17 +109,18 @@ impl Render for EnvironmentSelector {
                     .dropdown_menu({
                         let view = view.clone();
                         let envs = environments.clone();
+                        let ss = service_state.clone();
                         move |menu, window, _cx| {
                             let mut m = menu;
                             for env in &envs {
                                 let env_id = env.id;
                                 let name = env.name.to_string();
+                                let ss2 = ss.clone();
                                 m = m.item(PopupMenuItem::new(name).on_click(window.listener_for(
                                     &view,
                                     move |_this, _, _, cx| {
-                                        let registry = WorkspaceRegistry::global(cx);
-                                        registry.update(cx, |r, cx| {
-                                            r.set_active_environment(env_id, cx)
+                                        ss2.update(cx, |s, cx| {
+                                            s.set_active_environment(env_id, cx)
                                         });
                                     },
                                 )));

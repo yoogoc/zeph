@@ -1,75 +1,62 @@
+pub mod item;
 mod popup_menu;
 mod utils;
 
-use crate::ws_sidebar::popup_menu::popup_menu;
-use crate::SimpleImportDialog;
-use gpui::prelude::FluentBuilder;
+use crate::item::item;
+use crate::state::ServiceState;
+use crate::ws_sidebar::utils::build_tree;
 use gpui::*;
-use gpui_component::button::Button;
-use gpui_component::input::{Input, InputState};
-use gpui_component::list::ListItem;
-use gpui_component::menu::DropdownMenu;
 use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
-use gpui_component::{h_flex, v_flex, IconName, Sizable, StyledExt, WindowExt};
-use models::{ContentType, FolderType};
+use gpui_component::v_flex;
+use models::FolderType;
 use std::collections::HashMap;
-use utils::build_tree;
-use utils::cal_icon;
+use std::rc::Rc;
 pub use utils::TreeId;
 use uuid::Uuid;
-use workspace::WorkspaceRegistry;
 
 pub struct WorkspaceSidebar {
+    service_state: Entity<ServiceState>,
     tree: Entity<TreeState>,
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
-    _subscription: Subscription,
+    get_icon: Rc<dyn Fn(&TreeEntry) -> AnyElement>,
 }
 
 impl WorkspaceSidebar {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        service_state: Entity<ServiceState>,
+        get_icon: impl Fn(&TreeEntry) -> AnyElement + 'static,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let tree = cx.new(|cx| TreeState::new(cx));
-
-        // Subscribe to WorkspaceRegistry to auto-refresh when workspace changes
-        let registry = WorkspaceRegistry::global(cx);
-        let subscription = cx.subscribe(
-            &registry,
-            |this, _registry, event: &workspace::WorkspaceEvent, cx| match event {
-                workspace::WorkspaceEvent::Open(_) | workspace::WorkspaceEvent::Reload => {
-                    this.refresh_tree(cx);
-                }
-                _ => {}
-            },
-        );
-
         Self {
+            service_state,
             tree,
             hovered: None,
             tree_map: HashMap::new(),
-            _subscription: subscription,
+            get_icon: Rc::new(get_icon),
         }
     }
 
     pub fn refresh_tree(&mut self, cx: &mut Context<Self>) {
         self.tree_map.clear();
-        let registry = WorkspaceRegistry::global(cx);
-        let workspace = registry.read(cx).get_active_workspace().cloned();
-        if let Some(workspace) = workspace {
-            self.tree.update(cx, |this, cx| {
-                this.set_items(build_tree(workspace), cx);
-            });
-        }
+        let ss = self.service_state.read(cx);
+        let items = build_tree(&ss.folders, &ss.services, &ss.schemas);
+        self.tree.update(cx, |this, cx| {
+            this.set_items(items, cx);
+        });
     }
 
-    // Direct operations on WorkspaceRegistry
     pub fn create_service(&self, name: SharedString, folder_id: Option<Uuid>, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.create_service(name, folder_id, cx));
+        self.service_state.update(cx, |s, cx| {
+            s.create_service(name, folder_id, cx);
+        });
     }
 
     pub fn create_schema(&self, name: SharedString, folder_id: Option<Uuid>, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.create_schema(name, folder_id, cx));
+        self.service_state.update(cx, |s, cx| {
+            s.create_schema(name, folder_id, cx);
+        });
     }
 
     pub fn create_folder(
@@ -79,63 +66,52 @@ impl WorkspaceSidebar {
         folder_type: FolderType,
         cx: &mut App,
     ) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| {
-            r.create_folder(name, parent_id, folder_type, cx)
+        self.service_state.update(cx, |s, cx| {
+            s.create_folder(name, parent_id, folder_type, cx);
         });
     }
 
-    pub fn delete_service(&self, id: Uuid, _cx: &mut App) {
-        // TODO: Implement when WorkspaceRegistry.delete_service is available
-        eprintln!("Delete service requested: {}", id);
+    pub fn delete_service(&self, id: Uuid, cx: &mut App) {
+        self.service_state.update(cx, |s, cx| {
+            s.delete_service(id, cx);
+        });
     }
 
     pub fn delete_schema(&self, id: Uuid, _cx: &mut App) {
-        // TODO: Implement when WorkspaceRegistry.delete_schema is available
+        // TODO: storage/ServiceState lacks schema delete support yet.
         eprintln!("Delete schema requested: {}", id);
     }
 
     pub fn delete_folder(&self, id: Uuid, _cx: &mut App) {
-        // TODO: Implement when WorkspaceRegistry.delete_folder is available
+        // TODO: storage/ServiceState lacks folder delete support yet.
         eprintln!("Delete folder requested: {}", id);
     }
 
     pub fn rename_service(&self, id: Uuid, new_name: SharedString, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.rename_service(id, new_name, cx));
-    }
-
-    pub fn rename_folder(&self, id: Uuid, new_name: SharedString, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| r.rename_folder(id, new_name, cx));
-    }
-
-    /// Open a service by ID
-    pub fn open_service(&self, id: Uuid, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            if let Some(service) = registry.get_service(id) {
-                registry.open_content(ContentType::Service(service.clone()), cx);
-            }
+        self.service_state.update(cx, |s, cx| {
+            s.rename_service(id, new_name, cx);
         });
     }
 
-    /// Open a schema by ID
-    pub fn open_schema(&self, _id: Uuid, _cx: &mut App) {
-        // TODO: Implement when WorkspaceRegistry.get_schema is available
+    pub fn rename_folder(&self, id: Uuid, new_name: SharedString, cx: &mut App) {
+        self.service_state.update(cx, |s, cx| {
+            s.rename_folder(id, new_name, cx);
+        });
     }
 
-    /// Open a folder detail page by ID
-    pub fn open_folder_detail(&self, id: Uuid, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            if let Some(folder) = registry.get_folder(id) {
-                if folder.folder_type == FolderType::Service {
-                    registry.open_content(ContentType::ServiceFolder(folder.clone()), cx);
-                } else {
-                    registry.open_content(ContentType::SchemaFolder(folder.clone()), cx);
-                }
-            }
+    pub fn open_service(&self, id: Uuid, window: &mut Window, cx: &mut App) {
+        self.service_state.update(cx, |s, cx| {
+            s.open_service(id, window, cx);
+        });
+    }
+
+    pub fn open_schema(&self, _id: Uuid, _window: &mut Window, _cx: &mut App) {
+        // TODO: schema detail page not implemented yet.
+    }
+
+    pub fn open_folder_detail(&self, id: Uuid, window: &mut Window, cx: &mut App) {
+        self.service_state.update(cx, |s, cx| {
+            s.open_folder_detail(id, window, cx);
         });
     }
 
@@ -145,227 +121,156 @@ impl WorkspaceSidebar {
         });
     }
 
-    fn handle_selection(&mut self, item: TreeItem, ix: usize, cx: &mut Context<Self>) {
-        let selected_item = item.clone();
+    fn handle_selection(
+        &mut self,
+        item: TreeItem,
+        ix: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         self.tree_map.insert(item.id.clone(), ix);
-        match TreeId::new(selected_item.id) {
-            TreeId::Service(id) => {
-                self.open_service(id, cx);
-            }
-            TreeId::Schema(id) => {
-                self.open_schema(id, cx);
-            }
+        match TreeId::new(item.id) {
+            TreeId::Service(id) => self.open_service(id, window, cx),
+            TreeId::Schema(id) => self.open_schema(id, window, cx),
             TreeId::ServiceFolder(id) | TreeId::SchemaFolder(id) => {
-                self.open_folder_detail(id, cx);
+                self.open_folder_detail(id, window, cx)
             }
             _ => {}
         }
-
         cx.notify();
     }
 
-    /// Show the rename dialog for a Service
-    /// Implements Requirements 1.1, 1.2
-    pub fn show_rename_service_dialog(
-        &mut self,
-        service_id: Uuid,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = WorkspaceRegistry::global(cx);
-        let Some(workspace) = registry.read(cx).get_active_workspace() else {
-            return;
-        };
-        let Some(service) = workspace.services.iter().find(|s| s.id == service_id) else {
-            return;
-        };
-        let current_name = service.name.clone();
+    // pub fn show_rename_service_dialog(
+    //     &mut self,
+    //     service_id: Uuid,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     let ss = self.service_state.read(cx);
+    //     let Some(service) = ss.services.iter().find(|s| s.id == service_id) else {
+    //         return;
+    //     };
+    //     let current_name = service.name.clone();
+    //     drop(ss);
+    //
+    //     let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
+    //     input.update(cx, |state, cx| {
+    //         state.set_value(current_name.to_string(), window, cx);
+    //     });
+    //
+    //     let this = cx.entity().downgrade();
+    //
+    //     window.open_dialog(cx, move |dialog, _window, _cx| {
+    //         let input_clone = input.clone();
+    //         let this_clone = this.clone();
+    //
+    //         dialog
+    //             .title("重命名 Service")
+    //             .w(px(450.0))
+    //             .child(
+    //                 div()
+    //                     .v_flex()
+    //                     .gap_2()
+    //                     .child(div().text_sm().font_semibold().child("名称"))
+    //                     .child(Input::new(&input).w_full()),
+    //             )
+    //             .on_ok(move |_, window, cx| {
+    //                 let new_name = input_clone.read(cx).value();
+    //                 if new_name.trim().is_empty() || new_name.len() > 255 {
+    //                     return false;
+    //                 }
+    //                 if let Some(this) = this_clone.upgrade() {
+    //                     this.update(cx, |this, cx| {
+    //                         this.rename_service(service_id, new_name, cx);
+    //                     });
+    //                 }
+    //                 window.close_dialog(cx);
+    //                 true
+    //             })
+    //     });
+    // }
 
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
-        input.update(cx, |state, cx| {
-            state.set_value(current_name.to_string(), window, cx);
-        });
+    // pub fn show_rename_folder_dialog(
+    //     &mut self,
+    //     folder_id: Uuid,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     let ss = self.service_state.read(cx);
+    //     let Some(folder) = ss.folders.iter().find(|f| f.id == folder_id) else {
+    //         return;
+    //     };
+    //     let current_name = folder.name.clone();
+    //     drop(ss);
+    //
+    //     let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
+    //     input.update(cx, |state, cx| {
+    //         state.set_value(current_name.to_string(), window, cx);
+    //     });
+    //
+    //     let this = cx.entity().downgrade();
+    //
+    //     window.open_dialog(cx, move |dialog, _window, _cx| {
+    //         let input_clone = input.clone();
+    //         let this_clone = this.clone();
+    //
+    //         dialog
+    //             .title("重命名 Folder")
+    //             .w(px(450.0))
+    //             .child(
+    //                 div()
+    //                     .v_flex()
+    //                     .gap_2()
+    //                     .child(div().text_sm().font_semibold().child("名称"))
+    //                     .child(Input::new(&input).w_full()),
+    //             )
+    //             .on_ok(move |_, window, cx| {
+    //                 let new_name = input_clone.read(cx).value();
+    //                 if new_name.trim().is_empty() || new_name.len() > 255 {
+    //                     return false;
+    //                 }
+    //                 if let Some(this) = this_clone.upgrade() {
+    //                     this.update(cx, |this, cx| {
+    //                         this.rename_folder(folder_id, new_name, cx);
+    //                     });
+    //                 }
+    //                 window.close_dialog(cx);
+    //                 true
+    //             })
+    //     });
+    // }
 
-        let this = cx.entity().downgrade();
-
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input_clone = input.clone();
-            let this_clone = this.clone();
-
-            dialog
-                .title("重命名 Service")
-                .w(px(450.0))
-                .child(
-                    div()
-                        .v_flex()
-                        .gap_2()
-                        .child(div().text_sm().font_semibold().child("名称"))
-                        .child(Input::new(&input).w_full()),
-                )
-                .on_ok(move |_, window, cx| {
-                    let new_name = input_clone.read(cx).value();
-                    if new_name.trim().is_empty() || new_name.len() > 255 {
-                        return false; // 验证失败，不关闭
-                    }
-                    if let Some(this) = this_clone.upgrade() {
-                        this.update(cx, |this, cx| {
-                            this.rename_service(service_id, new_name, cx);
-                        });
-                    }
-                    window.close_dialog(cx);
-                    true
-                })
-        });
-    }
-
-    /// Show the rename dialog for a Folder
-    /// Implements Requirements 2.1, 2.2
-    pub fn show_rename_folder_dialog(
-        &mut self,
-        folder_id: Uuid,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let registry = WorkspaceRegistry::global(cx);
-        let Some(workspace) = registry.read(cx).get_active_workspace() else {
-            return;
-        };
-        let Some(folder) = workspace.folders.iter().find(|f| f.id == folder_id) else {
-            return;
-        };
-        let current_name = folder.name.clone();
-
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
-        input.update(cx, |state, cx| {
-            state.set_value(current_name.to_string(), window, cx);
-        });
-
-        let this = cx.entity().downgrade();
-
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input_clone = input.clone();
-            let this_clone = this.clone();
-
-            dialog
-                .title("重命名 Folder")
-                .w(px(450.0))
-                .child(
-                    div()
-                        .v_flex()
-                        .gap_2()
-                        .child(div().text_sm().font_semibold().child("名称"))
-                        .child(Input::new(&input).w_full()),
-                )
-                .on_ok(move |_, window, cx| {
-                    let new_name = input_clone.read(cx).value();
-                    if new_name.trim().is_empty() || new_name.len() > 255 {
-                        return false; // 验证失败，不关闭
-                    }
-                    if let Some(this) = this_clone.upgrade() {
-                        this.update(cx, |this, cx| {
-                            this.rename_folder(folder_id, new_name, cx);
-                        });
-                    }
-                    window.close_dialog(cx);
-                    true
-                })
-        });
-    }
-
-    /// Show the import dialog
-    pub fn show_import_dialog(
-        &mut self,
-        folder_id: Option<Uuid>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let folder_name = folder_id.and_then(|id| {
-            let registry = WorkspaceRegistry::global(cx);
-            registry
-                .read(cx)
-                .get_folder(id)
-                .map(|f| SharedString::from(f.name.clone()))
-        });
-
-        let dialog_entity =
-            cx.new(|cx| SimpleImportDialog::new(folder_id, folder_name, window, cx));
-
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            dialog
-                .title(shared_t!("openapi.import.title"))
-                .w(px(600.0))
-                .child(dialog_entity.clone())
-        });
-    }
-
-    // 渲染树节点
-    fn render_item(
-        &mut self,
-        entry: &TreeEntry,
-        ix: usize,
-        selected: bool,
-        cx: &mut Context<Self>,
-    ) -> ListItem {
-        let item = entry.item();
-        let registry = WorkspaceRegistry::global(cx);
-        let workspace = registry.read(cx).get_active_workspace().cloned();
-        let icon = cal_icon(entry, &workspace);
-        let item_id = item.id.clone();
-        ListItem::new(ix)
-            .selected(selected)
-            .pl(px(10.) * entry.depth() + px(12.)) // Indent based on depth
-            .child(
-                h_flex()
-                    .items_center()
-                    .justify_between()
-                    .gap_1()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(icon)
-                            .child(item.label.clone())
-                            .overflow_hidden(),
-                    )
-                    .when_some(self.hovered.clone(), |this, id| {
-                        this.when(id == item_id, |this| {
-                            this.child(
-                                Button::new(format!("action_{}", id))
-                                    .icon(IconName::Menu)
-                                    .small()
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener({
-                                            move |_this, _, _window, cx| {
-                                                cx.stop_propagation();
-                                            }
-                                        }),
-                                    )
-                                    .dropdown_menu({
-                                        let item = entry.item().clone();
-                                        let view = cx.entity();
-                                        move |menu, window, cx| {
-                                            popup_menu(menu, &item, &view, window, cx)
-                                        }
-                                    }),
-                            )
-                        })
-                    }),
-            )
-            .on_mouse_enter(cx.listener(move |this, _, _, cx| {
-                this.hovered = Some(item_id.clone());
-                cx.notify();
-            }))
-            .on_click(cx.listener({
-                let item = entry.item().clone();
-                move |this, _, _, cx| {
-                    this.handle_selection(item.clone(), ix, cx);
-                }
-            }))
-    }
+    // pub fn show_import_dialog(
+    //     &mut self,
+    //     folder_id: Option<Uuid>,
+    //     window: &mut Window,
+    //     cx: &mut Context<Self>,
+    // ) {
+    //     let folder_name = folder_id.and_then(|id| {
+    //         self.service_state
+    //             .read(cx)
+    //             .get_folder(id)
+    //             .map(|f| SharedString::from(f.name.clone()))
+    //     });
+    //
+    //     let dialog_entity =
+    //         cx.new(|cx| SimpleImportDialog::new(folder_id, folder_name, window, cx));
+    //
+    //     window.open_dialog(cx, move |dialog, _window, _cx| {
+    //         dialog
+    //             .title(shared_t!("openapi.import.title"))
+    //             .w(px(600.0))
+    //             .child(dialog_entity.clone())
+    //     });
+    // }
 }
 
 impl Render for WorkspaceSidebar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let get_icon = self.get_icon.clone();
+        let hovered = self.hovered.clone();
+        let service_state = self.service_state.clone();
+        let entity = cx.entity();
         div()
             .size_full()
             .pt_1()
@@ -393,13 +298,39 @@ impl Render for WorkspaceSidebar {
                             .h_full()
                             .p_2()
                             .gap_2()
-                            // Services Section
                             .child(tree(&self.tree, {
-                                let view = cx.entity();
-                                move |ix, entry, selected, _window, cx| {
-                                    view.update(cx, |this, cx| {
-                                        this.render_item(entry, ix, selected, cx)
+                                move |ix, entry, selected, _window, _cx| {
+                                    let entry_item = entry.item().clone();
+                                    let enter_entity = entity.clone();
+                                    let enter_id = entry_item.id.clone();
+                                    let click_entity = entity.clone();
+                                    let click_item = entry_item.clone();
+                                    item(
+                                        entry,
+                                        ix,
+                                        selected,
+                                        get_icon(entry),
+                                        hovered.clone(),
+                                        service_state.clone(),
+                                    )
+                                    .on_mouse_enter(move |_, _, cx| {
+                                        enter_entity.update(cx, |this, cx| {
+                                            this.hovered = Some(enter_id.clone());
+                                            cx.notify();
+                                        });
                                     })
+                                    .on_click(
+                                        move |_, window, cx| {
+                                            click_entity.update(cx, |this, cx| {
+                                                this.handle_selection(
+                                                    click_item.clone(),
+                                                    ix,
+                                                    window,
+                                                    cx,
+                                                );
+                                            });
+                                        },
+                                    )
                                 }
                             })),
                     ),

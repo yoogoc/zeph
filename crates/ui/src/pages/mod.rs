@@ -5,6 +5,7 @@
 
 mod home_page;
 mod title_bar;
+mod workspace_card;
 
 pub use home_page::*;
 pub use title_bar::*;

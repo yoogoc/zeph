@@ -17,10 +17,13 @@ uuid.workspace = true
 tracing.workspace = true
 i18n.workspace = true
 rust-i18n.workspace = true
+dirs.workspace = true
 
 ui = { path = "../ui" }
 models = { path = "../models" }
 workspace = { path = "../workspace" }
+register = { path = "../register" }
+lazy_static = "1.5.0"
 
 [package.metadata.bundle]
 icon = ["resources/app-icon*.png"]

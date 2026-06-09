@@ -1,7 +1,10 @@
+use gpui::prelude::*;
 use gpui::*;
 use gpui_component::{v_flex, Root};
-use models::{ApplicationView, CreateWorkspace};
-use ui::{HomePage, HomePageEvent};
+use i18n::shared_t;
+use models::CreateWorkspace;
+use ui::state::{ApplicationState, Tab};
+use ui::HomePage;
 use uuid::Uuid;
 
 pub fn init(window: &mut Window, cx: &mut App) -> Entity<Application> {
@@ -10,20 +13,35 @@ pub fn init(window: &mut Window, cx: &mut App) -> Entity<Application> {
 
 pub struct Application {
     title_bar: Entity<ui::TitleBar>,
-    workspace_area: Entity<ui::WorkspaceArea>,
-    home_page: Entity<HomePage>,
+
+    workspace_state: Entity<ApplicationState>,
+
     _subscriptions: Vec<Subscription>,
 }
 
 impl Application {
     pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let home_page = cx.new(|_| HomePage::new());
+        let workspace_state = cx.new(|_| ApplicationState::new());
 
-        let home_sub = cx.subscribe(&home_page, |this, _, event, cx| match event {
-            HomePageEvent::CreateWorkspace(param) => this.create_workspace(param.clone(), cx),
-            HomePageEvent::OpenWorkspace(id) => this.open_workspace(*id, cx),
-            HomePageEvent::DeleteWorkspace(id) => this.delete_workspace(*id, cx),
+        let ws = workspace_state.clone();
+        let home_page = cx.new(|_| HomePage::new(ws));
+
+        workspace_state.update(cx, |ws, cx| {
+            ws.init(
+                cx,
+                Tab {
+                    id: Default::default(),
+                    title: shared_t!("common.home"),
+                    view: home_page.into(),
+                },
+            );
         });
+
+        // let home_sub = cx.subscribe(&home_page, |this, _, event, cx| match event {
+        //     HomePageEvent::CreateWorkspace(param) => this.create_workspace(param.clone(), cx),
+        //     HomePageEvent::OpenWorkspace(id) => this.open_workspace(*id, cx),
+        //     HomePageEvent::DeleteWorkspace(id) => this.delete_workspace(*id, cx),
+        // });
 
         let workspace_registry = workspace::WorkspaceRegistry::global(cx);
         let registry_sub = cx.subscribe(
@@ -33,11 +51,12 @@ impl Application {
             },
         );
 
+        let ws2 = workspace_state.clone();
         Self {
-            title_bar: cx.new(|cx| ui::TitleBar::new(window, cx)),
-            workspace_area: cx.new(|cx| ui::WorkspaceArea::new(window, cx)),
-            home_page,
-            _subscriptions: vec![home_sub, registry_sub],
+            title_bar: cx.new(|cx| ui::TitleBar::new(window, cx, ws2)),
+            // workspace_area: cx.new(|cx| ui::WorkspaceArea::new(window, cx)),
+            workspace_state,
+            _subscriptions: vec![registry_sub],
         }
     }
 
@@ -65,42 +84,34 @@ impl Application {
         });
     }
 
-    fn render_home(&mut self, cx: &mut Context<Self>) -> Entity<HomePage> {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        let workspaces = workspace_registry.read(cx).get_state().workspaces.clone();
-
-        self.home_page.update(cx, |page, _| {
-            page.set_workspaces(workspaces);
-        });
-
-        self.home_page.clone()
-    }
-
-    fn render_workspace(&self, cx: &mut Context<Self>) -> Entity<ui::WorkspaceArea> {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        let workspace = workspace_registry.read(cx).get_active_workspace().cloned();
-
-        self.workspace_area.update(cx, |area, cx| {
-            area.set_workspace(workspace, cx);
-        });
-
-        self.workspace_area.clone()
-    }
+    // fn render_workspace(&self, cx: &mut Context<Self>) -> Entity<ui::WorkspaceArea> {
+    //     let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+    //     let workspace = workspace_registry.read(cx).get_active_workspace().cloned();
+    //
+    //     self.workspace_area.update(cx, |area, cx| {
+    //         area.set_workspace(workspace, cx);
+    //     });
+    //
+    //     self.workspace_area.clone()
+    // }
 }
 
 impl Render for Application {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let dialog_layer = Root::render_dialog_layer(window, cx);
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        let app_state = workspace_registry.read(cx).get_state();
+        // let workspace_registry = workspace::WorkspaceRegistry::global(cx);
+        // let app_state = workspace_registry.read(cx).get_state();
 
         v_flex()
             .size_full()
             .child(self.title_bar.clone())
-            .child(match &app_state.current_view {
-                ApplicationView::Home => self.render_home(cx).into_any_element(),
-                ApplicationView::Workspace(_) => self.render_workspace(cx).into_any_element(),
-            })
+            .when_some(
+                {
+                    let ws = self.workspace_state.read(cx);
+                    ws.tabs.get(ws.active_idx).map(|t| t.view.clone())
+                },
+                |d, view| d.child(view),
+            )
             .children(dialog_layer)
     }
 }

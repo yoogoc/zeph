@@ -303,13 +303,15 @@ impl Render for RequestPanel {
                                     .label(shared_t!("request.add_header"))
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(RequestPanelEvent::AddHeader);
-                                    })).into_any_element(),
+                                    }))
+                                    .into_any_element(),
                                 RequestTab::Query => Button::new("add_query_param")
                                     .icon(IconName::Plus)
                                     .label(shared_t!("request.add_param"))
                                     .on_click(cx.listener(|_, _, _, cx| {
                                         cx.emit(RequestPanelEvent::AddQueryParam);
-                                    })).into_any_element(),
+                                    }))
+                                    .into_any_element(),
                                 _ => div().into_any_element(),
                             })
                     })

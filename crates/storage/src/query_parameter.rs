@@ -1,14 +1,15 @@
 use anyhow::Result;
 use models::QueryParameter;
 use rusqlite::{params, Connection};
+use std::sync::Arc;
 use uuid::Uuid;
 
-pub struct QueryParameterStore<'a> {
-    conn: &'a Connection,
+pub struct QueryParameterStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> QueryParameterStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl QueryParameterStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 

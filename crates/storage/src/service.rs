@@ -1,16 +1,17 @@
 use anyhow::Result;
 use models::{DataSource, Service, ServiceType, SyncMeta};
 use rusqlite::{params, Connection};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{PathParameterStore, QueryParameterStore};
 
-pub struct ServiceStore<'a> {
-    conn: &'a Connection,
+pub struct ServiceStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> ServiceStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl ServiceStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 
@@ -69,8 +70,8 @@ impl<'a> ServiceStore<'a> {
 
         // Save query and path parameters for HTTP services
         if let ServiceType::Http(ref http_config) = service.service_type {
-            let query_param_store = QueryParameterStore::new(self.conn);
-            let path_param_store = PathParameterStore::new(self.conn);
+            let query_param_store = QueryParameterStore::new(self.conn.clone());
+            let path_param_store = PathParameterStore::new(self.conn.clone());
 
             // Save query parameters
             for (index, param) in http_config.query_params.iter().enumerate() {
@@ -131,8 +132,8 @@ impl<'a> ServiceStore<'a> {
 
         // Update query and path parameters for HTTP services
         if let ServiceType::Http(ref http_config) = service.service_type {
-            let query_param_store = QueryParameterStore::new(self.conn);
-            let path_param_store = PathParameterStore::new(self.conn);
+            let query_param_store = QueryParameterStore::new(self.conn.clone());
+            let path_param_store = PathParameterStore::new(self.conn.clone());
 
             // Delete old parameters
             query_param_store.delete_by_service(service.id)?;
@@ -185,8 +186,8 @@ impl<'a> ServiceStore<'a> {
 
             // Load query and path parameters for HTTP services
             if let ServiceType::Http(ref mut http_config) = service.service_type {
-                let query_param_store = QueryParameterStore::new(self.conn);
-                let path_param_store = PathParameterStore::new(self.conn);
+                let query_param_store = QueryParameterStore::new(self.conn.clone());
+                let path_param_store = PathParameterStore::new(self.conn.clone());
 
                 http_config.query_params = query_param_store.list_by_service(id)?;
                 http_config.path_params = path_param_store.list_by_service(id)?;
@@ -211,8 +212,8 @@ impl<'a> ServiceStore<'a> {
         let mut services: Vec<Service> = rows.filter_map(|r| r.ok()).collect();
 
         // Load query and path parameters for all HTTP services
-        let query_param_store = QueryParameterStore::new(self.conn);
-        let path_param_store = PathParameterStore::new(self.conn);
+        let query_param_store = QueryParameterStore::new(self.conn.clone());
+        let path_param_store = PathParameterStore::new(self.conn.clone());
 
         for service in &mut services {
             if let ServiceType::Http(ref mut http_config) = service.service_type {

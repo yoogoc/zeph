@@ -1,14 +1,15 @@
 use anyhow::Result;
 use models::{DataSource, Environment, EnvironmentVariable, SyncMeta, VariableType};
 use rusqlite::{params, Connection};
+use std::sync::Arc;
 use uuid::Uuid;
 
-pub struct EnvironmentStore<'a> {
-    conn: &'a Connection,
+pub struct EnvironmentStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> EnvironmentStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl EnvironmentStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 
@@ -102,12 +103,12 @@ fn row_to_environment(row: &rusqlite::Row) -> Result<Environment> {
     })
 }
 
-pub struct EnvironmentVariableStore<'a> {
-    conn: &'a Connection,
+pub struct EnvironmentVariableStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> EnvironmentVariableStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl EnvironmentVariableStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 

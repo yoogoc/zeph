@@ -1,0 +1,28 @@
+[package]
+name = "register"
+version.workspace = true
+edition.workspace = true
+publish.workspace = true
+
+[dependencies]
+models = { path = "../models" }
+storage = { path = "../storage" }
+gpui.workspace = true
+uuid.workspace = true
+anyhow.workspace = true
+chrono.workspace = true
+dirs.workspace = true
+log = "0.4.29"
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml = "0.9"
+automerge.workspace = true
+autosurgeon.workspace = true
+
+[dev-dependencies]
+proptest = "1.4"
+tokio = { version = "1.0", features = ["rt", "macros"] }
+rusqlite = "0.32"
+
+[dev-dependencies.gpui]
+workspace = true

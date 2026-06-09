@@ -1,14 +1,15 @@
 use anyhow::Result;
 use models::PathParameter;
 use rusqlite::{params, Connection};
+use std::sync::Arc;
 use uuid::Uuid;
 
-pub struct PathParameterStore<'a> {
-    conn: &'a Connection,
+pub struct PathParameterStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> PathParameterStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl PathParameterStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 

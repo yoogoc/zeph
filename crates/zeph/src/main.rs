@@ -31,6 +31,8 @@ fn main() {
 
         gpui_tokio::init(cx);
 
+        register::storage::init(cx);
+
         let bounds = Bounds::centered(None, size(px(1200.0), px(800.0)), cx);
 
         let window_options = WindowOptions {
@@ -47,4 +49,12 @@ fn main() {
         })
         .expect(&i18n::t("common.failed_open_window"));
     });
+}
+
+fn db_path() -> std::path::PathBuf {
+    let data_dir = dirs::data_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("zeph");
+    std::fs::create_dir_all(&data_dir).ok();
+    data_dir.join("zeph.db")
 }

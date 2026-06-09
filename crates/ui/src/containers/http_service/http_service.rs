@@ -3,6 +3,7 @@ use super::request_body::BodyType;
 use super::request_panel::{RequestPanel, RequestPanelEvent};
 use super::response_panel::ResponsePanel;
 use super::url_utils;
+use crate::url_utils::get_base_url;
 use futures::StreamExt;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -17,7 +18,6 @@ use models::{Header, HttpConfig, HttpDraftConfig, HttpMethod, QueryParameter, Se
 use smallvec::{smallvec, SmallVec};
 use uuid::Uuid;
 use workspace;
-use crate::url_utils::get_base_url;
 
 pub struct HttpService {
     url: Entity<InputState>,
@@ -81,10 +81,7 @@ impl HttpService {
                     folder
                         .common_search_params
                         .iter()
-                        .map(|param| QueryParameter::new(
-                            param.key.clone(),
-                            param.value.clone(),
-                        ))
+                        .map(|param| QueryParameter::new(param.key.clone(), param.value.clone()))
                         .collect()
                 } else {
                     Vec::new()
@@ -190,9 +187,11 @@ impl HttpService {
         let headers = self.request_panel.read(cx).headers(cx);
         let query_params = self.request_panel.read(cx).query_params(cx);
         let path_params = self.request_panel.read(cx).path_params(cx);
-        let body = self.request_panel.read(cx).body(cx).map(|b| {
-            models::HttpBody::from_content(models::BodyType::Text, &b)
-        });
+        let body = self
+            .request_panel
+            .read(cx)
+            .body(cx)
+            .map(|b| models::HttpBody::from_content(models::BodyType::Text, &b));
 
         HttpDraftConfig {
             method,
@@ -238,7 +237,7 @@ impl HttpService {
     pub fn save_changes_no_window(&mut self, cx: &mut Context<Self>) {
         let service_id = self.service_id;
         let registry = workspace::WorkspaceRegistry::global(cx);
-        
+
         // Save draft to service (this will also remove the draft from DraftRegistry)
         registry.update(cx, |registry, cx| {
             registry.save_draft_to_service(service_id, cx);
@@ -293,7 +292,7 @@ impl HttpService {
         registry.read(cx).can_redo_draft(self.service_id)
     }
 
-/// Apply a draft configuration to the UI components
+    /// Apply a draft configuration to the UI components
     fn apply_draft_to_ui(&mut self, draft: &HttpDraftConfig, _cx: &mut Context<Self>) {
         // Update use_base_url
         self.use_base_url = draft.use_base_url;
@@ -378,10 +377,7 @@ impl HttpService {
                         .common_search_params
                         .iter()
                         .filter(|param| self.is_valid_search_param(param))
-                        .map(|param| QueryParameter::new(
-                            param.key.clone(),
-                            param.value.clone(),
-                        ))
+                        .map(|param| QueryParameter::new(param.key.clone(), param.value.clone()))
                         .collect();
                 }
             }
@@ -758,7 +754,6 @@ impl Render for HttpService {
                 v_flex()
                     .size_full()
                     .gap_2()
-                    
                     // Main content area
                     .child(
                         v_resizable("http-service")

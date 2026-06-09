@@ -1,14 +1,15 @@
 use anyhow::Result;
 use models::{DataSource, SyncMeta, Workspace};
 use rusqlite::{params, Connection};
+use std::sync::Arc;
 use uuid::Uuid;
 
-pub struct WorkspaceStore<'a> {
-    conn: &'a Connection,
+pub struct WorkspaceStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> WorkspaceStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl WorkspaceStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 
@@ -107,7 +108,6 @@ fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
         opened_services: vec![],
         active_service: None,
         active_environment_id: None,
-        current_view: Default::default(),
     })
 }
 

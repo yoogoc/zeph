@@ -5,6 +5,7 @@
 
 use anyhow::Result;
 use rusqlite::{params, Connection, OptionalExtension};
+use std::sync::Arc;
 use uuid::Uuid;
 
 /// A draft representing unsaved editing state for a service
@@ -20,12 +21,12 @@ pub struct Draft {
     pub updated_at: i64,
 }
 
-pub struct DraftStore<'a> {
-    conn: &'a Connection,
+pub struct DraftStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> DraftStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl DraftStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 
@@ -155,8 +156,8 @@ mod tests {
     /// Helper to create a workspace and service for draft tests
     fn create_workspace_and_service(db: &Database) -> (Uuid, Uuid) {
         let conn = db.conn();
-        let workspace_store = WorkspaceStore::new(&conn);
-        let service_store = ServiceStore::new(&conn);
+        let workspace_store = WorkspaceStore::new(conn.clone());
+        let service_store = ServiceStore::new(conn.clone());
 
         let workspace = Workspace::new("Test Workspace");
         let workspace_id = workspace.id;
@@ -182,7 +183,7 @@ mod tests {
         let db = setup_db();
         let (workspace_id, service_id) = create_workspace_and_service(&db);
         let conn = db.conn();
-        let store = DraftStore::new(&conn);
+        let store = DraftStore::new(conn);
 
         let now = chrono::Utc::now().timestamp();
 
@@ -232,7 +233,7 @@ mod tests {
         let db = setup_db();
         let (workspace_id, service_id) = create_workspace_and_service(&db);
         let conn = db.conn();
-        let store = DraftStore::new(&conn);
+        let store = DraftStore::new(conn);
 
         let now = chrono::Utc::now().timestamp();
 
@@ -256,9 +257,9 @@ mod tests {
     fn test_draft_list_by_workspace() {
         let db = setup_db();
         let conn = db.conn();
-        let workspace_store = WorkspaceStore::new(&conn);
-        let service_store = ServiceStore::new(&conn);
-        let store = DraftStore::new(&conn);
+        let workspace_store = WorkspaceStore::new(conn.clone());
+        let service_store = ServiceStore::new(conn.clone());
+        let store = DraftStore::new(conn.clone());
 
         let workspace = Workspace::new("Test Workspace");
         let workspace_id = workspace.id;
@@ -304,9 +305,9 @@ mod tests {
     fn test_draft_delete_by_workspace() {
         let db = setup_db();
         let conn = db.conn();
-        let workspace_store = WorkspaceStore::new(&conn);
-        let service_store = ServiceStore::new(&conn);
-        let store = DraftStore::new(&conn);
+        let workspace_store = WorkspaceStore::new(conn.clone());
+        let service_store = ServiceStore::new(conn.clone());
+        let store = DraftStore::new(conn.clone());
 
         let workspace = Workspace::new("Test Workspace");
         let workspace_id = workspace.id;
@@ -360,7 +361,7 @@ mod tests {
     fn test_draft_get_nonexistent() {
         let db = setup_db();
         let conn = db.conn();
-        let store = DraftStore::new(&conn);
+        let store = DraftStore::new(conn);
 
         let result = store.get(Uuid::new_v4()).expect("Failed to get draft");
         assert!(result.is_none());

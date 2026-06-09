@@ -11,6 +11,7 @@ mod folder_selector;
 mod global_setting;
 mod import_dialog;
 mod simple_import_dialog;
+pub mod state;
 mod utils;
 
 // Re-export from new modules

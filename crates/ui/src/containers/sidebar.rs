@@ -2,62 +2,36 @@ use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::{v_flex, IconName};
-use models::WorkspaceView;
-use uuid::Uuid;
+use std::rc::Rc;
 
+#[derive(IntoElement)]
 pub struct Sidebar {
-    current_view: WorkspaceView,
-    workspace_id: Option<Uuid>,
+    active_idx: usize,
+    tabs: Vec<(SharedString, SharedString, IconName)>,
+    on_switch_view: Option<Rc<dyn Fn(usize, &mut Window, &mut App) + 'static>>,
 }
-
-pub enum SidebarEvent {
-    SwitchView(WorkspaceView),
-}
-
-impl EventEmitter<SidebarEvent> for Sidebar {}
 
 impl Sidebar {
-    pub fn new(workspace_id: Option<Uuid>, current_view: WorkspaceView) -> Self {
+    pub fn new(active_idx: usize, tabs: Vec<(SharedString, SharedString, IconName)>) -> Self {
         Self {
-            current_view,
-            workspace_id,
+            active_idx,
+            tabs,
+            on_switch_view: None,
         }
     }
 
-    pub fn set_view(&mut self, view: WorkspaceView, workspace_id: Option<Uuid>) {
-        self.current_view = view;
-        self.workspace_id = workspace_id;
+    pub fn on_switch_view(
+        mut self,
+        handler: impl Fn(usize, &mut Window, &mut App) + 'static,
+    ) -> Self {
+        self.on_switch_view = Some(Rc::new(handler));
+        self
     }
 }
 
-impl Render for Sidebar {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let buttons: Vec<(&str, IconName, SharedString, WorkspaceView)> = vec![
-            (
-                "services",
-                IconName::Folder,
-                shared_t!("sidebar.services"),
-                WorkspaceView::Services,
-            ),
-            (
-                "docs",
-                IconName::BookOpen,
-                shared_t!("sidebar.docs"),
-                WorkspaceView::Docs,
-            ),
-            (
-                "history",
-                IconName::Eye,
-                shared_t!("sidebar.history"),
-                WorkspaceView::History,
-            ),
-            (
-                "settings",
-                IconName::Settings,
-                shared_t!("sidebar.settings"),
-                WorkspaceView::Settings,
-            ),
-        ];
+impl RenderOnce for Sidebar {
+    fn render(self, _window: &mut Window, _cx: &mut App) -> impl IntoElement {
+        let on_switch_view = self.on_switch_view;
 
         v_flex()
             .items_center()
@@ -68,18 +42,27 @@ impl Render for Sidebar {
             .px_4()
             .pb_4()
             .pt_2()
-            .child(v_flex().gap_2().children(buttons.into_iter().map(
-                |(id, icon, tooltip, view)| {
-                    let is_active =
-                        std::mem::discriminant(&self.current_view) == std::mem::discriminant(&view);
-                    Button::new(id)
-                        .icon(icon)
-                        .tooltip(tooltip)
-                        .when(is_active, |btn: Button| btn.primary())
-                        .on_click(cx.listener(move |_, _, _, cx| {
-                            cx.emit(SidebarEvent::SwitchView(view.clone()))
-                        }))
-                },
-            )))
+            .child(
+                v_flex()
+                    .gap_2()
+                    .children(
+                        self.tabs
+                            .into_iter()
+                            .enumerate()
+                            .map(|(idx, (id, title, icon))| {
+                                let is_active = idx == self.active_idx;
+                                let handler = on_switch_view.clone();
+                                Button::new(id)
+                                    .icon(icon)
+                                    .tooltip(title)
+                                    .when(is_active, |btn: Button| btn.primary())
+                                    .on_click(move |_, window, cx| {
+                                        if let Some(ref handler) = handler {
+                                            handler(idx, window, cx);
+                                        }
+                                    })
+                            }),
+                    ),
+            )
     }
 }

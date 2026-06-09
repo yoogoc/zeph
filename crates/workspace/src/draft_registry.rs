@@ -106,7 +106,7 @@ impl DraftRegistry {
     /// Load all drafts for a workspace from the database
     fn load_workspace(&mut self, workspace_id: Uuid) -> Result<()> {
         let conn = self.db.conn();
-        let draft_store = DraftStore::new(&conn);
+        let draft_store = DraftStore::new(conn);
 
         for draft in draft_store.list_by_workspace(workspace_id)? {
             if let Ok(doc) = AutoCommit::load(&draft.automerge_state) {
@@ -127,7 +127,7 @@ impl DraftRegistry {
         };
 
         let conn = self.db.conn();
-        let draft_store = DraftStore::new(&conn);
+        let draft_store = DraftStore::new(conn);
         let now = chrono::Utc::now().timestamp();
 
         for service_id in self.dirty.drain() {
@@ -238,7 +238,7 @@ impl DraftRegistry {
 
         // Also remove from database
         let conn = self.db.conn();
-        let draft_store = DraftStore::new(&conn);
+        let draft_store = DraftStore::new(conn);
         draft_store.delete(service_id)?;
 
         Ok(())
@@ -342,7 +342,7 @@ impl DraftRegistry {
 
         // Remove draft from database
         let conn = self.db.conn();
-        let draft_store = DraftStore::new(&conn);
+        let draft_store = DraftStore::new(conn);
         draft_store.delete(service_id)?;
 
         // Clear in-memory state for this draft
@@ -362,7 +362,7 @@ impl DraftRegistry {
 
         // Remove from database
         let conn = self.db.conn();
-        let draft_store = DraftStore::new(&conn);
+        let draft_store = DraftStore::new(conn);
         draft_store.delete(service_id)?;
 
         // Clear in-memory state
@@ -463,7 +463,7 @@ mod tests {
         );
         {
             let conn = db.conn();
-            let store = storage::ServiceStore::new(&conn);
+            let store = storage::ServiceStore::new(conn);
             store.insert(&service).expect("Failed to insert service");
         }
 

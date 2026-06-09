@@ -1,68 +1,27 @@
 use crate::global_setting::open_settings;
+use crate::state::ApplicationState;
 use gpui::*;
 use gpui_component::button::{Button, ButtonRounded};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{h_flex, IconName, Sizable, Size, TitleBar as GTitleBar};
-use models::ApplicationView;
 
 pub struct TitleBar {
-    selected_index: usize,
+    tabs_state: Entity<ApplicationState>,
 }
 
 impl TitleBar {
-    pub fn new(_window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        cx.subscribe(
-            &workspace_registry,
-            |_this, _registry, _event: &workspace::WorkspaceEvent, cx| {
-                cx.notify();
-            },
-        )
-        .detach();
-
-        Self { selected_index: 0 }
-    }
-
-    fn switch_to_home(&mut self, cx: &mut Context<Self>) {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        workspace_registry.update(cx, |registry, cx| {
-            registry.go_to_home(cx);
-        });
-    }
-
-    fn switch_to_workspace(&mut self, workspace_id: uuid::Uuid, cx: &mut Context<Self>) {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        workspace_registry.update(cx, |registry, cx| {
-            registry.set_active_workspace(workspace_id, cx);
-        });
-    }
-
-    fn close_workspace(&mut self, workspace_id: uuid::Uuid, cx: &mut Context<Self>) {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        workspace_registry.update(cx, |registry, cx| {
-            registry.close_workspace(workspace_id, cx);
-        });
+    pub fn new(
+        _window: &mut Window,
+        cx: &mut Context<Self>,
+        tabs_state: Entity<ApplicationState>,
+    ) -> Self {
+        Self { tabs_state }
     }
 }
 
 impl Render for TitleBar {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let workspace_registry = workspace::WorkspaceRegistry::global(cx);
-        let app_state = workspace_registry.read(cx).get_state();
-        let opened_workspaces = workspace_registry.read(cx).get_opened_workspaces();
-
-        let current_view = &app_state.current_view;
-        self.selected_index = match current_view {
-            ApplicationView::Home => 0,
-            ApplicationView::Workspace(id) => opened_workspaces
-                .iter()
-                .position(|w| w.id == *id)
-                .map(|i| i + 1)
-                .unwrap_or(0),
-        };
-
-        let workspace_ids: Vec<_> = opened_workspaces.iter().map(|w| w.id).collect();
-
+        let ts = self.tabs_state.read(cx);
         GTitleBar::new()
             .child(
                 h_flex()
@@ -74,40 +33,38 @@ impl Render for TitleBar {
                         TabBar::new("workspace_tabs")
                             .with_variant(TabVariant::Pill)
                             .menu(true)
-                            .selected_index(self.selected_index)
-                            .on_click(cx.listener(move |this, index: &usize, _, cx| {
-                                if *index == 0 {
-                                    this.switch_to_home(cx);
-                                } else if let Some(&workspace_id) = workspace_ids.get(*index - 1) {
-                                    this.switch_to_workspace(workspace_id, cx);
-                                }
-                                this.selected_index = *index;
-                                cx.notify();
-                            }))
+                            .selected_index(ts.active_idx)
+                            .on_click({
+                                let ts = self.tabs_state.clone();
+                                cx.listener(move |_this, index: &usize, _, cx| {
+                                    ts.update(cx, |ts, cx| {
+                                        ts.active_idx = *index;
+                                        cx.notify();
+                                    });
+                                })
+                            })
                             .items_center()
                             .gap_2()
                             .with_size(Size::Small)
-                            .child(
+                            .children(ts.tabs.iter().map(|tab| {
                                 Tab::new()
-                                    .label(shared_t!("common.home"))
-                                    .on_mouse_down(MouseButton::Left, |_, window, _| {
-                                        window.prevent_default()
-                                    }),
-                            )
-                            .children(opened_workspaces.iter().map(|workspace| {
-                                let workspace_id = workspace.id;
-                                Tab::new()
-                                    .label(workspace.name.clone())
+                                    .label(tab.title.clone())
                                     .pr_1()
                                     .suffix(
-                                        Button::new(format!("close_{}", workspace_id))
+                                        Button::new(format!("close_{}", tab.id))
                                             .with_size(px(13.))
                                             .rounded(ButtonRounded::Large)
                                             .icon(IconName::Close)
-                                            .on_click(cx.listener(move |this, _, _, cx| {
-                                                this.close_workspace(workspace_id, cx);
-                                                cx.stop_propagation();
-                                            })),
+                                            .on_click({
+                                                let ts = self.tabs_state.clone();
+                                                let tab_id = tab.id.clone();
+                                                cx.listener(move |this, _, _, cx| {
+                                                    ts.update(cx, |ts, cx| {
+                                                        ts.close_tab(tab_id);
+                                                    });
+                                                    cx.stop_propagation();
+                                                })
+                                            }),
                                     )
                                     .on_mouse_down(MouseButton::Left, |_, window, _| {
                                         window.prevent_default()

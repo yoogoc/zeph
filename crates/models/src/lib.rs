@@ -79,8 +79,6 @@ pub struct Workspace {
     pub active_service: Option<ContentType>,
     #[serde(skip)]
     pub active_environment_id: Option<Uuid>,
-    #[serde(skip)]
-    pub current_view: WorkspaceView,
 }
 
 // === Environment ===
@@ -182,18 +180,8 @@ impl Workspace {
             opened_services: vec![],
             active_service: None,
             active_environment_id: None,
-            current_view: WorkspaceView::default(),
         }
     }
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub enum WorkspaceView {
-    #[default]
-    Services,
-    Docs,
-    History,
-    Settings,
 }
 
 // === Folder ===

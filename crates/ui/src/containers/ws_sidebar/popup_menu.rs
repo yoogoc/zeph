@@ -1,4 +1,5 @@
-use crate::ws_sidebar::{TreeId, WorkspaceSidebar};
+use crate::state::ServiceState;
+use crate::ws_sidebar::TreeId;
 use gpui::*;
 use gpui_component::menu::{PopupMenu, PopupMenuItem};
 use gpui_component::tree::TreeItem;
@@ -15,8 +16,8 @@ enum DetailAction {
 pub fn popup_menu(
     menu: PopupMenu,
     item: &TreeItem,
-    view: &Entity<WorkspaceSidebar>,
-    window: &mut Window,
+    service_state: Entity<ServiceState>,
+    _window: &mut Window,
     _cx: &mut Context<PopupMenu>,
 ) -> PopupMenu {
     let mut menu = menu;
@@ -72,126 +73,127 @@ pub fn popup_menu(
 
     // Direct: View Details
     if let Some(action) = detail_action {
+        let service_state = service_state.clone();
         menu = menu.item(
-            PopupMenuItem::new("View Details").on_click(window.listener_for(
-                view,
-                move |this, _, _, cx| {
-                    match &action {
-                        DetailAction::Service(id) => this.open_service(*id, cx),
-                        DetailAction::Schema(id) => this.open_schema(*id, cx),
-                        DetailAction::Folder(id) => this.open_folder_detail(*id, cx),
-                    }
-                    cx.stop_propagation();
-                },
-            )),
+            PopupMenuItem::new("View Details").on_click(move |_, window, cx| {
+                service_state.update(cx, |s, cx| match action {
+                    DetailAction::Service(id) => s.open_service(id, window, cx),
+                    // TODO: schema detail page not implemented yet.
+                    DetailAction::Schema(_) => {}
+                    DetailAction::Folder(id) => s.open_folder_detail(id, window, cx),
+                });
+                cx.stop_propagation();
+            }),
         );
     }
 
     // Direct: Create Service
     if let Some((name, folder_id)) = create_service_params {
+        let service_state = service_state.clone();
         menu = menu.item(
-            PopupMenuItem::new("New Service").on_click(window.listener_for(
-                view,
-                move |this, _, _, cx| {
-                    this.create_service(name.clone(), folder_id, cx);
-                    cx.stop_propagation();
-                },
-            )),
+            PopupMenuItem::new("New Service").on_click(move |_, _window, cx| {
+                service_state.update(cx, |s, cx| {
+                    s.create_service(name.clone(), folder_id, cx);
+                });
+                cx.stop_propagation();
+            }),
         );
     }
 
     // Direct: Create Schema
     if let Some((name, folder_id)) = create_schema_params {
+        let service_state = service_state.clone();
         menu = menu.item(
-            PopupMenuItem::new("New Schema").on_click(window.listener_for(
-                view,
-                move |this, _, _, cx| {
-                    this.create_schema(name.clone(), folder_id, cx);
-                    cx.stop_propagation();
-                },
-            )),
+            PopupMenuItem::new("New Schema").on_click(move |_, _window, cx| {
+                service_state.update(cx, |s, cx| {
+                    s.create_schema(name.clone(), folder_id, cx);
+                });
+                cx.stop_propagation();
+            }),
         );
     }
 
     // Direct: Create Folder
     if let Some((name, parent_id, folder_type)) = create_folder_params {
+        let service_state = service_state.clone();
         menu = menu.item(
-            PopupMenuItem::new("New Folder").on_click(window.listener_for(
-                view,
-                move |this, _, _, cx| {
-                    this.create_folder(name.clone(), parent_id, folder_type.clone(), cx);
-                    cx.stop_propagation();
-                },
-            )),
+            PopupMenuItem::new("New Folder").on_click(move |_, _window, cx| {
+                service_state.update(cx, |s, cx| {
+                    s.create_folder(name.clone(), parent_id, folder_type.clone(), cx);
+                });
+                cx.stop_propagation();
+            }),
         );
     }
 
     // Direct: Import OpenAPI
     if let Some(folder_id) = import_folder_id {
         menu = menu.item(
-            PopupMenuItem::new("导入 OpenAPI").on_click(window.listener_for(
-                view,
-                move |this, _, window, cx| {
-                    this.show_import_dialog(folder_id, window, cx);
-                    cx.stop_propagation();
-                },
-            )),
+            PopupMenuItem::new("导入 OpenAPI").on_click(move |_, _window, cx| {
+                // TODO: import dialog not wired into ServiceState yet.
+                let _ = folder_id;
+                cx.stop_propagation();
+            }),
         );
     }
 
     // Direct: Rename Service
     if let Some(service_id) = rename_service_id {
-        menu = menu.item(PopupMenuItem::new("Rename").on_click(window.listener_for(
-            view,
-            move |this, _, window, cx| {
-                this.show_rename_service_dialog(service_id, window, cx);
+        menu = menu.item(
+            PopupMenuItem::new("Rename").on_click(move |_, _window, cx| {
+                // TODO: needs a rename dialog to collect the new name
+                // before calling ServiceState::rename_service.
+                let _ = service_id;
                 cx.stop_propagation();
-            },
-        )));
+            }),
+        );
     }
 
     // Direct: Rename Folder
     if let Some(folder_id) = rename_folder_id {
-        menu = menu.item(PopupMenuItem::new("Rename").on_click(window.listener_for(
-            view,
-            move |this, _, window, cx| {
-                this.show_rename_folder_dialog(folder_id, window, cx);
+        menu = menu.item(
+            PopupMenuItem::new("Rename").on_click(move |_, _window, cx| {
+                // TODO: needs a rename dialog to collect the new name
+                // before calling ServiceState::rename_folder.
+                let _ = folder_id;
                 cx.stop_propagation();
-            },
-        )));
+            }),
+        );
     }
 
     // Direct: Delete Service
     if let Some(service_id) = delete_service_id {
-        menu = menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
-            view,
-            move |this, _, _, cx| {
-                this.delete_service(service_id, cx);
+        let service_state = service_state.clone();
+        menu = menu.item(
+            PopupMenuItem::new("Delete").on_click(move |_, _window, cx| {
+                service_state.update(cx, |s, cx| {
+                    s.delete_service(service_id, cx);
+                });
                 cx.stop_propagation();
-            },
-        )));
+            }),
+        );
     }
 
     // Direct: Delete Schema
     if let Some(schema_id) = delete_schema_id {
-        menu = menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
-            view,
-            move |this, _, _, cx| {
-                this.delete_schema(schema_id, cx);
+        menu = menu.item(
+            PopupMenuItem::new("Delete").on_click(move |_, _window, cx| {
+                // TODO: ServiceState/storage lacks schema delete support yet.
+                let _ = schema_id;
                 cx.stop_propagation();
-            },
-        )));
+            }),
+        );
     }
 
     // Direct: Delete Folder
     if let Some(folder_id) = delete_folder_id {
-        menu = menu.item(PopupMenuItem::new("Delete").on_click(window.listener_for(
-            view,
-            move |this, _, _, cx| {
-                this.delete_folder(folder_id, cx);
+        menu = menu.item(
+            PopupMenuItem::new("Delete").on_click(move |_, _window, cx| {
+                // TODO: ServiceState/storage lacks folder delete support yet.
+                let _ = folder_id;
                 cx.stop_propagation();
-            },
-        )));
+            }),
+        );
     }
 
     menu

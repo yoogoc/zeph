@@ -4,6 +4,7 @@ use crate::containers::{
     CommonHeadersPanel, CommonHeadersPanelEvent, FolderOverviewPanel, FolderOverviewPanelEvent,
     SearchParamsPanel, SearchParamsPanelEvent,
 };
+use crate::state::ServiceState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -11,9 +12,7 @@ use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::StyledExt;
 use models::{Folder, Header, SearchParameter};
 use uuid::Uuid;
-use workspace::WorkspaceRegistry;
 
-/// Tab options for the folder detail page
 #[derive(Debug, Clone, PartialEq)]
 pub enum FolderDetailTab {
     Overview,
@@ -22,7 +21,6 @@ pub enum FolderDetailTab {
 }
 
 impl FolderDetailTab {
-    /// Get the display name for the tab
     pub fn display_name(&self) -> SharedString {
         match self {
             FolderDetailTab::Overview => shared_t!("folders.tab.overview"),
@@ -31,7 +29,6 @@ impl FolderDetailTab {
         }
     }
 
-    /// Get all available tabs
     pub fn all_tabs() -> Vec<FolderDetailTab> {
         vec![
             FolderDetailTab::Overview,
@@ -41,13 +38,9 @@ impl FolderDetailTab {
     }
 }
 
-/// Events emitted by the folder detail page (only for actions requiring parent coordination)
 #[derive(Debug, Clone)]
-pub enum FolderDetailPageEvent {
-    // Currently no events needed - all operations handled directly via WorkspaceRegistry
-}
+pub enum FolderDetailPageEvent {}
 
-/// Error types for folder detail operations
 #[derive(Debug, Clone)]
 pub enum FolderDetailError {
     ValidationError(String),
@@ -76,43 +69,41 @@ impl FolderDetailError {
     }
 }
 
-/// Main folder detail page component
 pub struct FolderDetailPage {
+    service_state: Entity<ServiceState>,
     folder_id: Option<Uuid>,
     active_tab: FolderDetailTab,
     overview_panel: Entity<FolderOverviewPanel>,
     headers_panel: Entity<CommonHeadersPanel>,
     params_panel: Entity<SearchParamsPanel>,
-
-    // Error handling and loading states
     is_loading: bool,
     error_message: Option<String>,
     last_operation: Option<String>,
-
-    _subscription: Subscription,
 }
 
 impl EventEmitter<FolderDetailPageEvent> for FolderDetailPage {}
 
 impl FolderDetailPage {
-    pub fn new(cx: &mut Context<Self>) -> Self {
+    pub fn new(service_state: Entity<ServiceState>, cx: &mut Context<Self>) -> Self {
         let overview_panel = cx.new(|_| FolderOverviewPanel::new());
         let headers_panel = cx.new(|_| CommonHeadersPanel::new());
         let params_panel = cx.new(|_| SearchParamsPanel::new());
 
-        // Subscribe to overview panel events - directly update via WorkspaceRegistry
+        let ss = service_state.clone();
         cx.subscribe(
             &overview_panel,
-            |this, _panel, event: &FolderOverviewPanelEvent, cx| {
+            move |this, _panel, event: &FolderOverviewPanelEvent, cx| {
                 if let Some(folder_id) = this.folder_id {
                     match event {
                         FolderOverviewPanelEvent::SaveChanges(name, description) => {
-                            this.update_folder_info(
-                                folder_id,
-                                name.clone(),
-                                description.clone(),
-                                cx,
-                            );
+                            ss.update(cx, |s, cx| {
+                                s.update_folder_info(
+                                    folder_id,
+                                    name.clone(),
+                                    description.clone(),
+                                    cx,
+                                );
+                            });
                         }
                     }
                 }
@@ -120,14 +111,16 @@ impl FolderDetailPage {
         )
         .detach();
 
-        // Subscribe to child panel events - directly update via WorkspaceRegistry
+        let ss = service_state.clone();
         cx.subscribe(
             &headers_panel,
-            |this, _panel, event: &CommonHeadersPanelEvent, cx| {
+            move |this, _panel, event: &CommonHeadersPanelEvent, cx| {
                 if let Some(folder_id) = this.folder_id {
                     match event {
                         CommonHeadersPanelEvent::HeadersChanged(headers) => {
-                            this.update_common_headers(folder_id, headers.clone(), cx);
+                            ss.update(cx, |s, cx| {
+                                s.update_folder_common_headers(folder_id, headers.clone(), cx);
+                            });
                         }
                     }
                 }
@@ -135,13 +128,16 @@ impl FolderDetailPage {
         )
         .detach();
 
+        let ss = service_state.clone();
         cx.subscribe(
             &params_panel,
-            |this, _panel, event: &SearchParamsPanelEvent, cx| {
+            move |this, _panel, event: &SearchParamsPanelEvent, cx| {
                 if let Some(folder_id) = this.folder_id {
                     match event {
                         SearchParamsPanelEvent::ParamsChanged(params) => {
-                            this.update_search_params(folder_id, params.clone(), cx);
+                            ss.update(cx, |s, cx| {
+                                s.update_folder_search_params(folder_id, params.clone(), cx);
+                            });
                         }
                     }
                 }
@@ -149,22 +145,11 @@ impl FolderDetailPage {
         )
         .detach();
 
-        // Subscribe to WorkspaceRegistry to auto-refresh when workspace changes
-        let registry = WorkspaceRegistry::global(cx);
-        let subscription = cx.subscribe(
-            &registry,
-            |this, _registry, event: &workspace::WorkspaceEvent, cx| {
-                if matches!(event, workspace::WorkspaceEvent::Reload) {
-                    // Refresh folder data when workspace reloads
-                    if let Some(folder_id) = this.folder_id {
-                        this.refresh_folder_data(folder_id, cx);
-                    }
-                }
-                cx.notify();
-            },
-        );
-
+        // Re-renders automatically when `service_state` changes: GPUI tracks the
+        // entities `read` during `render` and invalidates this view on their `notify`.
+        // Folder data is refreshed on open via `set_folder`.
         Self {
+            service_state,
             folder_id: None,
             active_tab: FolderDetailTab::Overview,
             overview_panel,
@@ -173,19 +158,9 @@ impl FolderDetailPage {
             is_loading: false,
             error_message: None,
             last_operation: None,
-            _subscription: subscription,
         }
     }
 
-    /// Refresh folder data from WorkspaceRegistry
-    fn refresh_folder_data(&mut self, folder_id: Uuid, cx: &mut Context<Self>) {
-        let registry = WorkspaceRegistry::global(cx);
-        if let Some(folder) = registry.read(cx).get_folder(folder_id).cloned() {
-            self.update_panels_with_folder(&folder, cx);
-        }
-    }
-
-    /// Update child panels with folder data
     fn update_panels_with_folder(&mut self, folder: &Folder, cx: &mut Context<Self>) {
         self.overview_panel.update(cx, |panel, _| {
             panel.set_folder(folder.clone());
@@ -198,58 +173,23 @@ impl FolderDetailPage {
         });
     }
 
-    // Direct operations on WorkspaceRegistry
-    fn update_folder_info(
-        &self,
-        folder_id: Uuid,
-        name: String,
-        description: Option<String>,
-        cx: &mut App,
-    ) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| {
-            r.update_folder_info(folder_id, name, description, cx);
-        });
-    }
-
-    fn update_common_headers(&self, folder_id: Uuid, headers: Vec<Header>, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| {
-            r.update_folder_common_headers(folder_id, headers, cx);
-        });
-    }
-
-    fn update_search_params(&self, folder_id: Uuid, params: Vec<SearchParameter>, cx: &mut App) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| {
-            r.update_folder_search_params(folder_id, params, cx);
-        });
-    }
-
-    /// Set the folder to display
     pub fn set_folder(&mut self, folder: Option<Folder>, cx: &mut Context<Self>) {
         self.folder_id = folder.as_ref().map(|f| f.id);
-
-        // Update child panels with the new folder data
         if let Some(folder) = &folder {
             self.update_panels_with_folder(folder, cx);
         }
-
         cx.notify();
     }
 
-    /// Get the current folder ID
     pub fn get_folder_id(&self) -> Option<Uuid> {
         self.folder_id
     }
 
-    /// Set the active tab
     pub fn set_active_tab(&mut self, tab: FolderDetailTab, cx: &mut Context<Self>) {
         self.active_tab = tab;
         cx.notify();
     }
 
-    /// Set loading state
     pub fn set_loading(
         &mut self,
         loading: bool,
@@ -259,25 +199,22 @@ impl FolderDetailPage {
         self.is_loading = loading;
         self.last_operation = operation;
         if loading {
-            self.error_message = None; // Clear errors when starting new operation
+            self.error_message = None;
         }
         cx.notify();
     }
 
-    /// Set error message
     pub fn set_error(&mut self, error: FolderDetailError, cx: &mut Context<Self>) {
         self.error_message = Some(error.message());
         self.is_loading = false;
         cx.notify();
     }
 
-    /// Clear error message
     pub fn clear_error(&mut self, cx: &mut Context<Self>) {
         self.error_message = None;
         cx.notify();
     }
 
-    /// Validate folder data before operations
     #[allow(unused)]
     fn validate_folder_data(&self) -> Result<(), FolderDetailError> {
         if self.folder_id.is_none() {
@@ -285,11 +222,9 @@ impl FolderDetailPage {
                 "No folder selected".to_string(),
             ));
         }
-
         Ok(())
     }
 
-    /// Render the tab navigation
     fn render_tab_navigation(&self, cx: &mut Context<Self>) -> impl IntoElement {
         div()
             .h_flex()
@@ -317,7 +252,6 @@ impl FolderDetailPage {
             )
     }
 
-    /// Render the active tab content
     fn render_tab_content(&self, _cx: &mut Context<Self>) -> impl IntoElement {
         match self.active_tab {
             FolderDetailTab::Overview => div().flex_1().p_1().child(self.overview_panel.clone()),
@@ -330,7 +264,6 @@ impl FolderDetailPage {
         }
     }
 
-    /// Render error message if present
     fn render_error_message(&self, cx: &mut Context<Self>) -> Option<impl IntoElement> {
         self.error_message.as_ref().map(|error| {
             div()
@@ -367,7 +300,6 @@ impl FolderDetailPage {
         })
     }
 
-    /// Render loading indicator if present
     fn render_loading_indicator(&self, _cx: &mut Context<Self>) -> Option<impl IntoElement> {
         if self.is_loading {
             Some(
@@ -381,10 +313,7 @@ impl FolderDetailPage {
                     .border_1()
                     .border_color(rgb(0xbae6fd))
                     .rounded_md()
-                    .child(
-                        // Simple loading indicator - in a real app you'd use a spinner
-                        div().w_4().h_4().bg(rgb(0x0ea5e9)).rounded_full(),
-                    )
+                    .child(div().w_4().h_4().bg(rgb(0x0ea5e9)).rounded_full())
                     .child(
                         div().text_sm().text_color(rgb(0x0c4a6e)).child(
                             self.last_operation
@@ -402,11 +331,9 @@ impl FolderDetailPage {
 
 impl Render for FolderDetailPage {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        // Get folder from WorkspaceRegistry
-        let folder = self.folder_id.and_then(|id| {
-            let registry = WorkspaceRegistry::global(cx);
-            registry.read(cx).get_folder(id).cloned()
-        });
+        let folder = self
+            .folder_id
+            .and_then(|id| self.service_state.read(cx).get_folder(id).cloned());
 
         if folder.is_none() {
             return div()

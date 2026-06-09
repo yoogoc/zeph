@@ -174,23 +174,6 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent::Close);
     }
 
-    pub fn set_workspace_view(
-        &mut self,
-        workspace_id: Uuid,
-        view: models::WorkspaceView,
-        cx: &mut Context<Self>,
-    ) {
-        if let Some(workspace) = self
-            .app_state
-            .workspaces
-            .iter_mut()
-            .find(|w| w.id == workspace_id)
-        {
-            workspace.current_view = view;
-            cx.emit(WorkspaceEvent::Open(workspace.clone()));
-        }
-    }
-
     pub fn remove_workspace(&mut self, workspace_id: Uuid, cx: &mut Context<Self>) {
         let store = WorkspaceStore::new(self.db.conn());
         store.delete(workspace_id).ok();

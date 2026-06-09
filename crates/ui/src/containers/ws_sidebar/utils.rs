@@ -2,7 +2,7 @@ use crate::utils::cal_icon as cal_icon_ct;
 use gpui::{IntoElement, SharedString};
 use gpui_component::tree::{TreeEntry, TreeItem};
 use gpui_component::IconName;
-use models::{ContentType, Folder, FolderType, Schema, Service, Workspace};
+use models::{ContentType, Folder, FolderType, Schema, Service};
 use uuid::Uuid;
 
 pub const SERVICE_ID: &str = "services";
@@ -72,41 +72,28 @@ impl From<SharedString> for TreeId {
     }
 }
 
-pub fn build_tree(workspace: Workspace) -> Vec<TreeItem> {
+pub fn build_tree(folders: &[Folder], services: &[Service], schemas: &[Schema]) -> Vec<TreeItem> {
     vec![
         TreeItem::new(SERVICE_ID, shared_t!("workspaces.service"))
             .expanded(true)
-            .children(build_service_tree(
-                None,
-                0,
-                &workspace.folders,
-                &workspace.services,
-            )),
+            .children(build_service_tree(None, 0, folders, services)),
         TreeItem::new(SCHEMA_ID, shared_t!("workspaces.schema"))
             .expanded(true)
-            .children(build_schema_tree(
-                None,
-                0,
-                &workspace.folders,
-                &workspace.schemas,
-            )),
+            .children(build_schema_tree(None, 0, folders, schemas)),
     ]
 }
 
 pub fn build_service_tree(
     parent_id: Option<Uuid>,
     depth: usize,
-    folders: &Vec<Folder>,
-    services: &Vec<Service>,
+    folders: &[Folder],
+    services: &[Service],
 ) -> Vec<TreeItem> {
     let mut items = vec![];
-    // Add folders first
     for folder in folders
         .iter()
         .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Service))
     {
-        // TODO Skip if we've reached maximum depth
-
         items.push(
             TreeItem::new(
                 format!("{}/folder/{}", SERVICE_ID, folder.id.to_string()),
@@ -121,7 +108,6 @@ pub fn build_service_tree(
         );
     }
 
-    // Add services
     for service in services.iter().filter(|s| s.folder_id == parent_id) {
         items.push(TreeItem::new(
             format!("{}/{}", SERVICE_ID, service.id.to_string()),
@@ -131,20 +117,18 @@ pub fn build_service_tree(
 
     items
 }
+
 pub fn build_schema_tree(
     parent_id: Option<Uuid>,
     depth: usize,
-    folders: &Vec<Folder>,
-    schemas: &Vec<Schema>,
+    folders: &[Folder],
+    schemas: &[Schema],
 ) -> Vec<TreeItem> {
     let mut items = vec![];
-    // Add folders first
     for folder in folders
         .iter()
         .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Schema))
     {
-        // TODO Skip if we've reached maximum depth
-
         items.push(
             TreeItem::new(
                 format!("{}/folder/{}", SCHEMA_ID, folder.id.to_string()),
@@ -159,7 +143,6 @@ pub fn build_schema_tree(
         );
     }
 
-    // Add schemas
     for schema in schemas.iter().filter(|s| s.folder_id == parent_id) {
         items.push(TreeItem::new(
             format!("{}/{}", SCHEMA_ID, schema.id.to_string()),
@@ -170,24 +153,14 @@ pub fn build_schema_tree(
     items
 }
 
-pub fn cal_icon(entry: &TreeEntry, workspace: &Option<Workspace>) -> impl IntoElement {
+pub fn cal_icon(entry: &TreeEntry, services: &[Service], schemas: &[Schema]) -> impl IntoElement {
     let id = TreeId::new(entry.item().id.clone());
     match id {
-        TreeId::Service(id) => {
-            match workspace
-                .as_ref()
-                .and_then(|w| w.services.iter().find(|s| s.id == id))
-            {
-                Some(service) => {
-                    cal_icon_ct(&ContentType::Service(service.clone())).into_any_element()
-                }
-                None => IconName::File.into_any_element(),
-            }
-        }
-        TreeId::Schema(id) => match workspace
-            .as_ref()
-            .and_then(|w| w.schemas.iter().find(|s| s.id == id))
-        {
+        TreeId::Service(id) => match services.iter().find(|s| s.id == id) {
+            Some(service) => cal_icon_ct(&ContentType::Service(service.clone())).into_any_element(),
+            None => IconName::File.into_any_element(),
+        },
+        TreeId::Schema(id) => match schemas.iter().find(|s| s.id == id) {
             Some(schema) => cal_icon_ct(&ContentType::Schema(schema.clone())).into_any_element(),
             None => IconName::File.into_any_element(),
         },

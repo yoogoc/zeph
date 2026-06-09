@@ -1,23 +1,23 @@
+use crate::schema;
 use anyhow::Result;
 use rusqlite::Connection;
 use std::path::Path;
-
-use crate::schema;
+use std::sync::Arc;
 
 pub struct Database {
-    conn: Connection,
+    conn: Arc<Connection>,
 }
 
 impl Database {
     pub fn open(path: impl AsRef<Path>) -> Result<Self> {
-        let conn = Connection::open(path)?;
+        let conn = Arc::new(Connection::open(path)?);
         let db = Self { conn };
         db.init()?;
         Ok(db)
     }
 
     pub fn open_in_memory() -> Result<Self> {
-        let conn = Connection::open_in_memory()?;
+        let conn = Arc::new(Connection::open_in_memory()?);
         let db = Self { conn };
         db.init()?;
         Ok(db)
@@ -28,7 +28,7 @@ impl Database {
         Ok(())
     }
 
-    pub fn conn(&self) -> &Connection {
-        &self.conn
+    pub fn conn(&self) -> Arc<Connection> {
+        self.conn.clone()
     }
 }

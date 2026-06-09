@@ -1,16 +1,17 @@
 use anyhow::{anyhow, Context, Result};
 use models::{DataSource, Folder, FolderType, Header, SearchParameter, SyncMeta};
 use rusqlite::{params, Connection};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::FolderQueryParameterStore;
 
-pub struct FolderStore<'a> {
-    conn: &'a Connection,
+pub struct FolderStore {
+    conn: Arc<Connection>,
 }
 
-impl<'a> FolderStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self {
+impl FolderStore {
+    pub fn new(conn: Arc<Connection>) -> Self {
         Self { conn }
     }
 
@@ -41,7 +42,7 @@ impl<'a> FolderStore<'a> {
 
         // Save common query parameters to the folder_query_parameters table
         if !folder.common_search_params.is_empty() {
-            let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+            let folder_query_param_store = FolderQueryParameterStore::new(self.conn.clone());
 
             for (index, param) in folder.common_search_params.iter().enumerate() {
                 folder_query_param_store.create(
@@ -71,7 +72,7 @@ impl<'a> FolderStore<'a> {
         let mut folders: Vec<Folder> = rows.filter_map(|r| r.ok()).collect();
 
         // Load common query parameters from the folder_query_parameters table
-        let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+        let folder_query_param_store = FolderQueryParameterStore::new(self.conn.clone());
 
         for folder in &mut folders {
             // Load query parameters from the new table
@@ -105,7 +106,7 @@ impl<'a> FolderStore<'a> {
         match rows.next() {
             Some(Ok(mut folder)) => {
                 // Load common query parameters from the folder_query_parameters table
-                let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+                let folder_query_param_store = FolderQueryParameterStore::new(self.conn.clone());
                 let query_params = folder_query_param_store
                     .list_by_folder(folder.id)
                     .unwrap_or_default();
@@ -160,7 +161,7 @@ impl<'a> FolderStore<'a> {
             .with_context(|| "Invalid search parameters provided")?;
 
         // Update the folder_query_parameters table
-        let folder_query_param_store = FolderQueryParameterStore::new(self.conn);
+        let folder_query_param_store = FolderQueryParameterStore::new(self.conn.clone());
 
         // Delete old parameters
         folder_query_param_store.delete_by_folder(folder_id)?;

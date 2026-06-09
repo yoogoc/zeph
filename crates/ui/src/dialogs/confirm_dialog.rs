@@ -64,37 +64,33 @@ impl Render for ConfirmDialog {
             )
             .child(
                 // Footer with buttons
-                div()
-                    .py_3()
-                    .border_t_1()
-                    .border_color(rgb(0xe0e0e0))
-                    .child(
-                        h_flex()
-                            .justify_end()
-                            .gap_2()
-                            .child(
-                                Button::new("confirm-dialog-cancel")
-                                    .label(self.cancel_label.clone())
-                                    .on_click(cx.listener(|_this, _, _, cx| {
-                                        cx.emit(ConfirmDialogEvent::Cancel);
-                                    })),
-                            )
-                            .child(
-                                Button::new("confirm-dialog-discard")
-                                    .label(self.discard_label.clone())
-                                    .on_click(cx.listener(|_this, _, _, cx| {
-                                        cx.emit(ConfirmDialogEvent::Discard);
-                                    })),
-                            )
-                            .child(
-                                Button::new("confirm-dialog-confirm")
-                                    .label(self.confirm_label.clone())
-                                    .primary()
-                                    .on_click(cx.listener(|_this, _, _, cx| {
-                                        cx.emit(ConfirmDialogEvent::Confirm);
-                                    })),
-                            ),
-                    ),
+                div().py_3().border_t_1().border_color(rgb(0xe0e0e0)).child(
+                    h_flex()
+                        .justify_end()
+                        .gap_2()
+                        .child(
+                            Button::new("confirm-dialog-cancel")
+                                .label(self.cancel_label.clone())
+                                .on_click(cx.listener(|_this, _, _, cx| {
+                                    cx.emit(ConfirmDialogEvent::Cancel);
+                                })),
+                        )
+                        .child(
+                            Button::new("confirm-dialog-discard")
+                                .label(self.discard_label.clone())
+                                .on_click(cx.listener(|_this, _, _, cx| {
+                                    cx.emit(ConfirmDialogEvent::Discard);
+                                })),
+                        )
+                        .child(
+                            Button::new("confirm-dialog-confirm")
+                                .label(self.confirm_label.clone())
+                                .primary()
+                                .on_click(cx.listener(|_this, _, _, cx| {
+                                    cx.emit(ConfirmDialogEvent::Confirm);
+                                })),
+                        ),
+                ),
             )
     }
 }
