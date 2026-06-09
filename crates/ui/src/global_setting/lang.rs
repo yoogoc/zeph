@@ -17,11 +17,11 @@ impl LangSettings {
         let init_locale = locales.position(&SharedString::from(locale.to_string()));
         let select_state = cx.new(|cx| SelectState::new(locales, init_locale, window, cx));
 
-        let ss = cx.subscribe(&select_state, |_view, event, _cx| match event {
+        let ss = cx.subscribe(&select_state, |_view, event, cx| match event {
             SelectEvent::Confirm(value) => {
                 if let Some(selected_value) = value {
                     i18n::set_locale(&selected_value);
-                } else {
+                    cx.refresh_windows();
                 }
             }
         });
