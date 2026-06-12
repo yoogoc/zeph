@@ -1,5 +1,7 @@
 use crate::containers::HttpService;
+use crate::state::build_tree;
 use gpui::*;
+use gpui_component::tree::TreeState;
 use log::error;
 use models::{
     ContentType, Environment, EnvironmentVariable, Folder, FolderType, Header, Schema,
@@ -23,6 +25,9 @@ pub struct ServiceState {
     pub opened_services: Vec<ContentType>,
     pub active_service: Option<ContentType>,
     pub active_environment_id: Option<Uuid>,
+
+    /// Sidebar tree UI state (items, selection, expansion).
+    tree: Entity<TreeState>,
 
     /// HttpService view cache (mirrors `ApplicationState.tabs`).
     http_services: Vec<HttpEntry>,
@@ -61,6 +66,12 @@ impl ServiceState {
             .or(environments.first())
             .map(|e| e.id);
 
+        let tree = cx.new(|cx| TreeState::new(cx));
+        let items = build_tree(&folders, &services, &schemas);
+        tree.update(cx, |state, cx| {
+            state.set_items(items, cx);
+        });
+
         Self {
             workspace_id,
             services,
@@ -70,9 +81,23 @@ impl ServiceState {
             opened_services: vec![],
             active_service: None,
             active_environment_id,
+            tree,
             http_services: vec![],
             http_active_ix: None,
         }
+    }
+
+    /// Accessor for the sidebar tree state.
+    pub fn tree(&self) -> &Entity<TreeState> {
+        &self.tree
+    }
+
+    /// Rebuilds the sidebar tree from the current folders/services/schemas.
+    fn rebuild_tree(&mut self, cx: &mut Context<Self>) {
+        let items = build_tree(&self.folders, &self.services, &self.schemas);
+        self.tree.update(cx, |state, cx| {
+            state.set_items(items, cx);
+        });
     }
 
     // === Content Operations ===
@@ -133,6 +158,7 @@ impl ServiceState {
         storage.service.insert(&service).ok();
 
         self.services.push(service);
+        self.rebuild_tree(cx);
         cx.notify();
     }
 
@@ -172,6 +198,7 @@ impl ServiceState {
                         }
                     }
 
+                    self.rebuild_tree(cx);
                     cx.notify();
                 }
                 Err(e) => error!("Failed to rename service {}: {}", service_id, e),
@@ -199,6 +226,7 @@ impl ServiceState {
             self.active_service = self.opened_services.first().cloned();
         }
 
+        self.rebuild_tree(cx);
         cx.notify();
     }
 
@@ -215,6 +243,7 @@ impl ServiceState {
         storage.schema.insert(&schema).ok();
 
         self.schemas.push(schema);
+        self.rebuild_tree(cx);
         cx.notify();
     }
 
@@ -233,6 +262,7 @@ impl ServiceState {
         }
 
         self.folders.push(folder);
+        self.rebuild_tree(cx);
         cx.notify();
     }
 
@@ -253,6 +283,7 @@ impl ServiceState {
                     folder.name = updated_folder.name.clone();
                     folder.updated_at = updated_folder.updated_at;
                 }
+                self.rebuild_tree(cx);
                 cx.notify();
             }
             Err(e) => error!("Failed to rename folder {}: {}", folder_id, e),
@@ -322,6 +353,7 @@ impl ServiceState {
                     folder.description = updated_folder.description;
                     folder.updated_at = updated_folder.updated_at;
                 }
+                self.rebuild_tree(cx);
                 cx.notify();
             }
             Err(e) => error!("Failed to update folder info: {}", e),

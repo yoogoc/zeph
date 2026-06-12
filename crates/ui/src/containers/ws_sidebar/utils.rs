@@ -1,8 +1,8 @@
 use crate::utils::cal_icon as cal_icon_ct;
 use gpui::{IntoElement, SharedString};
-use gpui_component::tree::{TreeEntry, TreeItem};
+use gpui_component::tree::TreeEntry;
 use gpui_component::IconName;
-use models::{ContentType, Folder, FolderType, Schema, Service};
+use models::{ContentType, Schema, Service};
 use uuid::Uuid;
 
 pub const SERVICE_ID: &str = "services";
@@ -70,87 +70,6 @@ impl From<SharedString> for TreeId {
     fn from(value: SharedString) -> Self {
         Self::new(value)
     }
-}
-
-pub fn build_tree(folders: &[Folder], services: &[Service], schemas: &[Schema]) -> Vec<TreeItem> {
-    vec![
-        TreeItem::new(SERVICE_ID, shared_t!("workspaces.service"))
-            .expanded(true)
-            .children(build_service_tree(None, 0, folders, services)),
-        TreeItem::new(SCHEMA_ID, shared_t!("workspaces.schema"))
-            .expanded(true)
-            .children(build_schema_tree(None, 0, folders, schemas)),
-    ]
-}
-
-pub fn build_service_tree(
-    parent_id: Option<Uuid>,
-    depth: usize,
-    folders: &[Folder],
-    services: &[Service],
-) -> Vec<TreeItem> {
-    let mut items = vec![];
-    for folder in folders
-        .iter()
-        .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Service))
-    {
-        items.push(
-            TreeItem::new(
-                format!("{}/folder/{}", SERVICE_ID, folder.id.to_string()),
-                folder.name.clone(),
-            )
-            .children(build_service_tree(
-                Some(folder.id),
-                depth + 1,
-                folders,
-                services,
-            )),
-        );
-    }
-
-    for service in services.iter().filter(|s| s.folder_id == parent_id) {
-        items.push(TreeItem::new(
-            format!("{}/{}", SERVICE_ID, service.id.to_string()),
-            service.name.clone(),
-        ));
-    }
-
-    items
-}
-
-pub fn build_schema_tree(
-    parent_id: Option<Uuid>,
-    depth: usize,
-    folders: &[Folder],
-    schemas: &[Schema],
-) -> Vec<TreeItem> {
-    let mut items = vec![];
-    for folder in folders
-        .iter()
-        .filter(|f| f.parent_id == parent_id && matches!(f.folder_type, FolderType::Schema))
-    {
-        items.push(
-            TreeItem::new(
-                format!("{}/folder/{}", SCHEMA_ID, folder.id.to_string()),
-                folder.name.clone(),
-            )
-            .children(build_schema_tree(
-                Some(folder.id),
-                depth + 1,
-                folders,
-                schemas,
-            )),
-        );
-    }
-
-    for schema in schemas.iter().filter(|s| s.folder_id == parent_id) {
-        items.push(TreeItem::new(
-            format!("{}/{}", SCHEMA_ID, schema.id.to_string()),
-            schema.name.clone(),
-        ));
-    }
-
-    items
 }
 
 pub fn cal_icon(entry: &TreeEntry, services: &[Service], schemas: &[Schema]) -> impl IntoElement {

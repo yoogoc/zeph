@@ -4,19 +4,17 @@ mod utils;
 
 use crate::item::item;
 use crate::state::ServiceState;
-use crate::ws_sidebar::utils::build_tree;
 use gpui::*;
-use gpui_component::tree::{tree, TreeEntry, TreeItem, TreeState};
+use gpui_component::tree::{tree, TreeEntry, TreeItem};
 use gpui_component::v_flex;
 use models::FolderType;
 use std::collections::HashMap;
 use std::rc::Rc;
-pub use utils::TreeId;
+pub use utils::{TreeId, SCHEMA_ID, SERVICE_ID};
 use uuid::Uuid;
 
 pub struct WorkspaceSidebar {
     service_state: Entity<ServiceState>,
-    tree: Entity<TreeState>,
     hovered: Option<SharedString>,
     tree_map: HashMap<SharedString, usize>,
     get_icon: Rc<dyn Fn(&TreeEntry) -> AnyElement>,
@@ -26,25 +24,14 @@ impl WorkspaceSidebar {
     pub fn new(
         service_state: Entity<ServiceState>,
         get_icon: impl Fn(&TreeEntry) -> AnyElement + 'static,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
     ) -> Self {
-        let tree = cx.new(|cx| TreeState::new(cx));
         Self {
             service_state,
-            tree,
             hovered: None,
             tree_map: HashMap::new(),
             get_icon: Rc::new(get_icon),
         }
-    }
-
-    pub fn refresh_tree(&mut self, cx: &mut Context<Self>) {
-        self.tree_map.clear();
-        let ss = self.service_state.read(cx);
-        let items = build_tree(&ss.folders, &ss.services, &ss.schemas);
-        self.tree.update(cx, |this, cx| {
-            this.set_items(items, cx);
-        });
     }
 
     pub fn create_service(&self, name: SharedString, folder_id: Option<Uuid>, cx: &mut App) {
@@ -116,7 +103,8 @@ impl WorkspaceSidebar {
     }
 
     pub fn set_ix(&mut self, item: TreeId, cx: &mut Context<Self>) {
-        self.tree.update(cx, |this, cx| {
+        let tree = self.service_state.read(cx).tree().clone();
+        tree.update(cx, |this, cx| {
             this.set_selected_item(Some(&TreeItem::new(item.to_string().clone(), "")), cx);
         });
     }
@@ -270,6 +258,7 @@ impl Render for WorkspaceSidebar {
         let get_icon = self.get_icon.clone();
         let hovered = self.hovered.clone();
         let service_state = self.service_state.clone();
+        let tree_state = service_state.read(cx).tree().clone();
         let entity = cx.entity();
         div()
             .size_full()
@@ -298,7 +287,7 @@ impl Render for WorkspaceSidebar {
                             .h_full()
                             .p_2()
                             .gap_2()
-                            .child(tree(&self.tree, {
+                            .child(tree(&tree_state, {
                                 move |ix, entry, selected, _window, _cx| {
                                     let entry_item = entry.item().clone();
                                     let enter_entity = entity.clone();
