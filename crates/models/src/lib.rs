@@ -1,9 +1,7 @@
 pub mod autosurgeon_ext;
-mod runtime;
 
 use autosurgeon::{Hydrate, Reconcile};
 use gpui::SharedString;
-pub use runtime::ContentType;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -73,10 +71,6 @@ pub struct Workspace {
     pub environments: Vec<Environment>,
 
     // Runtime state
-    #[serde(skip)]
-    pub opened_services: Vec<ContentType>,
-    #[serde(skip)]
-    pub active_service: Option<ContentType>,
     #[serde(skip)]
     pub active_environment_id: Option<Uuid>,
 }
@@ -177,8 +171,6 @@ impl Workspace {
             services: vec![],
             schemas: vec![],
             environments: vec![],
-            opened_services: vec![],
-            active_service: None,
             active_environment_id: None,
         }
     }

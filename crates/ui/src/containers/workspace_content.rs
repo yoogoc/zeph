@@ -7,7 +7,6 @@ use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
 
 pub struct WorkspaceContent {
-    service_state: Entity<ServiceState>,
     service_tabs: Entity<ServiceTabs>,
     sidebar: Entity<WsSidebar>,
     env_selector: Entity<EnvironmentSelector>,
@@ -25,10 +24,9 @@ impl WorkspaceContent {
 
         let service_tabs = cx.new(|_| ServiceTabs::new(service_state.clone()));
         let env_selector = cx.new(|_| EnvironmentSelector::new(service_state.clone()));
-        let service_content = cx.new(|cx| ServiceContent::new(service_state.clone(), cx));
+        let service_content = cx.new(|_| ServiceContent::new(service_state.clone()));
 
         Self {
-            service_state,
             service_tabs,
             sidebar,
             env_selector,

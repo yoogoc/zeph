@@ -72,6 +72,8 @@ impl FolderDetailError {
 pub struct FolderDetailPage {
     service_state: Entity<ServiceState>,
     folder_id: Option<Uuid>,
+    /// Snapshot of the folder this view renders; used for tab title/icon.
+    folder: Folder,
     active_tab: FolderDetailTab,
     overview_panel: Entity<FolderOverviewPanel>,
     headers_panel: Entity<CommonHeadersPanel>,
@@ -84,7 +86,11 @@ pub struct FolderDetailPage {
 impl EventEmitter<FolderDetailPageEvent> for FolderDetailPage {}
 
 impl FolderDetailPage {
-    pub fn new(service_state: Entity<ServiceState>, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        service_state: Entity<ServiceState>,
+        folder: Folder,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let overview_panel = cx.new(|_| FolderOverviewPanel::new());
         let headers_panel = cx.new(|_| CommonHeadersPanel::new());
         let params_panel = cx.new(|_| SearchParamsPanel::new());
@@ -147,10 +153,10 @@ impl FolderDetailPage {
 
         // Re-renders automatically when `service_state` changes: GPUI tracks the
         // entities `read` during `render` and invalidates this view on their `notify`.
-        // Folder data is refreshed on open via `set_folder`.
-        Self {
+        let mut page = Self {
             service_state,
-            folder_id: None,
+            folder_id: Some(folder.id),
+            folder: folder.clone(),
             active_tab: FolderDetailTab::Overview,
             overview_panel,
             headers_panel,
@@ -158,7 +164,9 @@ impl FolderDetailPage {
             is_loading: false,
             error_message: None,
             last_operation: None,
-        }
+        };
+        page.update_panels_with_folder(&folder, cx);
+        page
     }
 
     fn update_panels_with_folder(&mut self, folder: &Folder, cx: &mut Context<Self>) {
@@ -383,5 +391,26 @@ impl Render for FolderDetailPage {
             .child(self.render_tab_navigation(cx))
             .child(self.render_tab_content(cx))
             .into_any_element()
+    }
+}
+
+// Folder edits are persisted immediately via panel events, so the default
+// `ContentView` save/is_modified behavior is sufficient.
+impl crate::state::ContentView for FolderDetailPage {
+    fn id(&self) -> Uuid {
+        self.folder.id
+    }
+
+    fn title(&self) -> SharedString {
+        self.folder.name.clone()
+    }
+
+    fn tab_icon(&self) -> AnyElement {
+        gpui_component::IconName::Folder.into_any_element()
+    }
+
+    fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        self.folder.name = title;
+        cx.notify();
     }
 }

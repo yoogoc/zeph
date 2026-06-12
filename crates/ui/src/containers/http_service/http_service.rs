@@ -29,19 +29,18 @@ pub struct HttpService {
     is_loading: bool,
     use_base_url: bool,
     folder_id: Option<Uuid>,
-    // State is now managed by DraftRegistry via WorkspaceRegistry
-    service_id: Uuid,
+    /// Snapshot of the service this view renders; used for tab title/icon.
+    service: models::Service,
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
 
 impl HttpService {
-    pub fn new(
-        service_id: Uuid,
-        config: HttpConfig,
-        folder_id: Option<Uuid>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
+    pub fn new(service: models::Service, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let folder_id = service.folder_id;
+        let config = match &service.service_type {
+            models::ServiceType::Http(config) => config.clone(),
+            _ => HttpConfig::default(),
+        };
         let url = config.path.clone();
         let use_base_url = config.use_base_url;
         let url = cx.new(|cx| InputState::new(window, cx).default_value(&url));
@@ -160,9 +159,9 @@ impl HttpService {
 
         // Initialize draft in DraftRegistry
         let registry = workspace::WorkspaceRegistry::global(cx);
-        let service = registry.read(cx).get_service(service_id).cloned();
-        if let Some(service) = service {
-            let _ = registry.read(cx).get_or_init_draft(&service);
+        let registry_service = registry.read(cx).get_service(service.id).cloned();
+        if let Some(registry_service) = registry_service {
+            let _ = registry.read(cx).get_or_init_draft(&registry_service);
         }
 
         Self {
@@ -175,7 +174,7 @@ impl HttpService {
             is_loading: false,
             use_base_url,
             folder_id,
-            service_id,
+            service,
             _subscriptions: smallvec![subscription, url_subscription],
         }
     }
@@ -208,7 +207,7 @@ impl HttpService {
     fn update_draft_from_ui(&mut self, cx: &mut Context<Self>) {
         let config = self.collect_current_draft_config(cx);
         let registry = workspace::WorkspaceRegistry::global(cx);
-        let _ = registry.read(cx).update_draft(self.service_id, &config);
+        let _ = registry.read(cx).update_draft(self.service.id, &config);
         // Sync is_modified state to RequestPanel for save button
         let is_modified = self.is_modified(cx);
         self.request_panel.update(cx, |panel, _cx| {
@@ -220,7 +219,7 @@ impl HttpService {
     /// Returns true if the service has unsaved changes
     pub fn is_modified(&self, cx: &App) -> bool {
         let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.read(cx).draft_is_dirty(self.service_id)
+        registry.read(cx).draft_is_dirty(self.service.id)
     }
 
     /// Checks if there are unsaved changes compared to the original service
@@ -235,7 +234,7 @@ impl HttpService {
 
     /// Saves changes without requiring a window parameter (for use in dialogs)
     pub fn save_changes_no_window(&mut self, cx: &mut Context<Self>) {
-        let service_id = self.service_id;
+        let service_id = self.service.id;
         let registry = workspace::WorkspaceRegistry::global(cx);
 
         // Save draft to service (this will also remove the draft from DraftRegistry)
@@ -265,7 +264,7 @@ impl HttpService {
     /// Undo to the previous state
     pub fn undo(&mut self, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
-        if let Some(draft_config) = registry.read(cx).undo_draft(self.service_id) {
+        if let Some(draft_config) = registry.read(cx).undo_draft(self.service.id) {
             // Apply the undone state to UI
             self.apply_draft_to_ui(&draft_config, cx);
         }
@@ -274,7 +273,7 @@ impl HttpService {
     /// Redo to the next state
     pub fn redo(&mut self, cx: &mut Context<Self>) {
         let registry = workspace::WorkspaceRegistry::global(cx);
-        if let Some(draft_config) = registry.read(cx).redo_draft(self.service_id) {
+        if let Some(draft_config) = registry.read(cx).redo_draft(self.service.id) {
             // Apply the redone state to UI
             self.apply_draft_to_ui(&draft_config, cx);
         }
@@ -283,13 +282,13 @@ impl HttpService {
     /// Check if undo is available
     pub fn can_undo(&self, cx: &App) -> bool {
         let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.read(cx).can_undo_draft(self.service_id)
+        registry.read(cx).can_undo_draft(self.service.id)
     }
 
     /// Check if redo is available
     pub fn can_redo(&self, cx: &App) -> bool {
         let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.read(cx).can_redo_draft(self.service_id)
+        registry.read(cx).can_redo_draft(self.service.id)
     }
 
     /// Apply a draft configuration to the UI components
@@ -788,5 +787,39 @@ impl Render for HttpService {
                         ),
                 )
             })
+    }
+}
+
+impl crate::state::ContentView for HttpService {
+    fn id(&self) -> Uuid {
+        self.service.id
+    }
+
+    fn title(&self) -> SharedString {
+        self.service.name.clone()
+    }
+
+    fn tab_icon(&self) -> AnyElement {
+        match &self.service.service_type {
+            models::ServiceType::Http(config) => {
+                crate::primitives::Badge::new(config.method.clone())
+                    .compact(true)
+                    .into_any_element()
+            }
+            _ => gpui_component::IconName::Globe.into_any_element(),
+        }
+    }
+
+    fn set_title(&mut self, title: SharedString, cx: &mut Context<Self>) {
+        self.service.name = title;
+        cx.notify();
+    }
+
+    fn is_modified(&self, cx: &App) -> bool {
+        HttpService::is_modified(self, cx)
+    }
+
+    fn save(&mut self, cx: &mut Context<Self>) {
+        self.save_changes_no_window(cx);
     }
 }

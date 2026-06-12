@@ -291,8 +291,6 @@ impl Render for WorkspaceSidebar {
                                     let entry_item = entry.item().clone();
                                     let enter_entity = entity.clone();
                                     let enter_id = entry_item.id.clone();
-                                    let leave_entity = entity.clone();
-                                    let leave_id = entry_item.id.clone();
                                     let click_entity = entity.clone();
                                     let click_item = entry_item.clone();
                                     item(

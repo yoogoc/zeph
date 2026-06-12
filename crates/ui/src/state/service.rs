@@ -1,19 +1,19 @@
-use crate::containers::HttpService;
-use crate::state::build_tree;
+use crate::containers::{FolderDetailPage, HttpService};
+use crate::state::{build_tree, ContentViewHandle, PlaceholderView};
 use gpui::*;
 use gpui_component::tree::TreeState;
+use gpui_component::IconName;
 use log::error;
 use models::{
-    ContentType, Environment, EnvironmentVariable, Folder, FolderType, Header, Schema,
-    SearchParameter, Service, ServiceType,
+    Environment, EnvironmentVariable, Folder, FolderType, Header, Schema, SearchParameter, Service,
+    ServiceType,
 };
 use register::GlobalStorage;
 use uuid::Uuid;
 
-/// A cached HttpService view entity (mirrors `ApplicationState::Tab`).
-pub struct HttpEntry {
-    pub service_id: Uuid,
-    pub entity: Entity<HttpService>,
+/// A cached open content view (mirrors `ApplicationState::Tab`).
+pub struct OpenView {
+    pub view: Box<dyn ContentViewHandle>,
 }
 
 pub struct ServiceState {
@@ -22,17 +22,15 @@ pub struct ServiceState {
     pub folders: Vec<Folder>,
     pub schemas: Vec<Schema>,
     pub environments: Vec<Environment>,
-    pub opened_services: Vec<ContentType>,
-    pub active_service: Option<ContentType>,
     pub active_environment_id: Option<Uuid>,
 
     /// Sidebar tree UI state (items, selection, expansion).
     tree: Entity<TreeState>,
 
-    /// HttpService view cache (mirrors `ApplicationState.tabs`).
-    http_services: Vec<HttpEntry>,
-    /// Index of the active entry in `http_services` (mirrors `ApplicationState.active_idx`).
-    http_active_ix: Option<usize>,
+    /// Open content view cache and tab list (mirrors `ApplicationState.tabs`).
+    pub open_views: Vec<OpenView>,
+    /// Index of the active entry in `open_views` (mirrors `ApplicationState.active_idx`).
+    pub active_view_ix: Option<usize>,
 }
 
 impl ServiceState {
@@ -78,12 +76,10 @@ impl ServiceState {
             folders,
             schemas,
             environments,
-            opened_services: vec![],
-            active_service: None,
             active_environment_id,
             tree,
-            http_services: vec![],
-            http_active_ix: None,
+            open_views: vec![],
+            active_view_ix: None,
         }
     }
 
@@ -102,32 +98,23 @@ impl ServiceState {
 
     // === Content Operations ===
 
-    pub fn open_content(&mut self, ct: ContentType, window: &mut Window, cx: &mut Context<Self>) {
-        if let ContentType::Service(service) = &ct {
-            self.ensure_http_service(service, window, cx);
-        }
-        if !self.opened_services.contains(&ct) {
-            self.opened_services.push(ct.clone());
-        }
-        self.active_service = Some(ct);
+    /// The currently active opened content, if any.
+    pub fn active_content(&self) -> Option<&OpenView> {
+        self.active_view_ix.and_then(|ix| self.open_views.get(ix))
+    }
+
+    /// All opened contents (tab list).
+    pub fn open_views(&self) -> &[OpenView] {
+        &self.open_views
+    }
+
+    pub fn close_content(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.remove_view(ix);
         cx.notify();
     }
 
-    pub fn close_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
-        self.opened_services.retain(|id| id.ne(&ct));
-        if let ContentType::Service(service) = &ct {
-            self.remove_http_service(service.id);
-        }
-        if self.active_service == Some(ct) {
-            self.active_service = self.opened_services.first().cloned();
-            self.sync_http_active_ix();
-        }
-        cx.notify();
-    }
-
-    pub fn set_active_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
-        self.active_service = Some(ct);
-        self.sync_http_active_ix();
+    pub fn set_active_content(&mut self, ix: usize, cx: &mut Context<Self>) {
+        self.active_view_ix = Some(ix);
         cx.notify();
     }
 
@@ -181,21 +168,12 @@ impl ServiceState {
                         s.updated_at = chrono::Utc::now().timestamp();
                     }
 
-                    let updated = self.services.iter().find(|s| s.id == service_id).cloned();
-                    if let Some(updated_ref) = updated {
-                        for content in self.opened_services.iter_mut() {
-                            if let ContentType::Service(s) = content {
-                                if s.id == service_id {
-                                    *content = ContentType::Service(updated_ref.clone());
-                                }
-                            }
-                        }
-                        if let Some(ContentType::Service(active)) = &self.active_service {
-                            if active.id == service_id {
-                                self.active_service =
-                                    Some(ContentType::Service(updated_ref.clone()));
-                            }
-                        }
+                    if let Some(ix) = self
+                        .open_views
+                        .iter()
+                        .position(|e| e.view.id(cx) == service_id)
+                    {
+                        self.open_views[ix].view.set_title(new_name.clone(), cx);
                     }
 
                     self.rebuild_tree(cx);
@@ -216,14 +194,12 @@ impl ServiceState {
         self.services.retain(|s| s.id != service_id);
 
         // Close any opened tab referencing the deleted service.
-        let was_active = matches!(
-            &self.active_service,
-            Some(ContentType::Service(s)) if s.id == service_id
-        );
-        self.opened_services
-            .retain(|content| !matches!(content, ContentType::Service(s) if s.id == service_id));
-        if was_active {
-            self.active_service = self.opened_services.first().cloned();
+        if let Some(ix) = self
+            .open_views
+            .iter()
+            .position(|v| v.view.id(cx) == service_id)
+        {
+            self.remove_view(ix);
         }
 
         self.rebuild_tree(cx);
@@ -283,10 +259,30 @@ impl ServiceState {
                     folder.name = updated_folder.name.clone();
                     folder.updated_at = updated_folder.updated_at;
                 }
+                self.refresh_open_folder_view(folder_id, cx);
                 self.rebuild_tree(cx);
                 cx.notify();
             }
             Err(e) => error!("Failed to rename folder {}: {}", folder_id, e),
+        }
+    }
+
+    /// Re-syncs the open view (tab title) for a folder after its data changed.
+    fn refresh_open_folder_view(&mut self, folder_id: Uuid, cx: &mut Context<Self>) {
+        let Some(name) = self
+            .folders
+            .iter()
+            .find(|f| f.id == folder_id)
+            .map(|f| f.name.clone())
+        else {
+            return;
+        };
+        if let Some(ix) = self
+            .open_views
+            .iter()
+            .position(|e| e.view.id(cx) == folder_id)
+        {
+            self.open_views[ix].view.set_title(name, cx);
         }
     }
 
@@ -353,6 +349,7 @@ impl ServiceState {
                     folder.description = updated_folder.description;
                     folder.updated_at = updated_folder.updated_at;
                 }
+                self.refresh_open_folder_view(folder_id, cx);
                 self.rebuild_tree(cx);
                 cx.notify();
             }
@@ -456,115 +453,113 @@ impl ServiceState {
     // === Open helpers ===
 
     pub fn open_service(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(service) = self.get_service(id).cloned() {
-            self.open_content(ContentType::Service(service), window, cx);
-        }
+        let Some(service) = self.get_service(id).cloned() else {
+            return;
+        };
+        self.open_view(id, window, cx, move |window, cx| {
+            match &service.service_type {
+                ServiceType::Http(_) => {
+                    Box::new(cx.new(|cx| HttpService::new(service, window, cx)))
+                }
+                ServiceType::Grpc(_) => placeholder(
+                    cx,
+                    service.name.clone(),
+                    "Grpc Page Coming soon...",
+                    IconName::Globe,
+                ),
+                ServiceType::WebSocket(_) => placeholder(
+                    cx,
+                    service.name.clone(),
+                    "WebSocket Page Coming soon...",
+                    IconName::Globe,
+                ),
+            }
+        });
     }
 
     pub fn open_folder_detail(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some(folder) = self.get_folder(id).cloned() {
-            if folder.folder_type == FolderType::Service {
-                self.open_content(ContentType::ServiceFolder(folder), window, cx);
-            } else {
-                self.open_content(ContentType::SchemaFolder(folder), window, cx);
-            }
-        }
+        let Some(folder) = self.get_folder(id).cloned() else {
+            return;
+        };
+        self.open_view(id, window, cx, move |_window, cx| {
+            let service_state = cx.entity();
+            Box::new(cx.new(|cx| FolderDetailPage::new(service_state, folder, cx)))
+        });
     }
 
-    // === HttpService view cache (mirrors ApplicationState.tabs) ===
+    // === Open content view cache (mirrors ApplicationState.tabs) ===
 
-    /// Returns the currently active HttpService entity (mirrors `tabs[active_idx].view`).
-    pub fn active_http_service(&self) -> Option<Entity<HttpService>> {
-        self.http_active_ix
-            .and_then(|ix| self.http_services.get(ix))
-            .map(|entry| entry.entity.clone())
+    /// The view rendered for the currently active content (mirrors `tabs[active_idx].view`).
+    pub fn active_view(&self) -> Option<AnyView> {
+        self.active_view_ix
+            .and_then(|ix| self.open_views.get(ix))
+            .map(|entry| entry.view.view())
     }
 
-    /// Looks up a cached HttpService entity by service id.
-    pub fn http_service_by_id(&self, service_id: Uuid) -> Option<&Entity<HttpService>> {
-        self.http_services
+    /// Looks up a cached view handle by content id.
+    fn view_by_id(&self, id: Uuid, cx: &App) -> Option<&dyn ContentViewHandle> {
+        self.open_views
             .iter()
-            .find(|e| e.service_id == service_id)
-            .map(|e| &e.entity)
+            .find(|e| e.view.id(cx) == id)
+            .map(|e| e.view.as_ref())
     }
 
-    /// Ensures a cached HttpService exists for the given service and makes it active.
-    /// Mirrors `ApplicationState::open_workspace` (reuse existing, else create a view).
-    pub fn ensure_http_service(
+    /// Ensures a cached view for `id` exists (building it via `factory` if absent)
+    /// and makes it active. Mirrors `ApplicationState::open_workspace`.
+    fn open_view(
         &mut self,
-        service: &Service,
+        id: Uuid,
         window: &mut Window,
         cx: &mut Context<Self>,
+        factory: impl FnOnce(&mut Window, &mut Context<Self>) -> Box<dyn ContentViewHandle>,
     ) {
-        let ServiceType::Http(config) = &service.service_type else {
-            return;
-        };
-
-        if let Some(pos) = self
-            .http_services
-            .iter()
-            .position(|e| e.service_id == service.id)
-        {
-            self.http_active_ix = Some(pos);
-            return;
+        if let Some(pos) = self.open_views.iter().position(|e| e.view.id(cx) == id) {
+            self.active_view_ix = Some(pos);
+        } else {
+            let view = factory(window, cx);
+            self.open_views.push(OpenView { view });
+            self.active_view_ix = Some(self.open_views.len() - 1);
         }
-
-        let config = config.clone();
-        let folder_id = service.folder_id;
-        let service_id = service.id;
-        let entity = cx.new(|cx| HttpService::new(service_id, config, folder_id, window, cx));
-        self.http_services.push(HttpEntry { service_id, entity });
-        self.http_active_ix = Some(self.http_services.len() - 1);
+        cx.notify();
     }
 
-    /// Removes a cached HttpService entry, fixing up the active index (mirrors `close_tab`).
-    pub fn remove_http_service(&mut self, service_id: Uuid) {
-        let Some(pos) = self
-            .http_services
-            .iter()
-            .position(|e| e.service_id == service_id)
-        else {
-            return;
-        };
-        self.http_services.remove(pos);
-
-        match self.http_active_ix {
+    /// Removes a cached view, fixing up the active index (mirrors `close_tab`).
+    fn remove_view(&mut self, pos: usize) {
+        self.open_views.remove(pos);
+        match self.active_view_ix {
             Some(ix) if ix == pos => {
-                self.http_active_ix = if self.http_services.is_empty() {
+                self.active_view_ix = if self.open_views.is_empty() {
                     None
                 } else {
-                    Some(pos.min(self.http_services.len() - 1))
+                    Some(pos.min(self.open_views.len() - 1))
                 };
             }
-            Some(ix) if ix > pos => self.http_active_ix = Some(ix - 1),
-            other => self.http_active_ix = other,
+            Some(ix) if ix > pos => self.active_view_ix = Some(ix - 1),
+            other => self.active_view_ix = other,
         }
     }
 
-    /// Checks whether a cached HttpService has unsaved changes.
-    pub fn http_service_is_modified(&self, service_id: Uuid, cx: &App) -> bool {
-        self.http_service_by_id(service_id)
-            .map(|entity| entity.read(cx).is_modified(cx))
+    /// Checks whether the cached view for a content id has unsaved changes.
+    pub fn view_is_modified(&self, id: Uuid, cx: &App) -> bool {
+        self.view_by_id(id, cx)
+            .map(|view| view.is_modified(cx))
             .unwrap_or(false)
     }
 
-    /// Saves changes for a cached HttpService.
-    pub fn save_http_service(&mut self, service_id: Uuid, cx: &mut Context<Self>) {
-        if let Some(entity) = self.http_service_by_id(service_id).cloned() {
-            entity.update(cx, |service, cx| {
-                service.save_changes_no_window(cx);
-            });
+    /// Saves changes for the cached view of a content id.
+    pub fn save_view(&mut self, id: Uuid, cx: &mut App) {
+        if let Some(ix) = self.open_views.iter().position(|e| e.view.id(cx) == id) {
+            self.open_views[ix].view.save(cx);
         }
     }
+}
 
-    /// Syncs `http_active_ix` to follow the current `active_service`.
-    fn sync_http_active_ix(&mut self) {
-        self.http_active_ix = match &self.active_service {
-            Some(ContentType::Service(service)) => self
-                .http_services
-                .iter()
-                .position(|e| e.service_id == service.id),
-            _ => None,
-        };
-    }
+/// Creates a boxed placeholder content view handle.
+fn placeholder(
+    cx: &mut Context<ServiceState>,
+    title: impl Into<SharedString>,
+    body: impl Into<SharedString>,
+    icon: IconName,
+) -> Box<dyn ContentViewHandle> {
+    Box::new(cx.new(|_| PlaceholderView::new(title, body, icon)))
 }

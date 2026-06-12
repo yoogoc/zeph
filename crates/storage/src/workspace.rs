@@ -105,8 +105,6 @@ fn row_to_workspace(row: &rusqlite::Row) -> Result<Workspace> {
         services: vec![],
         schemas: vec![],
         environments: vec![],
-        opened_services: vec![],
-        active_service: None,
         active_environment_id: None,
     })
 }

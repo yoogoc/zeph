@@ -1,8 +1,8 @@
 use gpui::{App, AppContext, Context, Entity, EventEmitter, Global, SharedString};
 use log::{error, info};
 use models::{
-    ContentType, CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig,
-    HttpDraftConfig, HttpMethod, Service, ServiceType, Workspace,
+    CreateWorkspace, Environment, EnvironmentVariable, Folder, HttpConfig, HttpDraftConfig,
+    HttpMethod, Service, ServiceType, Workspace,
 };
 use std::sync::Arc;
 use storage::{
@@ -31,16 +31,6 @@ pub enum WorkspaceEvent {
     Reload,
 }
 
-#[derive(Clone, Debug)]
-pub enum WorkspaceServiceEvent {
-    Open(Workspace, ContentType),
-    Switch {
-        workspace: Workspace,
-        old: ContentType,
-        new: Option<ContentType>,
-    },
-}
-
 pub fn init(cx: &mut App) {
     WorkspaceRegistry::set_global(cx.new(WorkspaceRegistry::new), cx);
 }
@@ -56,7 +46,6 @@ pub struct WorkspaceRegistry {
 }
 
 impl EventEmitter<WorkspaceEvent> for WorkspaceRegistry {}
-impl EventEmitter<WorkspaceServiceEvent> for WorkspaceRegistry {}
 
 impl WorkspaceRegistry {
     pub fn global(cx: &App) -> Entity<Self> {
@@ -361,37 +350,6 @@ impl WorkspaceRegistry {
         cx.emit(WorkspaceEvent::Reload);
     }
 
-    pub fn open_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.get_active_workspace_mut() {
-            if !workspace.opened_services.contains(&ct) {
-                workspace.opened_services.push(ct.clone());
-            }
-            workspace.active_service = Some(ct.clone());
-            cx.emit(WorkspaceServiceEvent::Open(workspace.clone(), ct.clone()));
-        }
-    }
-
-    pub fn close_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.get_active_workspace_mut() {
-            workspace.opened_services.retain(|id| id.ne(&ct));
-            if workspace.active_service == Some(ct.clone()) {
-                workspace.active_service = workspace.opened_services.first().cloned();
-            }
-            cx.emit(WorkspaceServiceEvent::Switch {
-                workspace: workspace.clone(),
-                old: ct.clone(),
-                new: workspace.active_service.clone(),
-            });
-        }
-    }
-
-    pub fn set_active_content(&mut self, ct: ContentType, cx: &mut Context<Self>) {
-        if let Some(workspace) = self.get_active_workspace_mut() {
-            workspace.active_service = Some(ct.clone());
-            cx.emit(WorkspaceServiceEvent::Open(workspace.clone(), ct.clone()));
-        }
-    }
-
     pub fn get_service(&self, service_id: Uuid) -> Option<&Service> {
         self.get_active_workspace()
             .and_then(|w| w.services.iter().find(|s| s.id == service_id))
@@ -400,32 +358,6 @@ impl WorkspaceRegistry {
     pub fn get_folder(&self, folder_id: Uuid) -> Option<&Folder> {
         self.get_active_workspace()
             .and_then(|w| w.folders.iter().find(|s| s.id == folder_id))
-    }
-
-    /// Helper method to update opened_services after a service rename
-    /// Updates all ContentType::Service instances in opened_services that match the service_id
-    /// Also updates active_service if it matches the renamed service
-    /// Implements Requirements 1.2, 2.1, 2.3
-    fn update_opened_services_after_rename(
-        workspace: &mut Workspace,
-        service_id: Uuid,
-        updated_service: &Service,
-    ) {
-        // Update all matching services in opened_services
-        for content in workspace.opened_services.iter_mut() {
-            if let ContentType::Service(service) = content {
-                if service.id == service_id {
-                    *content = ContentType::Service(updated_service.clone());
-                }
-            }
-        }
-
-        // Update active_service if it matches the renamed service
-        if let Some(ContentType::Service(active)) = &workspace.active_service {
-            if active.id == service_id {
-                workspace.active_service = Some(ContentType::Service(updated_service.clone()));
-            }
-        }
     }
 
     /// Rename a service
@@ -454,22 +386,6 @@ impl WorkspaceRegistry {
                         {
                             service.name = new_name.clone();
                             service.updated_at = chrono::Utc::now().timestamp();
-                        }
-
-                        // Update opened_services with the renamed service
-                        // This ensures tab titles reflect the new name immediately
-                        // Clone the updated service to avoid borrow checker issues
-                        if let Some(updated_service_ref) = workspace
-                            .services
-                            .iter()
-                            .find(|s| s.id == service_id)
-                            .cloned()
-                        {
-                            Self::update_opened_services_after_rename(
-                                workspace,
-                                service_id,
-                                &updated_service_ref,
-                            );
                         }
                     }
 
