@@ -139,7 +139,7 @@ impl WorkspaceSidebar {
     //         return;
     //     };
     //     let current_name = service.name.clone();
-    //     drop(ss);
+
     //
     //     let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
     //     input.update(cx, |state, cx| {
@@ -189,7 +189,6 @@ impl WorkspaceSidebar {
     //         return;
     //     };
     //     let current_name = folder.name.clone();
-    //     drop(ss);
     //
     //     let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
     //     input.update(cx, |state, cx| {
@@ -292,6 +291,8 @@ impl Render for WorkspaceSidebar {
                                     let entry_item = entry.item().clone();
                                     let enter_entity = entity.clone();
                                     let enter_id = entry_item.id.clone();
+                                    let leave_entity = entity.clone();
+                                    let leave_id = entry_item.id.clone();
                                     let click_entity = entity.clone();
                                     let click_item = entry_item.clone();
                                     item(

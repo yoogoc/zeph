@@ -6,7 +6,6 @@ use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
 
-
 pub struct WorkspaceContent {
     service_state: Entity<ServiceState>,
     service_tabs: Entity<ServiceTabs>,

@@ -95,8 +95,6 @@ impl Render for EnvironmentSelector {
             .map(|e| e.name.to_string())
             .unwrap_or_else(|| t!("env.not_found").to_string());
 
-        drop(ss);
-
         let view = cx.entity();
         let service_state = self.service_state.clone();
 

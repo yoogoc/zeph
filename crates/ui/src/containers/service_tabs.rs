@@ -7,19 +7,11 @@ use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{IconName, Sizable};
 use models::ContentType;
 
-pub enum ServiceTabsEvent {
-    Select(ContentType),
-    Close(ContentType),
-    Rename(ContentType, SharedString),
-}
-
 pub struct ServiceTabs {
     service_state: Entity<ServiceState>,
     editing_tab: Option<ContentType>,
     edit_input: Option<Entity<InputState>>,
 }
-
-impl EventEmitter<ServiceTabsEvent> for ServiceTabs {}
 
 impl ServiceTabs {
     // Re-renders automatically when `service_state` changes: GPUI tracks the
@@ -56,7 +48,13 @@ impl ServiceTabs {
             let new_name = input.read(cx).value();
             let trimmed = new_name.trim();
             if !trimmed.is_empty() && trimmed.len() <= 255 {
-                cx.emit(ServiceTabsEvent::Rename(content_type, new_name.clone()));
+                if let ContentType::Service(service) = &content_type {
+                    let service_id = service.id;
+                    let new_name = new_name.clone();
+                    self.service_state.update(cx, |s, cx| {
+                        s.rename_service(service_id, new_name, cx);
+                    });
+                }
             }
             self.editing_tab = None;
             self.edit_input = None;
@@ -86,11 +84,25 @@ impl Render for ServiceTabs {
             .and_then(|active| service_ids.iter().position(|s| s.eq(active)))
             .unwrap_or(0);
 
+        let close_button = |ct: ContentType| {
+            Button::new(format!("close_{}", ct.id()))
+                .xsmall()
+                .rounded(ButtonRounded::Large)
+                .icon(IconName::Close)
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    let ct = ct.clone();
+                    this.service_state.update(cx, |s, cx| {
+                        s.close_content(ct, cx);
+                    });
+                    cx.stop_propagation();
+                }))
+        };
+
         let tabs: Vec<_> = ss
             .opened_services
             .iter()
             .enumerate()
-            .map(|(index, ct)| {
+            .map(|(_, ct)| {
                 let ct = ct.clone();
                 let is_editing = self
                     .editing_tab
@@ -99,7 +111,7 @@ impl Render for ServiceTabs {
 
                 if is_editing {
                     if let Some(input) = &self.edit_input {
-                        Tab::new()
+                        return Tab::new()
                             .px_1()
                             .prefix(cal_icon(&ct))
                             .child(
@@ -115,52 +127,16 @@ impl Render for ServiceTabs {
                                     ))
                                     .child(Input::new(input).w(px(150.0))),
                             )
-                            .suffix(
-                                Button::new(format!("close_{}", ct.id()))
-                                    .xsmall()
-                                    .rounded(ButtonRounded::Large)
-                                    .icon(IconName::Close)
-                                    .on_click(cx.listener(move |_this, _, _, cx| {
-                                        cx.emit(ServiceTabsEvent::Close(ct.clone()));
-                                        cx.stop_propagation();
-                                    })),
-                            )
-                    } else {
-                        Tab::new()
-                            .px_1()
-                            .label(ct.name())
-                            .prefix(cal_icon(&ct))
-                            .suffix(
-                                Button::new(format!("close_{}", ct.id()))
-                                    .xsmall()
-                                    .rounded(ButtonRounded::Large)
-                                    .icon(IconName::Close)
-                                    .on_click(cx.listener(move |_this, _, _, cx| {
-                                        cx.emit(ServiceTabsEvent::Close(ct.clone()));
-                                        cx.stop_propagation();
-                                    })),
-                            )
+                            .suffix(close_button(ct));
                     }
-                } else {
-                    Tab::new()
-                        .px_1()
-                        .label(ct.name())
-                        .prefix(cal_icon(&ct))
-                        .suffix(
-                            Button::new(format!("close_{}", ct.id()))
-                                .xsmall()
-                                .rounded(ButtonRounded::Large)
-                                .icon(IconName::Close)
-                                .on_click(cx.listener(move |_this, _, _, cx| {
-                                    cx.emit(ServiceTabsEvent::Close(ct.clone()));
-                                    cx.stop_propagation();
-                                })),
-                        )
                 }
+                Tab::new()
+                    .px_1()
+                    .label(ct.name())
+                    .prefix(cal_icon(&ct))
+                    .suffix(close_button(ct))
             })
             .collect();
-
-        drop(ss);
 
         let service_state = self.service_state.clone();
 
@@ -182,7 +158,10 @@ impl Render for ServiceTabs {
                             if is_already_selected && this.editing_tab.is_none() {
                                 this.start_editing(ct.clone(), window, cx);
                             } else {
-                                cx.emit(ServiceTabsEvent::Select(ct.clone()));
+                                let ct = ct.clone();
+                                this.service_state.update(cx, |s, cx| {
+                                    s.set_active_content(ct, cx);
+                                });
                             }
                         }
                     }))
