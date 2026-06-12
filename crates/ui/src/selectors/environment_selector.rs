@@ -1,54 +1,24 @@
-use crate::state::ServiceState;
+use crate::state::EnvironmentState;
 use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::input::{Input, InputState};
 use gpui_component::menu::{DropdownMenu, PopupMenuItem};
 use gpui_component::{IconName, StyledExt, WindowExt};
 
-use crate::dialogs::{EnvironmentManager, EnvironmentManagerEvent};
+use crate::dialogs::EnvironmentManager;
 
 pub struct EnvironmentSelector {
-    service_state: Entity<ServiceState>,
+    env_state: Entity<EnvironmentState>,
 }
 
 impl EnvironmentSelector {
-    pub fn new(service_state: Entity<ServiceState>) -> Self {
-        Self { service_state }
+    pub fn new(env_state: Entity<EnvironmentState>) -> Self {
+        Self { env_state }
     }
 
     fn open_manage_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let environments = self.service_state.read(cx).environments.clone();
-
-        let manager = cx.new(|_| EnvironmentManager::new(environments));
-
-        let service_state = self.service_state.clone();
-        cx.subscribe(
-            &manager,
-            move |_this, _, event: &EnvironmentManagerEvent, cx| match event {
-                EnvironmentManagerEvent::Create(name) => {
-                    service_state.update(cx, |s, cx| s.create_environment(name.clone(), cx));
-                }
-                EnvironmentManagerEvent::Update(env) => {
-                    service_state.update(cx, |s, cx| s.update_environment(env.clone(), cx));
-                }
-                EnvironmentManagerEvent::Delete(id) => {
-                    service_state.update(cx, |s, cx| s.delete_environment(*id, cx));
-                }
-                EnvironmentManagerEvent::AddVariable(env_id, var) => {
-                    service_state.update(cx, |s, cx| {
-                        s.add_environment_variable(*env_id, var.clone(), cx)
-                    });
-                }
-                EnvironmentManagerEvent::UpdateVariable(var) => {
-                    service_state
-                        .update(cx, |s, cx| s.update_environment_variable(var.clone(), cx));
-                }
-                EnvironmentManagerEvent::DeleteVariable(id) => {
-                    service_state.update(cx, |s, cx| s.delete_environment_variable(*id, cx));
-                }
-            },
-        )
-        .detach();
+        let env_state = self.env_state.clone();
+        let manager = cx.new(|cx| EnvironmentManager::new(env_state, cx));
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             dialog
@@ -60,11 +30,11 @@ impl EnvironmentSelector {
 
     fn open_create_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
-        let service_state = self.service_state.clone();
+        let env_state = self.env_state.clone();
 
         window.open_dialog(cx, move |dialog, _window, _cx| {
             let input_clone = input.clone();
-            let ss = service_state.clone();
+            let es = env_state.clone();
 
             dialog
                 .title(shared_t!("env.create"))
@@ -73,7 +43,7 @@ impl EnvironmentSelector {
                 .on_ok(move |_, window, cx| {
                     let name = input_clone.read(cx).value().to_string();
                     if !name.trim().is_empty() {
-                        ss.update(cx, |s, cx| s.create_environment(name, cx));
+                        es.update(cx, |s, cx| s.create_environment(name, cx));
                     }
                     window.close_dialog(cx);
                     true
@@ -84,10 +54,10 @@ impl EnvironmentSelector {
 
 impl Render for EnvironmentSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let ss = self.service_state.read(cx);
+        let es = self.env_state.read(cx);
 
-        let environments = ss.environments.clone();
-        let active_env = ss
+        let environments = es.environments.clone();
+        let active_env = es
             .active_environment_id
             .and_then(|id| environments.iter().find(|e| e.id == id));
 
@@ -96,7 +66,7 @@ impl Render for EnvironmentSelector {
             .unwrap_or_else(|| t!("env.not_found").to_string());
 
         let view = cx.entity();
-        let service_state = self.service_state.clone();
+        let env_state = self.env_state.clone();
 
         div()
             .h_flex()
@@ -107,17 +77,17 @@ impl Render for EnvironmentSelector {
                     .dropdown_menu({
                         let view = view.clone();
                         let envs = environments.clone();
-                        let ss = service_state.clone();
+                        let es = env_state.clone();
                         move |menu, window, _cx| {
                             let mut m = menu;
                             for env in &envs {
                                 let env_id = env.id;
                                 let name = env.name.to_string();
-                                let ss2 = ss.clone();
+                                let es2 = es.clone();
                                 m = m.item(PopupMenuItem::new(name).on_click(window.listener_for(
                                     &view,
                                     move |_this, _, _, cx| {
-                                        ss2.update(cx, |s, cx| {
+                                        es2.update(cx, |s, cx| {
                                             s.set_active_environment(env_id, cx)
                                         });
                                     },

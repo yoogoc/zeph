@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use crate::state::EnvironmentState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -8,35 +9,24 @@ use gpui_component::{IconName, StyledExt, WindowExt};
 use models::{Environment, EnvironmentVariable};
 use uuid::Uuid;
 
-pub enum EnvironmentManagerEvent {
-    Create(String),
-    Update(Environment),
-    Delete(Uuid),
-    AddVariable(Uuid, EnvironmentVariable),
-    UpdateVariable(EnvironmentVariable),
-    DeleteVariable(Uuid),
-}
-
 struct VarInputs {
     name: Entity<InputState>,
     value: Entity<InputState>,
 }
 
 pub struct EnvironmentManager {
-    environments: Vec<Environment>,
+    env_state: Entity<EnvironmentState>,
     selected_env_id: Option<Uuid>,
     base_url_input: Option<Entity<InputState>>,
     new_var_name: Option<Entity<InputState>>,
     var_inputs: HashMap<Uuid, VarInputs>,
 }
 
-impl EventEmitter<EnvironmentManagerEvent> for EnvironmentManager {}
-
 impl EnvironmentManager {
-    pub fn new(environments: Vec<Environment>) -> Self {
-        let selected = environments.first().map(|e| e.id);
+    pub fn new(env_state: Entity<EnvironmentState>, cx: &mut Context<Self>) -> Self {
+        let selected = env_state.read(cx).environments.first().map(|e| e.id);
         Self {
-            environments,
+            env_state,
             selected_env_id: selected,
             base_url_input: None,
             new_var_name: None,
@@ -44,13 +34,20 @@ impl EnvironmentManager {
         }
     }
 
-    fn selected_env(&self) -> Option<&Environment> {
-        self.selected_env_id
-            .and_then(|id| self.environments.iter().find(|e| e.id == id))
+    /// Returns a clone of the currently selected environment.
+    fn selected_env(&self, cx: &App) -> Option<Environment> {
+        let id = self.selected_env_id?;
+        self.env_state
+            .read(cx)
+            .environments
+            .iter()
+            .find(|e| e.id == id)
+            .cloned()
     }
 
     fn render_env_list(&mut self, cx: &mut Context<Self>) -> impl IntoElement {
         let selected_id = self.selected_env_id;
+        let environments = self.env_state.read(cx).environments.clone();
 
         div()
             .w(px(200.0))
@@ -69,36 +66,40 @@ impl EnvironmentManager {
                         })),
                 ),
             )
-            .child(div().flex_1().overflow_y_hidden().v_flex().children(
-                self.environments.iter().map(|env| {
-                    let env_id = env.id;
-                    let is_selected = selected_id == Some(env_id);
+            .child(
+                div()
+                    .flex_1()
+                    .overflow_y_hidden()
+                    .v_flex()
+                    .children(environments.iter().map(|env| {
+                        let env_id = env.id;
+                        let is_selected = selected_id == Some(env_id);
 
-                    div()
-                        .id(format!("env_{}", env_id))
-                        .px_3()
-                        .py_2()
-                        .cursor_pointer()
-                        .when(is_selected, |el| el.bg(rgb(0xe3f2fd)))
-                        .hover(|el| el.bg(rgb(0xf5f5f5)))
-                        .child(
-                            div()
-                                .text_sm()
-                                .font_weight(if is_selected {
-                                    FontWeight::SEMIBOLD
-                                } else {
-                                    FontWeight::NORMAL
-                                })
-                                .child(env.name.clone()),
-                        )
-                        .on_click(cx.listener(move |this, _, _, cx| {
-                            this.selected_env_id = Some(env_id);
-                            this.base_url_input = None;
-                            this.var_inputs.clear();
-                            cx.notify();
-                        }))
-                }),
-            ))
+                        div()
+                            .id(format!("env_{}", env_id))
+                            .px_3()
+                            .py_2()
+                            .cursor_pointer()
+                            .when(is_selected, |el| el.bg(rgb(0xe3f2fd)))
+                            .hover(|el| el.bg(rgb(0xf5f5f5)))
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(if is_selected {
+                                        FontWeight::SEMIBOLD
+                                    } else {
+                                        FontWeight::NORMAL
+                                    })
+                                    .child(env.name.clone()),
+                            )
+                            .on_click(cx.listener(move |this, _, _, cx| {
+                                this.selected_env_id = Some(env_id);
+                                this.base_url_input = None;
+                                this.var_inputs.clear();
+                                cx.notify();
+                            }))
+                    })),
+            )
     }
 
     fn render_env_detail(
@@ -106,7 +107,7 @@ impl EnvironmentManager {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> impl IntoElement {
-        let Some(env) = self.selected_env().cloned() else {
+        let Some(env) = self.selected_env(cx) else {
             return div()
                 .flex_1()
                 .h_full()
@@ -174,9 +175,10 @@ impl EnvironmentManager {
                             .ghost()
                             .icon(IconName::Delete)
                             .on_click(cx.listener(move |this, _, _, cx| {
-                                cx.emit(EnvironmentManagerEvent::Delete(env_id));
-                                this.environments.retain(|e| e.id != env_id);
-                                this.selected_env_id = this.environments.first().map(|e| e.id);
+                                this.env_state
+                                    .update(cx, |s, cx| s.delete_environment(env_id, cx));
+                                this.selected_env_id =
+                                    this.env_state.read(cx).environments.first().map(|e| e.id);
                                 this.base_url_input = None;
                                 this.var_inputs.clear();
                                 cx.notify();
@@ -210,18 +212,26 @@ impl EnvironmentManager {
                                             .label(shared_t!("save"))
                                             .primary()
                                             .on_click(cx.listener(move |this, _, _, cx| {
-                                                if let Some(input) = &this.base_url_input {
-                                                    let url = input.read(cx).value();
-                                                    if let Some(e) = this
-                                                        .environments
-                                                        .iter_mut()
-                                                        .find(|e| e.id == env_id)
-                                                    {
+                                                let Some(input) = this.base_url_input.clone()
+                                                else {
+                                                    return;
+                                                };
+                                                let url = input.read(cx).value();
+                                                let updated = this
+                                                    .env_state
+                                                    .read(cx)
+                                                    .environments
+                                                    .iter()
+                                                    .find(|e| e.id == env_id)
+                                                    .map(|e| {
+                                                        let mut e = e.clone();
                                                         e.base_url = url;
-                                                        cx.emit(EnvironmentManagerEvent::Update(
-                                                            e.clone(),
-                                                        ));
-                                                    }
+                                                        e
+                                                    });
+                                                if let Some(updated) = updated {
+                                                    this.env_state.update(cx, |s, cx| {
+                                                        s.update_environment(updated, cx)
+                                                    });
                                                 }
                                             })),
                                     ),
@@ -247,31 +257,22 @@ impl EnvironmentManager {
                                             .icon(IconName::Plus)
                                             .label(shared_t!("common.add"))
                                             .on_click(cx.listener(move |this, _, window, cx| {
-                                                if let Some(input) = &this.new_var_name {
-                                                    let name = input.read(cx).value().to_string();
-                                                    if !name.trim().is_empty() {
-                                                        let var =
-                                                            EnvironmentVariable::new(env_id, &name);
-                                                        cx.emit(
-                                                            EnvironmentManagerEvent::AddVariable(
-                                                                env_id,
-                                                                var.clone(),
-                                                            ),
-                                                        );
-                                                        if let Some(e) = this
-                                                            .environments
-                                                            .iter_mut()
-                                                            .find(|e| e.id == env_id)
-                                                        {
-                                                            e.variables.push(var);
-                                                        }
-                                                        input.update(cx, |s, cx| {
-                                                            s.set_value("", window, cx)
-                                                        });
-                                                        this.var_inputs.clear();
-                                                        cx.notify();
-                                                    }
+                                                let Some(input) = this.new_var_name.clone() else {
+                                                    return;
+                                                };
+                                                let name = input.read(cx).value().to_string();
+                                                if name.trim().is_empty() {
+                                                    return;
                                                 }
+                                                let var = EnvironmentVariable::new(env_id, &name);
+                                                this.env_state.update(cx, |s, cx| {
+                                                    s.add_environment_variable(env_id, var, cx)
+                                                });
+                                                input.update(cx, |s, cx| {
+                                                    s.set_value("", window, cx)
+                                                });
+                                                this.var_inputs.clear();
+                                                cx.notify();
                                             })),
                                     ),
                             )
@@ -384,17 +385,9 @@ impl EnvironmentManager {
                                             let mut updated = var_clone.clone();
                                             updated.name = name;
                                             updated.local_value = Some(value);
-                                            cx.emit(EnvironmentManagerEvent::UpdateVariable(
-                                                updated.clone(),
-                                            ));
-                                            for e in &mut this.environments {
-                                                if let Some(v) =
-                                                    e.variables.iter_mut().find(|v| v.id == var_id)
-                                                {
-                                                    *v = updated.clone();
-                                                }
-                                            }
-                                            cx.notify();
+                                            this.env_state.update(cx, |s, cx| {
+                                                s.update_environment_variable(updated, cx)
+                                            });
                                         }
                                     })),
                             )
@@ -404,10 +397,9 @@ impl EnvironmentManager {
                                     .compact()
                                     .icon(IconName::Delete)
                                     .on_click(cx.listener(move |this, _, _, cx| {
-                                        cx.emit(EnvironmentManagerEvent::DeleteVariable(var_id));
-                                        for e in &mut this.environments {
-                                            e.variables.retain(|v| v.id != var_id);
-                                        }
+                                        this.env_state.update(cx, |s, cx| {
+                                            s.delete_environment_variable(var_id, cx)
+                                        });
                                         this.var_inputs.remove(&var_id);
                                         cx.notify();
                                     })),
@@ -434,15 +426,16 @@ impl EnvironmentManager {
                     if !name.trim().is_empty() {
                         if let Some(this) = this_clone.upgrade() {
                             this.update(cx, |this, cx| {
-                                cx.emit(EnvironmentManagerEvent::Create(name.clone()));
-                                let ws_id = this
+                                this.env_state
+                                    .update(cx, |s, cx| s.create_environment(name.clone(), cx));
+                                this.selected_env_id = this
+                                    .env_state
+                                    .read(cx)
                                     .environments
-                                    .first()
-                                    .map(|e| e.workspace_id)
-                                    .unwrap_or(Uuid::new_v4());
-                                let new_env = Environment::new(ws_id, &name);
-                                this.selected_env_id = Some(new_env.id);
-                                this.environments.push(new_env);
+                                    .iter()
+                                    .rev()
+                                    .find(|e| e.name == name)
+                                    .map(|e| e.id);
                                 this.base_url_input = None;
                                 this.var_inputs.clear();
                                 cx.notify();

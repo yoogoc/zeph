@@ -1,6 +1,6 @@
 use crate::containers::{ServiceContent, ServiceTabs};
 use crate::selectors::EnvironmentSelector;
-use crate::state::ServiceState;
+use crate::state::{EnvironmentState, ServiceState};
 use crate::ws_sidebar::WorkspaceSidebar as WsSidebar;
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
@@ -16,6 +16,7 @@ pub struct WorkspaceContent {
 impl WorkspaceContent {
     pub fn new(
         service_state: Entity<ServiceState>,
+        env_state: Entity<EnvironmentState>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -23,7 +24,7 @@ impl WorkspaceContent {
             cx.new(|cx| WsSidebar::new(service_state.clone(), |_| div().into_any_element(), cx));
 
         let service_tabs = cx.new(|_| ServiceTabs::new(service_state.clone()));
-        let env_selector = cx.new(|_| EnvironmentSelector::new(service_state.clone()));
+        let env_selector = cx.new(|_| EnvironmentSelector::new(env_state));
         let service_content = cx.new(|_| ServiceContent::new(service_state.clone()));
 
         Self {
