@@ -40,9 +40,6 @@ pub fn item(
                             Button::new(format!("action_{}", id))
                                 .icon(IconName::Menu)
                                 .small()
-                                .on_mouse_down(MouseButton::Left, move |_, _window, cx| {
-                                    cx.stop_propagation();
-                                })
                                 .dropdown_menu({
                                     let item = entry.item().clone();
                                     let service_state = service_state.clone();

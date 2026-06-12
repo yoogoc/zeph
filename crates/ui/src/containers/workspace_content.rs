@@ -5,10 +5,9 @@ use crate::ws_sidebar::WorkspaceSidebar as WsSidebar;
 use gpui::*;
 use gpui_component::resizable::{h_resizable, resizable_panel};
 use gpui_component::{h_flex, v_flex};
-use uuid::Uuid;
+
 
 pub struct WorkspaceContent {
-    workspace_id: Uuid,
     service_state: Entity<ServiceState>,
     service_tabs: Entity<ServiceTabs>,
     sidebar: Entity<WsSidebar>,
@@ -18,7 +17,6 @@ pub struct WorkspaceContent {
 
 impl WorkspaceContent {
     pub fn new(
-        workspace_id: Uuid,
         service_state: Entity<ServiceState>,
         _window: &mut Window,
         cx: &mut Context<Self>,
@@ -31,7 +29,6 @@ impl WorkspaceContent {
         let service_content = cx.new(|cx| ServiceContent::new(service_state.clone(), cx));
 
         Self {
-            workspace_id,
             service_state,
             service_tabs,
             sidebar,
