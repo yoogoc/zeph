@@ -1,4 +1,5 @@
 mod http_service;
+mod http_state;
 mod method_selector;
 pub mod param_utils;
 mod request_body;
@@ -10,3 +11,4 @@ mod response_panel;
 pub mod url_utils;
 
 pub use http_service::*;
+pub use http_state::HttpState;

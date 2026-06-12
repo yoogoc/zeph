@@ -33,21 +33,16 @@ impl BodyType {
     }
 }
 
-#[allow(unused)]
-pub enum RequestBodyEvent {
-    BodyTypeChanged(BodyType),
-    BodyChanged(String),
-}
+use super::http_state::HttpState;
 
 pub struct RequestBody {
     body_type: BodyType,
     editor: Entity<InputState>,
+    http_state: Entity<HttpState>,
 }
 
-impl EventEmitter<RequestBodyEvent> for RequestBody {}
-
 impl RequestBody {
-    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(http_state: Entity<HttpState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let editor = cx.new(|cx| {
             InputState::new(window, cx)
                 .code_editor("json")
@@ -61,6 +56,7 @@ impl RequestBody {
         Self {
             body_type: BodyType::None,
             editor,
+            http_state,
         }
     }
 
@@ -106,7 +102,7 @@ impl Render for RequestBody {
                     .child(Tab::new().label("XML"))
                     .child(Tab::new().label("Text"))
                     .selected_index(body_type as usize)
-                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                    .on_click(cx.listener(|this, ix: &usize, window, cx| {
                         let new_type = match *ix {
                             1 => BodyType::Json,
                             2 => BodyType::Xml,
@@ -114,7 +110,8 @@ impl Render for RequestBody {
                             _ => BodyType::None,
                         };
                         this.body_type = new_type;
-                        cx.emit(RequestBodyEvent::BodyTypeChanged(new_type));
+                        this.http_state
+                            .update(cx, |s, cx| s.on_body_type_changed(new_type, window, cx));
                         cx.notify();
                     })),
             )

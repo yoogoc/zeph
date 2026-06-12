@@ -1,3 +1,4 @@
+use super::http_state::HttpState;
 use gpui::*;
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::IndexPath;
@@ -16,18 +17,17 @@ impl SelectItem for MethodItem {
     }
 }
 
-pub enum MethodSelectorEvent {
-    Changed(HttpMethod),
-}
-
 pub struct MethodSelector {
     select: Entity<SelectState<Vec<MethodItem>>>,
 }
 
-impl EventEmitter<MethodSelectorEvent> for MethodSelector {}
-
 impl MethodSelector {
-    pub fn new(method: HttpMethod, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        method: HttpMethod,
+        http_state: Entity<HttpState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let items = vec![
             MethodItem(HttpMethod::Get),
             MethodItem(HttpMethod::Post),
@@ -42,9 +42,9 @@ impl MethodSelector {
 
         cx.subscribe(
             &select,
-            |_this, _, ev: &SelectEvent<Vec<MethodItem>>, cx| {
-                if let SelectEvent::Confirm(Some(method)) = ev {
-                    cx.emit(MethodSelectorEvent::Changed(*method));
+            move |_this, _, ev: &SelectEvent<Vec<MethodItem>>, cx| {
+                if let SelectEvent::Confirm(Some(_)) = ev {
+                    http_state.update(cx, |s, cx| s.on_input_changed(cx));
                 }
             },
         )
