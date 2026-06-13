@@ -4,7 +4,5 @@
 //! interaction components.
 
 mod environment_selector;
-mod method_selector;
 
 pub use environment_selector::*;
-pub use method_selector::*;

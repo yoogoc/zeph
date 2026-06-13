@@ -1,6 +1,7 @@
 use super::http_state::{HttpState, RequestTab};
 use super::param_utils::detect_path_params;
 use super::url_utils;
+use crate::http_service::method_selector::MethodSelector;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -11,11 +12,18 @@ use gpui_component::{h_flex, v_flex, Disableable, IconName};
 /// Pure-render request panel: reads `HttpState` and drives it via `update`.
 pub struct RequestPanel {
     http_state: Entity<HttpState>,
+    method_selector: Entity<MethodSelector>,
 }
 
 impl RequestPanel {
-    pub fn new(http_state: Entity<HttpState>) -> Self {
-        Self { http_state }
+    pub fn new(http_state: Entity<HttpState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let hs = http_state.clone();
+        let method_selector = cx.new(|cx| MethodSelector::new(hs, window, cx));
+
+        Self {
+            http_state,
+            method_selector,
+        }
     }
 }
 
@@ -27,7 +35,7 @@ impl Render for RequestPanel {
         let use_base_url = state.use_base_url;
         let is_modified = state.is_modified(cx);
         let url = state.url.clone();
-        let method_selector = state.method_selector.clone();
+
         let body_panel = state.body_panel.clone();
         let headers_panel = state.headers_panel.clone();
         let query_params_panel = state.query_params_panel.clone();
@@ -65,7 +73,7 @@ impl Render for RequestPanel {
                             .border_color(rgb(0xdee2e6))
                             .rounded_md()
                             .text_sm()
-                            .child(method_selector)
+                            .child(self.method_selector.clone())
                             .when(show_final_url_preview, |el| {
                                 let base_url_display = base_url.trim_end_matches('/').to_string();
                                 el.child(

@@ -2,7 +2,9 @@ use super::http_state::HttpState;
 use gpui::*;
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::IndexPath;
-use models::HttpMethod;
+use models::{HttpConfig, HttpMethod};
+use std::sync::LazyLock;
+use smallvec::{smallvec, SmallVec};
 
 #[derive(Clone)]
 struct MethodItem(HttpMethod);
@@ -19,46 +21,46 @@ impl SelectItem for MethodItem {
 
 pub struct MethodSelector {
     select: Entity<SelectState<Vec<MethodItem>>>,
+
+    _subscriptions: SmallVec<[Subscription; 1]>,
 }
 
-impl MethodSelector {
-    pub fn new(
-        method: HttpMethod,
-        http_state: Entity<HttpState>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
-        let items = vec![
-            MethodItem(HttpMethod::Get),
-            MethodItem(HttpMethod::Post),
-            MethodItem(HttpMethod::Put),
-            MethodItem(HttpMethod::Delete),
-            MethodItem(HttpMethod::Patch),
-            MethodItem(HttpMethod::Head),
-            MethodItem(HttpMethod::Options),
-        ];
-        let idx = items.iter().position(|i| i.0 == method).map(IndexPath::new);
-        let select = cx.new(|cx| SelectState::new(items, idx, window, cx));
+static METHODS: LazyLock<Vec<MethodItem>> = LazyLock::new(|| {
+    vec![
+        MethodItem(HttpMethod::Get),
+        MethodItem(HttpMethod::Post),
+        MethodItem(HttpMethod::Put),
+        MethodItem(HttpMethod::Delete),
+        MethodItem(HttpMethod::Patch),
+        MethodItem(HttpMethod::Head),
+        MethodItem(HttpMethod::Options),
+    ]
+});
 
-        cx.subscribe(
+impl MethodSelector {
+    pub fn new(http_state: Entity<HttpState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let config = match &http_state.read(cx).service.service_type {
+            models::ServiceType::Http(config) => config.clone(),
+            _ => HttpConfig::default(),
+        };
+
+        let idx = METHODS
+            .iter()
+            .position(|i| i.0 == config.method)
+            .map(IndexPath::new);
+        let select = cx.new(|cx| SelectState::new(METHODS.clone(), idx, window, cx));
+
+        let sub = cx.subscribe(
             &select,
             move |_this, _, ev: &SelectEvent<Vec<MethodItem>>, cx| {
-                if let SelectEvent::Confirm(Some(_)) = ev {
-                    http_state.update(cx, |s, cx| s.on_input_changed(cx));
+                if let SelectEvent::Confirm(Some(method)) = ev {
+                    let method = *method;
+                    http_state.update(cx, |s, cx| s.set_method(method, cx));
                 }
             },
-        )
-        .detach();
+        );
 
-        Self { select }
-    }
-
-    pub fn method(&self, cx: &App) -> HttpMethod {
-        self.select
-            .read(cx)
-            .selected_value()
-            .copied()
-            .unwrap_or(HttpMethod::Get)
+        Self { select, _subscriptions: smallvec![sub]}
     }
 }
 

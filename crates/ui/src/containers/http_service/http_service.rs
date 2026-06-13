@@ -29,7 +29,7 @@ impl HttpService {
         cx: &mut Context<Self>,
     ) -> Self {
         let http_state = cx.new(|cx| HttpState::new(service.clone(), service_state, window, cx));
-        let request_panel = cx.new(|_| RequestPanel::new(http_state.clone()));
+        let request_panel = cx.new(|cx| RequestPanel::new(http_state.clone(), window, cx));
 
         Self {
             service,

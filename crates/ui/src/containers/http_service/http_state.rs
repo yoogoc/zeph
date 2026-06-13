@@ -5,7 +5,6 @@
 //! `RequestPanel`, and the leaf panels) reads this state and drives it via
 //! `http_state.update(...)` — no per-component event types are needed.
 
-use super::method_selector::MethodSelector;
 use super::param_utils::{build_url_with_query_params, merge_query_params, substitute_path_params};
 use super::request_body::{BodyType, RequestBody};
 use super::request_headers::RequestHeaders;
@@ -40,7 +39,6 @@ pub struct HttpState {
 
     // Request UI sub-panels
     pub url: Entity<InputState>,
-    pub method_selector: Entity<MethodSelector>,
     pub body_panel: Entity<RequestBody>,
     pub headers_panel: Entity<RequestHeaders>,
     pub query_params_panel: Entity<RequestQueryParams>,
@@ -56,6 +54,8 @@ pub struct HttpState {
     pub active_tab: RequestTab,
     pub is_loading: bool,
     pub use_base_url: bool,
+    /// Current HTTP method (mirrors the method selector's selection).
+    method: HttpMethod,
 
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
@@ -123,8 +123,6 @@ impl HttpState {
             .unwrap_or_default();
 
         let http_state = cx.entity();
-        let method_selector =
-            cx.new(|cx| MethodSelector::new(config.method, http_state.clone(), window, cx));
         let body_panel = cx.new(|cx| RequestBody::new(http_state.clone(), window, cx));
         let headers_panel = cx.new(|cx| RequestHeaders::new(Vec::new(), window, cx));
         let query_params_panel = cx.new(|cx| {
@@ -162,7 +160,6 @@ impl HttpState {
             service_state,
             draft,
             url,
-            method_selector,
             body_panel,
             headers_panel,
             query_params_panel,
@@ -174,14 +171,21 @@ impl HttpState {
             active_tab,
             is_loading: false,
             use_base_url,
+            method: config.method,
             _subscriptions: smallvec![url_subscription],
         }
     }
 
     // === Sub-panel accessors ===
 
-    pub fn method(&self, cx: &App) -> HttpMethod {
-        self.method_selector.read(cx).method(cx)
+    pub fn method(&self) -> HttpMethod {
+        self.method
+    }
+
+    /// Updates the current method (called by the method selector) and refreshes the draft.
+    pub fn set_method(&mut self, method: HttpMethod, cx: &mut Context<Self>) {
+        self.method = method;
+        self.update_draft_from_ui(cx);
     }
 
     pub fn headers(&self, cx: &App) -> Vec<Header> {
@@ -242,7 +246,7 @@ impl HttpState {
 
     fn collect_current_draft_config(&self, cx: &Context<Self>) -> HttpDraftConfig {
         let path = self.url.read(cx).value().to_string().into();
-        let method = self.method(cx);
+        let method = self.method();
         let headers = self.headers(cx);
         let query_params = self.query_params(cx);
         let path_params = self.path_params(cx);
@@ -552,7 +556,7 @@ impl HttpState {
             .update(cx, |state, cx| state.set_value("", window, cx));
 
         let url = self.final_url(cx);
-        let method = self.method(cx);
+        let method = self.method();
         let headers = self.resolve_final_headers(cx);
         let body = self.body(cx);
 
