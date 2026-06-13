@@ -89,6 +89,13 @@ impl EnvironmentState {
             .and_then(|id| self.environments.iter().find(|e| e.id == id))
     }
 
+    /// The active environment's base URL, or empty if none.
+    pub fn active_base_url(&self) -> SharedString {
+        self.get_active_environment()
+            .map(|e| e.base_url.clone())
+            .unwrap_or_default()
+    }
+
     // === Environment Variable Operations ===
 
     pub fn add_environment_variable(

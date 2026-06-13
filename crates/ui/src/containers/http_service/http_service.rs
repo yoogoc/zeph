@@ -22,8 +22,13 @@ pub struct HttpService {
 }
 
 impl HttpService {
-    pub fn new(service: models::Service, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let http_state = cx.new(|cx| HttpState::new(service.clone(), window, cx));
+    pub fn new(
+        service: models::Service,
+        service_state: Entity<crate::state::ServiceState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let http_state = cx.new(|cx| HttpState::new(service.clone(), service_state, window, cx));
         let request_panel = cx.new(|_| RequestPanel::new(http_state.clone()));
 
         Self {

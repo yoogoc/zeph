@@ -26,9 +26,6 @@ fn main() {
         init(cx);
         theme::init(cx);
 
-        // Initialize data models and registries
-        workspace::init(cx);
-
         gpui_tokio::init(cx);
 
         register::storage::init(cx);

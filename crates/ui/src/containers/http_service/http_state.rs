@@ -13,7 +13,6 @@ use super::request_path_params::RequestPathParams;
 use super::request_query_params::RequestQueryParams;
 use super::response_panel::ResponsePanel;
 use super::url_utils;
-use crate::url_utils::get_base_url;
 use futures::StreamExt;
 use gpui::*;
 use gpui_component::input::{InputState, TabSize};
@@ -21,6 +20,7 @@ use gpui_tokio::Tokio;
 use i18n::t;
 use models::{Header, HttpConfig, HttpDraftConfig, HttpMethod, QueryParameter, SearchParameter};
 use smallvec::{smallvec, SmallVec};
+use workspace::ServiceDraft;
 
 #[derive(Clone, Copy, PartialEq, Eq, Default)]
 pub enum RequestTab {
@@ -34,6 +34,9 @@ pub enum RequestTab {
 pub struct HttpState {
     pub service: models::Service,
     folder_id: Option<uuid::Uuid>,
+    service_state: Entity<crate::state::ServiceState>,
+    /// Editing draft (undo/redo) for this service.
+    draft: ServiceDraft,
 
     // Request UI sub-panels
     pub url: Entity<InputState>,
@@ -58,7 +61,12 @@ pub struct HttpState {
 }
 
 impl HttpState {
-    pub fn new(service: models::Service, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        service: models::Service,
+        service_state: Entity<crate::state::ServiceState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let folder_id = service.folder_id;
         let config = match &service.service_type {
             models::ServiceType::Http(config) => config.clone(),
@@ -98,11 +106,11 @@ impl HttpState {
         // Folder query params for inheritance.
         let folder_query_params = folder_id
             .map(|folder_id| {
-                let registry = workspace::WorkspaceRegistry::global(cx);
-                registry
+                service_state
                     .read(cx)
-                    .get_active_workspace()
-                    .and_then(|w| w.folders.iter().find(|f| f.id == folder_id))
+                    .folders
+                    .iter()
+                    .find(|f| f.id == folder_id)
                     .map(|folder| {
                         folder
                             .common_search_params
@@ -144,16 +152,15 @@ impl HttpState {
             },
         );
 
-        // Initialize draft in DraftRegistry.
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        let registry_service = registry.read(cx).get_service(service.id).cloned();
-        if let Some(registry_service) = registry_service {
-            let _ = registry.read(cx).get_or_init_draft(&registry_service);
-        }
+        // Initialize the editing draft for this service.
+        let draft_store = register::GlobalStorage::global(cx).draft.clone();
+        let draft = ServiceDraft::new(draft_store, &service);
 
         Self {
             service,
             folder_id,
+            service_state,
+            draft,
             url,
             method_selector,
             body_panel,
@@ -256,22 +263,28 @@ impl HttpState {
 
     fn update_draft_from_ui(&mut self, cx: &mut Context<Self>) {
         let config = self.collect_current_draft_config(cx);
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        let _ = registry.read(cx).update_draft(self.service.id, &config);
+        if let Err(e) = self.draft.update(&config) {
+            log::error!("Failed to update draft for {}: {}", self.service.id, e);
+        }
         cx.notify();
     }
 
-    pub fn is_modified(&self, cx: &App) -> bool {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.read(cx).draft_is_dirty(self.service.id)
+    pub fn is_modified(&self, _cx: &App) -> bool {
+        self.draft.is_dirty()
     }
 
     /// Saves the current draft to the service.
     pub fn save(&mut self, cx: &mut Context<Self>) {
+        let config = match self.draft.save_to_service() {
+            Ok(config) => config,
+            Err(e) => {
+                log::error!("Failed to save draft for {}: {}", self.service.id, e);
+                return;
+            }
+        };
         let service_id = self.service.id;
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            registry.save_draft_to_service(service_id, cx);
+        self.service_state.update(cx, |s, cx| {
+            s.update_service_config(service_id, config.to_http_config(), cx);
         });
         cx.notify();
     }
@@ -282,27 +295,23 @@ impl HttpState {
     }
 
     pub fn undo(&mut self, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        if let Some(draft_config) = registry.read(cx).undo_draft(self.service.id) {
+        if let Some(draft_config) = self.draft.undo() {
             self.apply_draft_to_ui(&draft_config, cx);
         }
     }
 
     pub fn redo(&mut self, cx: &mut Context<Self>) {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        if let Some(draft_config) = registry.read(cx).redo_draft(self.service.id) {
+        if let Some(draft_config) = self.draft.redo() {
             self.apply_draft_to_ui(&draft_config, cx);
         }
     }
 
-    pub fn can_undo(&self, cx: &App) -> bool {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.read(cx).can_undo_draft(self.service.id)
+    pub fn can_undo(&self, _cx: &App) -> bool {
+        self.draft.can_undo()
     }
 
-    pub fn can_redo(&self, cx: &App) -> bool {
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.read(cx).can_redo_draft(self.service.id)
+    pub fn can_redo(&self, _cx: &App) -> bool {
+        self.draft.can_redo()
     }
 
     fn apply_draft_to_ui(&mut self, draft: &HttpDraftConfig, cx: &mut Context<Self>) {
@@ -334,9 +343,18 @@ impl HttpState {
 
     // === URL / header / param resolution ===
 
+    /// The active environment's base URL for this service's workspace.
+    pub fn base_url(&self, cx: &App) -> SharedString {
+        self.service_state
+            .read(cx)
+            .env_state
+            .read(cx)
+            .active_base_url()
+    }
+
     pub fn final_url(&self, cx: &Context<Self>) -> String {
         let path = self.url.read(cx).value().to_string();
-        let base_url = get_base_url(cx);
+        let base_url = self.base_url(cx);
         let mut resolved_url = url_utils::resolve_url(&base_url, &path, self.use_base_url);
         resolved_url = substitute_path_params(&resolved_url, &self.path_params(cx));
         let query_params = self.resolve_final_query_params(cx);
@@ -386,12 +404,13 @@ impl HttpState {
         let Some(folder_id) = self.folder_id else {
             return T::default();
         };
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        let registry = registry.read(cx);
-        let Some(workspace) = registry.get_active_workspace() else {
-            return T::default();
-        };
-        match workspace.folders.iter().find(|f| f.id == folder_id) {
+        match self
+            .service_state
+            .read(cx)
+            .folders
+            .iter()
+            .find(|f| f.id == folder_id)
+        {
             Some(folder) => f(folder, self),
             None => T::default(),
         }
@@ -495,7 +514,7 @@ impl HttpState {
         cx: &Context<Self>,
     ) -> String {
         let user_entered_url = self.url.read(cx).value().to_string();
-        let base_url = get_base_url(cx);
+        let base_url = self.base_url(cx);
         let mut text = format!("{:?} {}\n", method, url);
         if self.use_base_url
             && !base_url.is_empty()

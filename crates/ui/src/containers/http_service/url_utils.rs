@@ -160,17 +160,3 @@ pub fn build_url_with_params(base_url: &str, params: &[SearchParameter]) -> Stri
 
     url
 }
-
-/// Gets the base_url directly from WorkspaceRegistry
-pub fn get_base_url(cx: &App) -> SharedString {
-    let registry = workspace::WorkspaceRegistry::global(cx);
-    registry
-        .read(cx)
-        .get_active_workspace()
-        .and_then(|ws| {
-            ws.active_environment_id
-                .and_then(|env_id| ws.environments.iter().find(|e| e.id == env_id))
-                .map(|env| env.base_url.clone())
-        })
-        .unwrap_or_default()
-}

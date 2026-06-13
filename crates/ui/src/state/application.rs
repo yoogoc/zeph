@@ -56,11 +56,6 @@ impl ApplicationState {
         let workspace_state = cx.new(|cx| WorkspaceState::new(id, window, cx));
         let view = cx.new(|_| WorkspaceArea::new(workspace_state));
 
-        let registry = workspace::WorkspaceRegistry::global(cx);
-        registry.update(cx, |r, cx| {
-            r.open_workspace(id, cx);
-        });
-
         self.tabs.push(Tab {
             id,
             title,

@@ -1,10 +1,12 @@
 use crate::containers::{FolderDetailPage, HttpService};
-use crate::state::{build_tree, ContentViewHandle, PlaceholderView};
+use crate::state::{build_tree, ContentViewHandle, EnvironmentState, PlaceholderView};
 use gpui::*;
 use gpui_component::tree::TreeState;
 use gpui_component::IconName;
 use log::error;
-use models::{Folder, FolderType, Header, Schema, SearchParameter, Service, ServiceType};
+use models::{
+    Folder, FolderType, Header, HttpConfig, Schema, SearchParameter, Service, ServiceType,
+};
 use register::GlobalStorage;
 use uuid::Uuid;
 
@@ -26,10 +28,17 @@ pub struct ServiceState {
     pub open_views: Vec<OpenView>,
     /// Index of the active entry in `open_views` (mirrors `ApplicationState.active_idx`).
     pub active_view_ix: Option<usize>,
+
+    /// Environment state for this workspace (provides active env base_url).
+    pub env_state: Entity<EnvironmentState>,
 }
 
 impl ServiceState {
-    pub fn new(workspace_id: Uuid, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        workspace_id: Uuid,
+        env_state: Entity<EnvironmentState>,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let storage = GlobalStorage::global(cx);
 
         let folders = storage
@@ -59,7 +68,35 @@ impl ServiceState {
             tree,
             open_views: vec![],
             active_view_ix: None,
+            env_state,
         }
+    }
+
+    /// Writes a new HttpConfig to a service (DB + in-memory).
+    pub fn update_service_config(
+        &mut self,
+        service_id: Uuid,
+        new_config: HttpConfig,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(service) = self.services.iter().find(|s| s.id == service_id).cloned() else {
+            error!("Service {} not found", service_id);
+            return;
+        };
+        let mut updated = service;
+        updated.service_type = ServiceType::Http(new_config);
+
+        let storage = GlobalStorage::global(cx);
+        if let Err(e) = storage.service.update(&updated) {
+            error!("Failed to update service config {}: {}", service_id, e);
+            return;
+        }
+
+        if let Some(s) = self.services.iter_mut().find(|s| s.id == service_id) {
+            s.service_type = updated.service_type;
+            s.updated_at = chrono::Utc::now().timestamp();
+        }
+        cx.notify();
     }
 
     /// Accessor for the sidebar tree state.
@@ -73,6 +110,47 @@ impl ServiceState {
         self.tree.update(cx, |state, cx| {
             state.set_items(items, cx);
         });
+    }
+
+    /// Imports an OpenAPI spec into this workspace (DB + in-memory + tree).
+    pub fn import_openapi(
+        &mut self,
+        content: &str,
+        options: workspace::ImportOptions,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let spec = workspace::parse_openapi(content).map_err(|e| e.to_string())?;
+        let result = workspace::import_openapi_with_options(
+            self.workspace_id,
+            &spec,
+            options,
+            &self.folders,
+        )
+        .map_err(|e| e.to_string())?;
+
+        let storage = GlobalStorage::global(cx);
+        for folder in &result.folders {
+            if let Err(e) = storage.folder.insert(folder) {
+                error!("Failed to insert folder {}: {}", folder.name, e);
+            }
+        }
+        for service in &result.services {
+            if let Err(e) = storage.service.insert(service) {
+                error!("Failed to insert service {}: {}", service.name, e);
+            }
+        }
+        for schema in &result.schemas {
+            if let Err(e) = storage.schema.insert(schema) {
+                error!("Failed to insert schema {}: {}", schema.name, e);
+            }
+        }
+
+        self.folders.extend(result.folders);
+        self.services.extend(result.services);
+        self.schemas.extend(result.schemas);
+        self.rebuild_tree(cx);
+        cx.notify();
+        Ok(())
     }
 
     // === Content Operations ===
@@ -345,7 +423,9 @@ impl ServiceState {
         self.open_view(id, window, cx, move |window, cx| {
             match &service.service_type {
                 ServiceType::Http(_) => {
-                    Box::new(cx.new(|cx| HttpService::new(service, window, cx)))
+                    let service_state = cx.entity();
+                    Box::new(cx.new(|cx| HttpService::new(service, service_state, window, cx)))
+                    // env_state is read from service_state inside HttpState.
                 }
                 ServiceType::Grpc(_) => placeholder(
                     cx,

@@ -8,7 +8,7 @@ use gpui_component::{Disableable, IconName, StyledExt, WindowExt};
 use gpui_tokio::Tokio;
 use std::time::Duration;
 use uuid::Uuid;
-use workspace::{parse_openapi, WorkspaceRegistry};
+use workspace::parse_openapi;
 
 /// Configuration for the simple import dialog
 #[derive(Debug, Clone)]
@@ -60,6 +60,9 @@ impl ImportErrorType {
 /// Simplified import dialog component
 /// Implements Requirements 2.1, 2.2, 2.3, 2.5 for dialog UI
 pub struct SimpleImportDialog {
+    // Target workspace state for executing the import
+    service_state: Entity<crate::state::ServiceState>,
+
     // Input
     content_input: Entity<InputState>,
 
@@ -84,6 +87,7 @@ pub struct SimpleImportDialog {
 
 impl SimpleImportDialog {
     pub fn new(
+        service_state: Entity<crate::state::ServiceState>,
         folder_id: Option<Uuid>,
         folder_name: Option<SharedString>,
         window: &mut Window,
@@ -96,6 +100,7 @@ impl SimpleImportDialog {
         });
 
         Self {
+            service_state,
             content_input,
             target_folder_id: folder_id,
             target_folder_name: folder_name,
@@ -652,20 +657,21 @@ impl SimpleImportDialog {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let registry = WorkspaceRegistry::global(cx);
-        registry.update(cx, |registry, cx| {
-            match import_handler::execute_import(&config, registry, cx) {
-                Ok(_) => {
-                    println!("OpenAPI import completed successfully");
-                    window.close_dialog(cx);
-                }
-                Err(e) => {
-                    eprintln!("Failed to import OpenAPI: {}", e);
-                    self.error = Some(ImportErrorType::ImportError(format!("导入失败: {}", e)));
-                    cx.notify();
-                }
-            }
+        let result = self.service_state.update(cx, |service_state, cx| {
+            import_handler::execute_import(&config, service_state, cx)
         });
+
+        match result {
+            Ok(_) => {
+                println!("OpenAPI import completed successfully");
+                window.close_dialog(cx);
+            }
+            Err(e) => {
+                eprintln!("Failed to import OpenAPI: {}", e);
+                self.error = Some(ImportErrorType::ImportError(format!("导入失败: {}", e)));
+                cx.notify();
+            }
+        }
     }
 }
 

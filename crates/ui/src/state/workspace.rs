@@ -29,8 +29,8 @@ pub struct WorkspaceState {
 
 impl WorkspaceState {
     pub fn new(workspace_id: Uuid, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let service_state = cx.new(|cx| ServiceState::new(workspace_id, cx));
         let env_state = cx.new(|cx| EnvironmentState::new(workspace_id, cx));
+        let service_state = cx.new(|cx| ServiceState::new(workspace_id, env_state.clone(), cx));
         let content = cx.new(|cx| WorkspaceContent::new(service_state, env_state, window, cx));
 
         let tabs = vec![

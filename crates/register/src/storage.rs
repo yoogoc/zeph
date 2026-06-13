@@ -4,8 +4,9 @@ use log::error;
 use models::{CreateWorkspace, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
 use std::sync::Arc;
 use storage::{
-    Database, EnvironmentStore, EnvironmentVariableStore, FolderQueryParameterStore, FolderStore,
-    PathParameterStore, QueryParameterStore, SchemaStore, ServiceStore, WorkspaceStore,
+    Database, DraftStore, EnvironmentStore, EnvironmentVariableStore, FolderQueryParameterStore,
+    FolderStore, PathParameterStore, QueryParameterStore, SchemaStore, ServiceStore,
+    WorkspaceStore,
 };
 use uuid::Uuid;
 
@@ -20,6 +21,7 @@ pub struct GlobalStorage {
     pub query_param: Arc<QueryParameterStore>,
     pub path_param: Arc<PathParameterStore>,
     pub folder_query_param: Arc<FolderQueryParameterStore>,
+    pub draft: Arc<DraftStore>,
 }
 
 impl Global for GlobalStorage {}
@@ -38,6 +40,7 @@ pub fn init(cx: &mut App) {
     let query_param = Arc::new(QueryParameterStore::new(db.conn()));
     let path_param = Arc::new(PathParameterStore::new(db.conn()));
     let folder_query_param = Arc::new(FolderQueryParameterStore::new(db.conn()));
+    let draft = Arc::new(DraftStore::new(db.conn()));
 
     cx.set_global(GlobalStorage {
         // db,
@@ -50,6 +53,7 @@ pub fn init(cx: &mut App) {
         query_param,
         path_param,
         folder_query_param,
+        draft,
     });
 }
 

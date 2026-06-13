@@ -1,7 +1,6 @@
 use super::http_state::{HttpState, RequestTab};
 use super::param_utils::detect_path_params;
 use super::url_utils;
-use crate::url_utils::get_base_url;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
@@ -34,7 +33,7 @@ impl Render for RequestPanel {
         let query_params_panel = state.query_params_panel.clone();
         let path_params_panel = state.path_params_panel.clone();
 
-        let base_url = get_base_url(cx);
+        let base_url = state.base_url(cx);
         let url_value = url.read(cx).value().to_string();
         let show_final_url_preview =
             use_base_url && !base_url.is_empty() && !url_utils::is_absolute_url(&url_value);
