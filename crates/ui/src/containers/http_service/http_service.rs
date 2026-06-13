@@ -5,6 +5,7 @@
 
 use super::http_state::HttpState;
 use super::request_panel::RequestPanel;
+use super::response_panel::ResponsePanel;
 use crate::Badge;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -19,6 +20,7 @@ pub struct HttpService {
     service: models::Service,
     http_state: Entity<HttpState>,
     request_panel: Entity<RequestPanel>,
+    response_panel: Entity<ResponsePanel>,
 }
 
 impl HttpService {
@@ -29,12 +31,15 @@ impl HttpService {
         cx: &mut Context<Self>,
     ) -> Self {
         let http_state = cx.new(|cx| HttpState::new(service.clone(), service_state, window, cx));
+        let response_panel = cx.new(|cx| ResponsePanel::new(window, cx));
+        http_state.update(cx, |s, _| s.set_response_panel(response_panel.downgrade()));
         let request_panel = cx.new(|cx| RequestPanel::new(http_state.clone(), window, cx));
 
         Self {
             service,
             http_state,
             request_panel,
+            response_panel,
         }
     }
 }
@@ -45,7 +50,7 @@ impl Render for HttpService {
         let can_undo = state.can_undo(cx);
         let can_redo = state.can_redo(cx);
         let is_loading = state.is_loading;
-        let response_panel = state.response_panel.clone();
+        let response_panel = self.response_panel.clone();
 
         div()
             .size_full()

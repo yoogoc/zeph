@@ -3,8 +3,8 @@ use gpui::*;
 use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::IndexPath;
 use models::{HttpConfig, HttpMethod};
-use std::sync::LazyLock;
 use smallvec::{smallvec, SmallVec};
+use std::sync::LazyLock;
 
 #[derive(Clone)]
 struct MethodItem(HttpMethod);
@@ -60,7 +60,10 @@ impl MethodSelector {
             },
         );
 
-        Self { select, _subscriptions: smallvec![sub]}
+        Self {
+            select,
+            _subscriptions: smallvec![sub],
+        }
     }
 }
 

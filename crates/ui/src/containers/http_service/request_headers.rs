@@ -1,45 +1,86 @@
+use super::http_state::HttpState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::StyledExt;
 use models::Header;
 
 struct HeaderRow {
     key: Entity<InputState>,
     value: Entity<InputState>,
+    /// `Change` subscriptions on key/value that push edits back to `HttpState`.
+    _subscriptions: [Subscription; 2],
 }
 
 pub struct RequestHeaders {
+    http_state: Entity<HttpState>,
     rows: Vec<HeaderRow>,
 }
 
 impl RequestHeaders {
-    pub fn new(headers: Vec<Header>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        http_state: Entity<HttpState>,
+        headers: Vec<Header>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let rows = headers
             .into_iter()
-            .map(|h| HeaderRow {
-                key: cx.new(|cx| {
+            .map(|h| {
+                let key = cx.new(|cx| {
                     InputState::new(window, cx)
                         .default_value(&h.key)
                         .placeholder("Key")
-                }),
-                value: cx.new(|cx| {
+                });
+                let value = cx.new(|cx| {
                     InputState::new(window, cx)
                         .default_value(&h.value)
                         .placeholder("Value")
-                }),
+                });
+                Self::make_row(key, value, cx)
             })
             .collect();
 
-        Self { rows }
+        Self { http_state, rows }
+    }
+
+    /// Builds a row, wiring `Change` subscriptions that sync edits to `HttpState`.
+    fn make_row(
+        key: Entity<InputState>,
+        value: Entity<InputState>,
+        cx: &mut Context<Self>,
+    ) -> HeaderRow {
+        let key_sub = cx.subscribe(&key, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.sync(cx);
+            }
+        });
+        let value_sub = cx.subscribe(&value, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.sync(cx);
+            }
+        });
+        HeaderRow {
+            key,
+            value,
+            _subscriptions: [key_sub, value_sub],
+        }
+    }
+
+    /// Pushes the current rows to `HttpState`.
+    fn sync(&self, cx: &mut Context<Self>) {
+        let headers = self.headers(cx);
+        self.http_state
+            .update(cx, |s, cx| s.set_headers(headers, cx));
     }
 
     pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.rows.push(HeaderRow {
-            key: cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key"))),
-            value: cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key"))),
-        });
+        let key = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key")));
+        let value = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.value")));
+        let row = Self::make_row(key, value, cx);
+        self.rows.push(row);
+        self.sync(cx);
         cx.notify();
     }
 
@@ -75,6 +116,7 @@ impl Render for RequestHeaders {
                             .h(px(24.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rows.remove(i);
+                                this.sync(cx);
                                 cx.notify();
                             })),
                     )

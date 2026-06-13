@@ -1,8 +1,9 @@
+use super::http_state::HttpState;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::Button;
 use gpui_component::checkbox::Checkbox;
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::{Disableable, StyledExt};
 use models::QueryParameter;
 
@@ -10,17 +11,19 @@ struct QueryParamRow {
     key: Entity<InputState>,
     value: Entity<InputState>,
     enabled: bool,
-    #[allow(unused)]
-    is_folder_param: bool,
+    /// `Change` subscriptions on key/value that push edits back to `HttpState`.
+    _subscriptions: [Subscription; 2],
 }
 
 pub struct RequestQueryParams {
+    http_state: Entity<HttpState>,
     rows: Vec<QueryParamRow>,
     folder_params: Vec<QueryParameter>,
 }
 
 impl RequestQueryParams {
     pub fn new(
+        http_state: Entity<HttpState>,
         params: Vec<QueryParameter>,
         folder_params: Vec<QueryParameter>,
         window: &mut Window,
@@ -28,35 +31,66 @@ impl RequestQueryParams {
     ) -> Self {
         let rows = params
             .into_iter()
-            .map(|p| QueryParamRow {
-                key: cx.new(|cx| {
+            .map(|p| {
+                let key = cx.new(|cx| {
                     InputState::new(window, cx)
                         .default_value(&p.key)
                         .placeholder("Key")
-                }),
-                value: cx.new(|cx| {
+                });
+                let value = cx.new(|cx| {
                     InputState::new(window, cx)
                         .default_value(&p.value)
                         .placeholder("Value")
-                }),
-                enabled: p.enabled,
-                is_folder_param: false,
+                });
+                Self::make_row(key, value, p.enabled, cx)
             })
             .collect();
 
         Self {
+            http_state,
             rows,
             folder_params,
         }
     }
 
-    pub fn add_param(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.rows.push(QueryParamRow {
-            key: cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key"))),
-            value: cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.value"))),
-            enabled: true,
-            is_folder_param: false,
+    /// Builds a row, wiring `Change` subscriptions that sync edits to `HttpState`.
+    fn make_row(
+        key: Entity<InputState>,
+        value: Entity<InputState>,
+        enabled: bool,
+        cx: &mut Context<Self>,
+    ) -> QueryParamRow {
+        let key_sub = cx.subscribe(&key, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.sync(cx);
+            }
         });
+        let value_sub = cx.subscribe(&value, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.sync(cx);
+            }
+        });
+        QueryParamRow {
+            key,
+            value,
+            enabled,
+            _subscriptions: [key_sub, value_sub],
+        }
+    }
+
+    /// Pushes the current rows to `HttpState`.
+    fn sync(&self, cx: &mut Context<Self>) {
+        let params = self.params(cx);
+        self.http_state
+            .update(cx, |s, cx| s.set_query_params(params, cx));
+    }
+
+    pub fn add_param(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let key = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key")));
+        let value = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.value")));
+        let row = Self::make_row(key, value, true, cx);
+        self.rows.push(row);
+        self.sync(cx);
         cx.notify();
     }
 
@@ -76,6 +110,7 @@ impl RequestQueryParams {
     pub fn toggle_enabled(&mut self, index: usize, cx: &mut Context<Self>) {
         if let Some(row) = self.rows.get_mut(index) {
             row.enabled = !row.enabled;
+            self.sync(cx);
             cx.notify();
         }
     }
@@ -153,6 +188,7 @@ impl Render for RequestQueryParams {
                             .h(px(24.0))
                             .on_click(cx.listener(move |this, _, _, cx| {
                                 this.rows.remove(i);
+                                this.sync(cx);
                                 cx.notify();
                             })),
                     )

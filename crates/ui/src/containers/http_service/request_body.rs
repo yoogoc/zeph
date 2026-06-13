@@ -34,11 +34,13 @@ impl BodyType {
 }
 
 use super::http_state::HttpState;
+use gpui_component::input::InputEvent;
 
 pub struct RequestBody {
     body_type: BodyType,
     editor: Entity<InputState>,
     http_state: Entity<HttpState>,
+    _subscription: Subscription,
 }
 
 impl RequestBody {
@@ -53,36 +55,23 @@ impl RequestBody {
                 .line_number(true)
         });
 
+        let subscription = cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                let body = this.body(cx);
+                this.http_state.update(cx, |s, cx| s.set_body(body, cx));
+            }
+        });
+
         Self {
             body_type: BodyType::None,
             editor,
             http_state,
+            _subscription: subscription,
         }
-    }
-
-    #[allow(unused)]
-    pub fn set_body_type(&mut self, body_type: BodyType) {
-        self.body_type = body_type;
-    }
-
-    #[allow(unused)]
-    pub fn set_body(
-        &mut self,
-        body: impl Into<String>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let body = body.into();
-        self.editor
-            .update(cx, |state, cx| state.set_value(body, window, cx));
     }
 
     pub fn body(&self, cx: &App) -> String {
         self.editor.read(cx).value().to_string()
-    }
-
-    pub fn body_type(&self) -> BodyType {
-        self.body_type
     }
 }
 
@@ -102,7 +91,7 @@ impl Render for RequestBody {
                     .child(Tab::new().label("XML"))
                     .child(Tab::new().label("Text"))
                     .selected_index(body_type as usize)
-                    .on_click(cx.listener(|this, ix: &usize, window, cx| {
+                    .on_click(cx.listener(|this, ix: &usize, _, cx| {
                         let new_type = match *ix {
                             1 => BodyType::Json,
                             2 => BodyType::Xml,
@@ -111,7 +100,7 @@ impl Render for RequestBody {
                         };
                         this.body_type = new_type;
                         this.http_state
-                            .update(cx, |s, cx| s.on_body_type_changed(new_type, window, cx));
+                            .update(cx, |s, cx| s.set_body_type(new_type, cx));
                         cx.notify();
                     })),
             )

@@ -1,35 +1,68 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::StyledExt;
 use models::PathParameter;
 
+use super::http_state::HttpState;
 use super::param_utils::detect_path_params;
 
 struct PathParamRow {
     name: SharedString,
     value: Entity<InputState>,
+    /// `Change` subscription on the value input that syncs edits to `HttpState`.
+    _subscription: Subscription,
 }
 
 pub struct RequestPathParams {
+    http_state: Entity<HttpState>,
     rows: Vec<PathParamRow>,
 }
 
 impl RequestPathParams {
-    pub fn new(params: Vec<PathParameter>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+    pub fn new(
+        http_state: Entity<HttpState>,
+        params: Vec<PathParameter>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let rows = params
             .into_iter()
-            .map(|p| PathParamRow {
-                name: p.name.clone(),
-                value: cx.new(|cx| {
+            .map(|p| {
+                let value = cx.new(|cx| {
                     InputState::new(window, cx)
                         .default_value(&p.value)
                         .placeholder("Value")
-                }),
+                });
+                Self::make_row(p.name.clone(), value, cx)
             })
             .collect();
 
-        Self { rows }
+        Self { http_state, rows }
+    }
+
+    fn make_row(
+        name: SharedString,
+        value: Entity<InputState>,
+        cx: &mut Context<Self>,
+    ) -> PathParamRow {
+        let subscription = cx.subscribe(&value, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                this.sync(cx);
+            }
+        });
+        PathParamRow {
+            name,
+            value,
+            _subscription: subscription,
+        }
+    }
+
+    /// Pushes the current rows to `HttpState`.
+    fn sync(&self, cx: &mut Context<Self>) {
+        let params = self.params(cx);
+        self.http_state
+            .update(cx, |s, cx| s.set_path_params(params, cx));
     }
 
     pub fn params(&self, cx: &App) -> Vec<PathParameter> {
@@ -39,34 +72,31 @@ impl RequestPathParams {
             .collect()
     }
 
-    /// Updates the path parameters based on URL changes
-    /// Detects new placeholders and removes old ones
+    /// Updates the path parameters based on URL changes.
+    /// Detects new placeholders and removes old ones, preserving existing values.
     pub fn update_from_url(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {
         let detected_params = detect_path_params(url);
 
-        // Create a map of existing parameter values
         let existing_values: std::collections::HashMap<String, String> = self
             .rows
             .iter()
             .map(|row| (row.name.to_string(), row.value.read(cx).value().to_string()))
             .collect();
 
-        // Create new rows based on detected parameters
         self.rows = detected_params
             .into_iter()
             .map(|name| {
                 let value = existing_values.get(&name).cloned().unwrap_or_default();
-                PathParamRow {
-                    name: name.clone().into(),
-                    value: cx.new(|cx| {
-                        InputState::new(window, cx)
-                            .default_value(&value)
-                            .placeholder("Value")
-                    }),
-                }
+                let input = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&value)
+                        .placeholder("Value")
+                });
+                Self::make_row(name.into(), input, cx)
             })
             .collect();
 
+        self.sync(cx);
         cx.notify();
     }
 }

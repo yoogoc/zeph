@@ -1,28 +1,82 @@
 use super::http_state::{HttpState, RequestTab};
+use super::method_selector::MethodSelector;
 use super::param_utils::detect_path_params;
+use super::request_body::RequestBody;
+use super::request_headers::RequestHeaders;
+use super::request_path_params::RequestPathParams;
+use super::request_query_params::RequestQueryParams;
 use super::url_utils;
-use crate::http_service::method_selector::MethodSelector;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
-use gpui_component::input::Input;
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{h_flex, v_flex, Disableable, IconName};
 
-/// Pure-render request panel: reads `HttpState` and drives it via `update`.
+/// Owns the editing sub-panels and drives `HttpState` via `update`.
 pub struct RequestPanel {
     http_state: Entity<HttpState>,
+    url: Entity<InputState>,
     method_selector: Entity<MethodSelector>,
+    body_panel: Entity<RequestBody>,
+    headers_panel: Entity<RequestHeaders>,
+    query_params_panel: Entity<RequestQueryParams>,
+    path_params_panel: Entity<RequestPathParams>,
+    _url_subscription: Subscription,
 }
 
 impl RequestPanel {
     pub fn new(http_state: Entity<HttpState>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let hs = http_state.clone();
-        let method_selector = cx.new(|cx| MethodSelector::new(hs, window, cx));
+        let state = http_state.read(cx);
+        let initial_url = state.url().to_string();
+        let headers = state.headers();
+        let query_params = state.query_params();
+        let path_params = state.path_params();
+        let folder_query_params = state.folder_query_params(cx);
+
+        let url = cx.new(|cx| InputState::new(window, cx).default_value(&initial_url));
+
+        let method_selector = cx.new(|cx| MethodSelector::new(http_state.clone(), window, cx));
+        let body_panel = cx.new(|cx| RequestBody::new(http_state.clone(), window, cx));
+        let headers_panel =
+            cx.new(|cx| RequestHeaders::new(http_state.clone(), headers, window, cx));
+        let query_params_panel = cx.new(|cx| {
+            RequestQueryParams::new(
+                http_state.clone(),
+                query_params,
+                folder_query_params,
+                window,
+                cx,
+            )
+        });
+        let path_params_panel =
+            cx.new(|cx| RequestPathParams::new(http_state.clone(), path_params, window, cx));
+
+        // React to URL edits: sync to HttpState + refresh path params.
+        let url_subscription = cx.subscribe_in(
+            &url,
+            window,
+            |this, url_entity, event: &InputEvent, window, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let url_value = url_entity.read(cx).value().to_string();
+                this.path_params_panel.update(cx, |panel, cx| {
+                    panel.update_from_url(&url_value, window, cx);
+                });
+                this.http_state.update(cx, |s, cx| s.set_url(url_value, cx));
+            },
+        );
 
         Self {
             http_state,
+            url,
             method_selector,
+            body_panel,
+            headers_panel,
+            query_params_panel,
+            path_params_panel,
+            _url_subscription: url_subscription,
         }
     }
 }
@@ -34,14 +88,15 @@ impl Render for RequestPanel {
         let is_loading = state.is_loading;
         let use_base_url = state.use_base_url;
         let is_modified = state.is_modified(cx);
-        let url = state.url.clone();
-
-        let body_panel = state.body_panel.clone();
-        let headers_panel = state.headers_panel.clone();
-        let query_params_panel = state.query_params_panel.clone();
-        let path_params_panel = state.path_params_panel.clone();
-
         let base_url = state.base_url(cx);
+
+        let url = self.url.clone();
+        let method_selector = self.method_selector.clone();
+        let body_panel = self.body_panel.clone();
+        let headers_panel = self.headers_panel.clone();
+        let query_params_panel = self.query_params_panel.clone();
+        let path_params_panel = self.path_params_panel.clone();
+
         let url_value = url.read(cx).value().to_string();
         let show_final_url_preview =
             use_base_url && !base_url.is_empty() && !url_utils::is_absolute_url(&url_value);
@@ -73,7 +128,7 @@ impl Render for RequestPanel {
                             .border_color(rgb(0xdee2e6))
                             .rounded_md()
                             .text_sm()
-                            .child(self.method_selector.clone())
+                            .child(method_selector)
                             .when(show_final_url_preview, |el| {
                                 let base_url_display = base_url.trim_end_matches('/').to_string();
                                 el.child(
@@ -171,16 +226,16 @@ impl Render for RequestPanel {
                                     .icon(IconName::Plus)
                                     .label(shared_t!("request.add_header"))
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.http_state
-                                            .update(cx, |s, cx| s.add_header(window, cx));
+                                        this.headers_panel
+                                            .update(cx, |p, cx| p.add_header(window, cx));
                                     }))
                                     .into_any_element(),
                                 RequestTab::Query => Button::new("add_query_param")
                                     .icon(IconName::Plus)
                                     .label(shared_t!("request.add_param"))
                                     .on_click(cx.listener(|this, _, window, cx| {
-                                        this.http_state
-                                            .update(cx, |s, cx| s.add_query_param(window, cx));
+                                        this.query_params_panel
+                                            .update(cx, |p, cx| p.add_param(window, cx));
                                     }))
                                     .into_any_element(),
                                 _ => div().into_any_element(),

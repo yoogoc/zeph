@@ -1,6 +1,6 @@
 use gpui::prelude::FluentBuilder;
 use gpui::*;
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputState, TabSize};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::v_flex;
 
@@ -12,6 +12,8 @@ enum ResponseTab {
     Request,
 }
 
+/// Owns the response views (body / headers / request-info inputs) and renders
+/// them. `HttpState::send_request` writes results here via the setter methods.
 pub struct ResponsePanel {
     response: Entity<InputState>,
     headers: Entity<InputState>,
@@ -20,17 +22,73 @@ pub struct ResponsePanel {
 }
 
 impl ResponsePanel {
-    pub fn new(
-        response: Entity<InputState>,
-        headers: Entity<InputState>,
-        request: Entity<InputState>,
-    ) -> Self {
+    pub fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let response = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("json")
+                .searchable(true)
+                .tab_size(TabSize {
+                    tab_size: 4,
+                    hard_tabs: false,
+                })
+                .line_number(true)
+        });
+        let headers = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .line_number(true)
+        });
+        let request = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("text")
+                .line_number(true)
+        });
+
         Self {
             response,
             headers,
             request,
             active_tab: ResponseTab::default(),
         }
+    }
+
+    /// Writes the human-readable request info (shown on the Request tab).
+    pub fn set_request_info(&self, text: impl Into<String>, window: &mut Window, cx: &mut App) {
+        let text = text.into();
+        self.request
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+    }
+
+    /// Clears the response body and headers (before sending a new request).
+    pub fn clear_response(&self, window: &mut Window, cx: &mut App) {
+        self.response
+            .update(cx, |state, cx| state.set_value("", window, cx));
+        self.headers
+            .update(cx, |state, cx| state.set_value("", window, cx));
+    }
+
+    pub fn set_response_headers(&self, text: impl Into<String>, window: &mut Window, cx: &mut App) {
+        let text = text.into();
+        self.headers
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+    }
+
+    pub fn set_response_body(&self, text: impl Into<String>, window: &mut Window, cx: &mut App) {
+        let text = text.into();
+        self.response
+            .update(cx, |state, cx| state.set_value(text, window, cx));
+    }
+
+    /// Appends to the response body (for streaming/SSE responses).
+    pub fn append_response_body(&self, text: impl Into<String>, window: &mut Window, cx: &mut App) {
+        let text = text.into();
+        self.response
+            .update(cx, |state, cx| state.insert(text, window, cx));
+    }
+
+    /// Writes an error message into the response body view.
+    pub fn set_error(&self, text: impl Into<String>, window: &mut Window, cx: &mut App) {
+        self.set_response_body(text, window, cx);
     }
 }
 

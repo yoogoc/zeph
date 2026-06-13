@@ -6,15 +6,11 @@
 //! `http_state.update(...)` — no per-component event types are needed.
 
 use super::param_utils::{build_url_with_query_params, merge_query_params, substitute_path_params};
-use super::request_body::{BodyType, RequestBody};
-use super::request_headers::RequestHeaders;
-use super::request_path_params::RequestPathParams;
-use super::request_query_params::RequestQueryParams;
+use super::request_body::BodyType;
 use super::response_panel::ResponsePanel;
 use super::url_utils;
 use futures::StreamExt;
 use gpui::*;
-use gpui_component::input::{InputState, TabSize};
 use gpui_tokio::Tokio;
 use i18n::t;
 use models::{Header, HttpConfig, HttpDraftConfig, HttpMethod, QueryParameter, SearchParameter};
@@ -37,25 +33,22 @@ pub struct HttpState {
     /// Editing draft (undo/redo) for this service.
     draft: ServiceDraft,
 
-    // Request UI sub-panels
-    pub url: Entity<InputState>,
-    pub body_panel: Entity<RequestBody>,
-    pub headers_panel: Entity<RequestHeaders>,
-    pub query_params_panel: Entity<RequestQueryParams>,
-    pub path_params_panel: Entity<RequestPathParams>,
+    // Request data snapshots (mirror the editing sub-panels owned by RequestPanel).
+    url: String,
+    headers: Vec<Header>,
+    query_params: Vec<QueryParameter>,
+    path_params: Vec<models::PathParameter>,
+    body_type: BodyType,
+    body: String,
+    method: HttpMethod,
 
-    // Response views
-    pub response: Entity<InputState>,
-    pub response_headers: Entity<InputState>,
-    pub request_info: Entity<InputState>,
-    pub response_panel: Entity<ResponsePanel>,
+    /// Response view to write request results into (owned by `HttpService`).
+    response_panel: Option<WeakEntity<ResponsePanel>>,
 
     // UI flags
     pub active_tab: RequestTab,
     pub is_loading: bool,
     pub use_base_url: bool,
-    /// Current HTTP method (mirrors the method selector's selection).
-    method: HttpMethod,
 
     _subscriptions: SmallVec<[Subscription; 2]>,
 }
@@ -64,7 +57,7 @@ impl HttpState {
     pub fn new(
         service: models::Service,
         service_state: Entity<crate::state::ServiceState>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
         let folder_id = service.folder_id;
@@ -74,81 +67,11 @@ impl HttpState {
         };
         let use_base_url = config.use_base_url;
 
-        let url = cx.new(|cx| InputState::new(window, cx).default_value(&config.path));
-        let response = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("json")
-                .searchable(true)
-                .tab_size(TabSize {
-                    tab_size: 4,
-                    hard_tabs: false,
-                })
-                .line_number(true)
-        });
-        let response_headers = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("text")
-                .line_number(true)
-        });
-        let request_info = cx.new(|cx| {
-            InputState::new(window, cx)
-                .code_editor("text")
-                .line_number(true)
-        });
-        let response_panel = cx.new(|_cx| {
-            ResponsePanel::new(
-                response.clone(),
-                response_headers.clone(),
-                request_info.clone(),
-            )
-        });
-
-        // Folder query params for inheritance.
-        let folder_query_params = folder_id
-            .map(|folder_id| {
-                service_state
-                    .read(cx)
-                    .folders
-                    .iter()
-                    .find(|f| f.id == folder_id)
-                    .map(|folder| {
-                        folder
-                            .common_search_params
-                            .iter()
-                            .map(|p| QueryParameter::new(p.key.clone(), p.value.clone()))
-                            .collect::<Vec<_>>()
-                    })
-                    .unwrap_or_default()
-            })
-            .unwrap_or_default();
-
-        let http_state = cx.entity();
-        let body_panel = cx.new(|cx| RequestBody::new(http_state.clone(), window, cx));
-        let headers_panel = cx.new(|cx| RequestHeaders::new(Vec::new(), window, cx));
-        let query_params_panel = cx.new(|cx| {
-            RequestQueryParams::new(config.query_params.clone(), folder_query_params, window, cx)
-        });
-        let path_params_panel =
-            cx.new(|cx| RequestPathParams::new(config.path_params.clone(), window, cx));
-
         let active_tab = if config.path_params.is_empty() {
             RequestTab::Query
         } else {
             RequestTab::Path
         };
-
-        // React to URL edits: refresh path params + update draft.
-        let url_subscription = cx.subscribe_in(
-            &url,
-            window,
-            |this, url_entity, _event: &gpui_component::input::InputEvent, window, cx| {
-                let url_value = url_entity.read(cx).value().to_string();
-                this.path_params_panel.update(cx, |panel, cx| {
-                    panel.update_from_url(&url_value, window, cx);
-                });
-                this.update_draft_from_ui(cx);
-            },
-        );
 
         // Initialize the editing draft for this service.
         let draft_store = register::GlobalStorage::global(cx).draft.clone();
@@ -159,20 +82,18 @@ impl HttpState {
             folder_id,
             service_state,
             draft,
-            url,
-            body_panel,
-            headers_panel,
-            query_params_panel,
-            path_params_panel,
-            response,
-            response_headers,
-            request_info,
-            response_panel,
+            url: config.path.to_string(),
+            headers: Vec::new(),
+            query_params: config.query_params.clone(),
+            path_params: config.path_params.clone(),
+            body_type: BodyType::None,
+            body: String::new(),
+            response_panel: None,
             active_tab,
             is_loading: false,
             use_base_url,
             method: config.method,
-            _subscriptions: smallvec![url_subscription],
+            _subscriptions: smallvec![],
         }
     }
 
@@ -188,25 +109,58 @@ impl HttpState {
         self.update_draft_from_ui(cx);
     }
 
-    pub fn headers(&self, cx: &App) -> Vec<Header> {
-        self.headers_panel.read(cx).headers(cx)
+    /// Injects the response view to write request results into (called by `HttpService`).
+    pub fn set_response_panel(&mut self, response_panel: WeakEntity<ResponsePanel>) {
+        self.response_panel = Some(response_panel);
     }
 
-    pub fn body(&self, cx: &App) -> Option<String> {
-        let body_panel = self.body_panel.read(cx);
-        if body_panel.body_type() == BodyType::None {
+    /// The live response view, if still present.
+    fn response_panel(&self) -> Option<Entity<ResponsePanel>> {
+        self.response_panel.as_ref().and_then(|p| p.upgrade())
+    }
+
+    pub fn url(&self) -> &str {
+        &self.url
+    }
+
+    pub fn headers(&self) -> Vec<Header> {
+        self.headers.clone()
+    }
+
+    pub fn body(&self) -> Option<String> {
+        if self.body_type == BodyType::None {
             None
         } else {
-            Some(body_panel.body(cx))
+            Some(self.body.clone())
         }
     }
 
-    pub fn query_params(&self, cx: &App) -> Vec<QueryParameter> {
-        self.query_params_panel.read(cx).params(cx)
+    pub fn query_params(&self) -> Vec<QueryParameter> {
+        self.query_params.clone()
     }
 
-    pub fn path_params(&self, cx: &App) -> Vec<models::PathParameter> {
-        self.path_params_panel.read(cx).params(cx)
+    pub fn path_params(&self) -> Vec<models::PathParameter> {
+        self.path_params.clone()
+    }
+
+    /// Folder-inherited query params (for display in the query panel).
+    pub fn folder_query_params(&self, cx: &App) -> Vec<QueryParameter> {
+        let Some(folder_id) = self.folder_id else {
+            return Vec::new();
+        };
+        self.service_state
+            .read(cx)
+            .folders
+            .iter()
+            .find(|f| f.id == folder_id)
+            .map(|folder| {
+                folder
+                    .common_search_params
+                    .iter()
+                    .map(|p| QueryParameter::new(p.key.clone(), p.value.clone()))
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     pub fn set_active_tab(&mut self, tab: RequestTab, cx: &mut Context<Self>) {
@@ -214,59 +168,62 @@ impl HttpState {
         cx.notify();
     }
 
-    pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.headers_panel
-            .update(cx, |panel, cx| panel.add_header(window, cx));
+    pub fn set_url(&mut self, url: String, cx: &mut Context<Self>) {
+        self.url = url;
         self.update_draft_from_ui(cx);
     }
 
-    pub fn add_query_param(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        self.query_params_panel
-            .update(cx, |panel, cx| panel.add_param(window, cx));
+    pub fn set_headers(&mut self, headers: Vec<Header>, cx: &mut Context<Self>) {
+        self.headers = headers;
         self.update_draft_from_ui(cx);
     }
 
-    /// Called by sub-panels (method/body) when their value changes.
-    pub fn on_input_changed(&mut self, cx: &mut Context<Self>) {
+    pub fn set_query_params(&mut self, params: Vec<QueryParameter>, cx: &mut Context<Self>) {
+        self.query_params = params;
         self.update_draft_from_ui(cx);
     }
 
-    /// Handles a body-type change: sync the Content-Type header, then draft.
-    pub fn on_body_type_changed(
-        &mut self,
-        body_type: BodyType,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        self.update_content_type_header(body_type, window, cx);
+    pub fn set_path_params(&mut self, params: Vec<models::PathParameter>, cx: &mut Context<Self>) {
+        self.path_params = params;
+        self.update_draft_from_ui(cx);
+    }
+
+    pub fn set_body(&mut self, body: String, cx: &mut Context<Self>) {
+        self.body = body;
+        self.update_draft_from_ui(cx);
+    }
+
+    /// Sets the body type and syncs the Content-Type header accordingly.
+    pub fn set_body_type(&mut self, body_type: BodyType, cx: &mut Context<Self>) {
+        self.body_type = body_type;
+        self.headers
+            .retain(|h| h.key.to_lowercase() != "content-type");
+        if let Some(content_type) = body_type.content_type() {
+            self.headers.push(Header::new("Content-Type", content_type));
+        }
         self.update_draft_from_ui(cx);
     }
 
     // === Draft state ===
 
-    fn collect_current_draft_config(&self, cx: &Context<Self>) -> HttpDraftConfig {
-        let path = self.url.read(cx).value().to_string().into();
-        let method = self.method();
-        let headers = self.headers(cx);
-        let query_params = self.query_params(cx);
-        let path_params = self.path_params(cx);
+    fn collect_current_draft_config(&self) -> HttpDraftConfig {
         let body = self
-            .body(cx)
+            .body()
             .map(|b| models::HttpBody::from_content(models::BodyType::Text, &b));
 
         HttpDraftConfig {
-            method,
-            path,
-            headers,
-            query_params,
-            path_params,
+            method: self.method(),
+            path: self.url.clone().into(),
+            headers: self.headers(),
+            query_params: self.query_params(),
+            path_params: self.path_params(),
             body,
             use_base_url: self.use_base_url,
         }
     }
 
     fn update_draft_from_ui(&mut self, cx: &mut Context<Self>) {
-        let config = self.collect_current_draft_config(cx);
+        let config = self.collect_current_draft_config();
         if let Err(e) = self.draft.update(&config) {
             log::error!("Failed to update draft for {}: {}", self.service.id, e);
         }
@@ -325,21 +282,6 @@ impl HttpState {
         cx.notify();
     }
 
-    fn update_content_type_header(
-        &mut self,
-        body_type: BodyType,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let mut headers = self.headers(cx);
-        headers.retain(|h| h.key.to_lowercase() != "content-type");
-        if let Some(content_type) = body_type.content_type() {
-            headers.push(Header::new("Content-Type", content_type));
-        }
-        self.headers_panel = cx.new(|cx| RequestHeaders::new(headers, window, cx));
-        cx.notify();
-    }
-
     fn set_loading(&mut self, loading: bool, cx: &mut Context<Self>) {
         self.is_loading = loading;
         cx.notify();
@@ -357,10 +299,9 @@ impl HttpState {
     }
 
     pub fn final_url(&self, cx: &Context<Self>) -> String {
-        let path = self.url.read(cx).value().to_string();
         let base_url = self.base_url(cx);
-        let mut resolved_url = url_utils::resolve_url(&base_url, &path, self.use_base_url);
-        resolved_url = substitute_path_params(&resolved_url, &self.path_params(cx));
+        let mut resolved_url = url_utils::resolve_url(&base_url, &self.url, self.use_base_url);
+        resolved_url = substitute_path_params(&resolved_url, &self.path_params());
         let query_params = self.resolve_final_query_params(cx);
         resolved_url = build_url_with_query_params(&resolved_url, &query_params);
         self.resolve_final_url(resolved_url, cx)
@@ -460,13 +401,13 @@ impl HttpState {
 
     fn resolve_final_headers(&self, cx: &Context<Self>) -> Vec<Header> {
         let mut final_headers = self.get_folder_common_headers(cx);
-        final_headers.extend(self.headers(cx));
+        final_headers.extend(self.headers());
         self.deduplicate_headers(final_headers)
     }
 
     fn resolve_final_query_params(&self, cx: &Context<Self>) -> Vec<QueryParameter> {
         let folder_params = self.get_folder_common_query_params(cx);
-        let service_params = self.query_params(cx);
+        let service_params = self.query_params();
         merge_query_params(&folder_params, &service_params)
     }
 
@@ -491,9 +432,8 @@ impl HttpState {
         final_headers
     }
 
-    fn validate_path_params(&self, cx: &Context<Self>) -> Result<(), String> {
-        let url = self.url.read(cx).value().to_string();
-        let url_after_substitution = substitute_path_params(&url, &self.path_params(cx));
+    fn validate_path_params(&self) -> Result<(), String> {
+        let url_after_substitution = substitute_path_params(&self.url, &self.path_params());
         if url_after_substitution.contains('{') && url_after_substitution.contains('}') {
             let missing_params = super::param_utils::detect_path_params(&url_after_substitution);
             if !missing_params.is_empty() {
@@ -517,13 +457,9 @@ impl HttpState {
         body: Option<&String>,
         cx: &Context<Self>,
     ) -> String {
-        let user_entered_url = self.url.read(cx).value().to_string();
         let base_url = self.base_url(cx);
         let mut text = format!("{:?} {}\n", method, url);
-        if self.use_base_url
-            && !base_url.is_empty()
-            && !url_utils::is_absolute_url(&user_entered_url)
-        {
+        if self.use_base_url && !base_url.is_empty() && !url_utils::is_absolute_url(&self.url) {
             text.push_str(&format!("({}: {})\n", t!("env.base_url"), base_url));
         }
         text.push('\n');
@@ -537,9 +473,13 @@ impl HttpState {
     }
 
     pub fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Err(error_msg) = self.validate_path_params(cx) {
-            self.response.update(cx, |state, cx| {
-                state.set_value(
+        let Some(response_panel) = self.response_panel() else {
+            return;
+        };
+
+        if let Err(error_msg) = self.validate_path_params() {
+            response_panel.update(cx, |p, cx| {
+                p.set_error(
                     format!("Validation Error: {}\n\nPlease provide values for all path parameters before sending the request.", error_msg),
                     window,
                     cx,
@@ -550,33 +490,29 @@ impl HttpState {
         }
 
         self.set_loading(true, cx);
-        self.response
-            .update(cx, |state, cx| state.set_value("", window, cx));
-        self.response_headers
-            .update(cx, |state, cx| state.set_value("", window, cx));
 
         let url = self.final_url(cx);
         let method = self.method();
         let headers = self.resolve_final_headers(cx);
-        let body = self.body(cx);
-
+        let body = self.body();
         let request_info_text = self.build_request_info(method, &url, &headers, body.as_ref(), cx);
-        self.request_info.update(cx, |state, cx| {
-            state.set_value(request_info_text, window, cx)
+
+        response_panel.update(cx, |p, cx| {
+            p.clear_response(window, cx);
+            p.set_request_info(request_info_text, window, cx);
         });
         cx.notify();
 
         let task = Self::spawn_request(cx, method, url, headers, body);
 
-        let response = self.response.clone();
-        let response_headers = self.response_headers.clone();
+        let response_panel = response_panel.downgrade();
         cx.spawn_in(
             window,
             async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
                 let result = task.await.unwrap();
                 this.update_in(cx, |this, _, cx| this.set_loading(false, cx))
                     .ok();
-                Self::handle_response(result, response, response_headers, cx).await;
+                Self::handle_response(result, response_panel, cx).await;
             },
         )
         .detach();
@@ -611,20 +547,19 @@ impl HttpState {
         })
     }
 
-    /// Writes the response (headers + body, streaming SSE if applicable) to the
-    /// response/response_headers inputs.
+    /// Writes the response (headers + body, streaming SSE if applicable) into the
+    /// response view via the panel handle.
     async fn handle_response(
         result: reqwest::Result<reqwest::Response>,
-        response: Entity<InputState>,
-        response_headers: Entity<InputState>,
+        response_panel: WeakEntity<ResponsePanel>,
         cx: &mut AsyncWindowContext,
     ) {
         let resp = match result {
             Ok(resp) => resp,
             Err(e) => {
-                response
-                    .update_in(cx, |state, window, cx| {
-                        state.set_value(format!("Error: {}", e), window, cx);
+                response_panel
+                    .update_in(cx, |p, window, cx| {
+                        p.set_error(format!("Error: {}", e), window, cx);
                     })
                     .ok();
                 return;
@@ -637,9 +572,9 @@ impl HttpState {
             .map(|(k, v)| format!("{}: {}", k, v.to_str().unwrap_or("")))
             .collect::<Vec<_>>()
             .join("\n");
-        response_headers
-            .update_in(cx, |state, window, cx| {
-                state.set_value(headers_text, window, cx);
+        response_panel
+            .update_in(cx, |p, window, cx| {
+                p.set_response_headers(headers_text, window, cx);
             })
             .ok();
 
@@ -657,8 +592,8 @@ impl HttpState {
                     Ok(bytes) => (String::from_utf8_lossy(&bytes).to_string(), false),
                     Err(e) => (format!("\n[Error: {}]", e), true),
                 };
-                response
-                    .update_in(cx, |state, window, cx| state.insert(text, window, cx))
+                response_panel
+                    .update_in(cx, |p, window, cx| p.append_response_body(text, window, cx))
                     .ok();
                 if is_err {
                     break;
@@ -669,9 +604,9 @@ impl HttpState {
                 .text()
                 .await
                 .unwrap_or_else(|e| format!("Error: {}", e));
-            response
-                .update_in(cx, |state, window, cx| {
-                    state.set_value(text, window, cx);
+            response_panel
+                .update_in(cx, |p, window, cx| {
+                    p.set_response_body(text, window, cx);
                 })
                 .ok();
         }
