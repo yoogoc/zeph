@@ -85,6 +85,34 @@ impl RequestQueryParams {
             .update(cx, |s, cx| s.set_query_params(params, cx));
     }
 
+    /// Rebuilds all rows from the given params without writing back to
+    /// `HttpState`. Used by undo/redo. Rebuilding (rather than `set_value`)
+    /// avoids firing `Change` events.
+    pub fn reset(
+        &mut self,
+        params: Vec<QueryParameter>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rows = params
+            .into_iter()
+            .map(|p| {
+                let key = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&p.key)
+                        .placeholder("Key")
+                });
+                let value = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&p.value)
+                        .placeholder("Value")
+                });
+                Self::make_row(key, value, p.enabled, cx)
+            })
+            .collect();
+        cx.notify();
+    }
+
     pub fn add_param(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key")));
         let value = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.value")));

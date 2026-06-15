@@ -72,6 +72,29 @@ impl RequestPathParams {
             .collect()
     }
 
+    /// Rebuilds all rows from the given params without writing back to
+    /// `HttpState`. Used by undo/redo. Rebuilding (rather than `set_value`)
+    /// avoids firing `Change` events.
+    pub fn reset(
+        &mut self,
+        params: Vec<PathParameter>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.rows = params
+            .into_iter()
+            .map(|p| {
+                let value = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&p.value)
+                        .placeholder("Value")
+                });
+                Self::make_row(p.name.clone(), value, cx)
+            })
+            .collect();
+        cx.notify();
+    }
+
     /// Updates the path parameters based on URL changes.
     /// Detects new placeholders and removes old ones, preserving existing values.
     pub fn update_from_url(&mut self, url: &str, window: &mut Window, cx: &mut Context<Self>) {

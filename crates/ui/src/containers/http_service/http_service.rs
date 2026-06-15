@@ -34,6 +34,7 @@ impl HttpService {
         let response_panel = cx.new(|cx| ResponsePanel::new(window, cx));
         http_state.update(cx, |s, _| s.set_response_panel(response_panel.downgrade()));
         let request_panel = cx.new(|cx| RequestPanel::new(http_state.clone(), window, cx));
+        http_state.update(cx, |s, _| s.set_request_panel(request_panel.downgrade()));
 
         Self {
             service,
@@ -59,7 +60,7 @@ impl Render for HttpService {
             .gap_4()
             .relative()
             // Keyboard shortcuts for Undo/Redo
-            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, _, cx| {
+            .on_key_down(cx.listener(move |this, event: &KeyDownEvent, window, cx| {
                 let modifier =
                     event.keystroke.modifiers.platform || event.keystroke.modifiers.control;
                 if !modifier || event.keystroke.key != "z" {
@@ -67,10 +68,10 @@ impl Render for HttpService {
                 }
                 if event.keystroke.modifiers.shift {
                     if can_redo {
-                        this.http_state.update(cx, |s, cx| s.redo(cx));
+                        this.http_state.update(cx, |s, cx| s.redo(window, cx));
                     }
                 } else if can_undo {
-                    this.http_state.update(cx, |s, cx| s.undo(cx));
+                    this.http_state.update(cx, |s, cx| s.undo(window, cx));
                 }
             }))
             .child(

@@ -7,6 +7,7 @@
 
 use super::param_utils::{build_url_with_query_params, merge_query_params, substitute_path_params};
 use super::request_body::BodyType;
+use super::request_panel::RequestPanel;
 use super::response_panel::ResponsePanel;
 use super::url_utils;
 use futures::StreamExt;
@@ -44,6 +45,9 @@ pub struct HttpState {
 
     /// Response view to write request results into (owned by `HttpService`).
     response_panel: Option<WeakEntity<ResponsePanel>>,
+
+    /// Request editing panel to rebuild on undo/redo (owned by `HttpService`).
+    request_panel: Option<WeakEntity<RequestPanel>>,
 
     // UI flags
     pub active_tab: RequestTab,
@@ -89,6 +93,7 @@ impl HttpState {
             body_type: BodyType::None,
             body: String::new(),
             response_panel: None,
+            request_panel: None,
             active_tab,
             is_loading: false,
             use_base_url,
@@ -117,6 +122,20 @@ impl HttpState {
     /// The live response view, if still present.
     fn response_panel(&self) -> Option<Entity<ResponsePanel>> {
         self.response_panel.as_ref().and_then(|p| p.upgrade())
+    }
+
+    /// Injects the request editing panel to rebuild on undo/redo (called by `HttpService`).
+    pub fn set_request_panel(&mut self, request_panel: WeakEntity<RequestPanel>) {
+        self.request_panel = Some(request_panel);
+    }
+
+    /// The live request editing panel, if still present.
+    fn request_panel(&self) -> Option<Entity<RequestPanel>> {
+        self.request_panel.as_ref().and_then(|p| p.upgrade())
+    }
+
+    pub fn body_type(&self) -> BodyType {
+        self.body_type
     }
 
     pub fn url(&self) -> &str {
@@ -207,9 +226,14 @@ impl HttpState {
     // === Draft state ===
 
     fn collect_current_draft_config(&self) -> HttpDraftConfig {
+        let model_body_type = match self.body_type {
+            BodyType::Json => models::BodyType::Json,
+            BodyType::Xml => models::BodyType::Xml,
+            _ => models::BodyType::Text,
+        };
         let body = self
             .body()
-            .map(|b| models::HttpBody::from_content(models::BodyType::Text, &b));
+            .map(|b| models::HttpBody::from_content(model_body_type, &b));
 
         HttpDraftConfig {
             method: self.method(),
@@ -255,15 +279,15 @@ impl HttpState {
         self.update_draft_from_ui(cx);
     }
 
-    pub fn undo(&mut self, cx: &mut Context<Self>) {
+    pub fn undo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(draft_config) = self.draft.undo() {
-            self.apply_draft_to_ui(&draft_config, cx);
+            self.apply_draft_to_ui(&draft_config, window, cx);
         }
     }
 
-    pub fn redo(&mut self, cx: &mut Context<Self>) {
+    pub fn redo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(draft_config) = self.draft.redo() {
-            self.apply_draft_to_ui(&draft_config, cx);
+            self.apply_draft_to_ui(&draft_config, window, cx);
         }
     }
 
@@ -275,10 +299,42 @@ impl HttpState {
         self.draft.can_redo()
     }
 
-    fn apply_draft_to_ui(&mut self, draft: &HttpDraftConfig, cx: &mut Context<Self>) {
-        // Only base-url toggle is reflected eagerly; other fields render from
-        // the stored draft on the next render.
+    /// Restores all snapshot fields from a draft config (after undo/redo) and
+    /// rebuilds the request editing inputs to reflect the restored values.
+    fn apply_draft_to_ui(
+        &mut self,
+        draft: &HttpDraftConfig,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.method = draft.method;
+        self.url = draft.path.to_string();
+        self.headers = draft.headers.clone();
+        self.query_params = draft.query_params.clone();
+        self.path_params = draft.path_params.clone();
         self.use_base_url = draft.use_base_url;
+        match &draft.body {
+            Some(b) => {
+                self.body = b.to_content();
+                self.body_type = match b.body_type {
+                    models::BodyType::None => BodyType::None,
+                    models::BodyType::Json => BodyType::Json,
+                    models::BodyType::Xml => BodyType::Xml,
+                    _ => BodyType::Text,
+                };
+            }
+            None => {
+                self.body = String::new();
+                self.body_type = BodyType::None;
+            }
+        }
+
+        // Rebuild the editing inputs from the restored snapshot. The panels
+        // rebuild their `InputState`s rather than `set_value`, so this does not
+        // trigger writeback into the draft.
+        if let Some(request_panel) = self.request_panel() {
+            request_panel.update(cx, |p, cx| p.reset_from_state(window, cx));
+        }
         cx.notify();
     }
 
@@ -509,9 +565,20 @@ impl HttpState {
         cx.spawn_in(
             window,
             async move |this: WeakEntity<Self>, cx: &mut AsyncWindowContext| {
-                let result = task.await.unwrap();
+                let join_result = task.await;
                 this.update_in(cx, |this, _, cx| this.set_loading(false, cx))
                     .ok();
+                let result = match join_result {
+                    Ok(result) => result,
+                    Err(e) => {
+                        response_panel
+                            .update_in(cx, |p, window, cx| {
+                                p.set_error(format!("Request task failed: {}", e), window, cx);
+                            })
+                            .ok();
+                        return;
+                    }
+                };
                 Self::handle_response(result, response_panel, cx).await;
             },
         )

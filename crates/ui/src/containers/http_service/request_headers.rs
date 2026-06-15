@@ -75,6 +75,29 @@ impl RequestHeaders {
             .update(cx, |s, cx| s.set_headers(headers, cx));
     }
 
+    /// Rebuilds all rows from the given headers without writing back to
+    /// `HttpState`. Used by undo/redo to reflect restored state in the inputs.
+    /// Rebuilding (rather than `set_value`) avoids firing `Change` events.
+    pub fn reset(&mut self, headers: Vec<Header>, window: &mut Window, cx: &mut Context<Self>) {
+        self.rows = headers
+            .into_iter()
+            .map(|h| {
+                let key = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&h.key)
+                        .placeholder("Key")
+                });
+                let value = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .default_value(&h.value)
+                        .placeholder("Value")
+                });
+                Self::make_row(key, value, cx)
+            })
+            .collect();
+        cx.notify();
+    }
+
     pub fn add_header(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let key = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.key")));
         let value = cx.new(|cx| InputState::new(window, cx).placeholder(shared_t!("common.value")));

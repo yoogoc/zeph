@@ -73,6 +73,38 @@ impl RequestBody {
     pub fn body(&self, cx: &App) -> String {
         self.editor.read(cx).value().to_string()
     }
+
+    /// Rebuilds the editor from the given body/type without writing back to
+    /// `HttpState`. Used by undo/redo. Rebuilding the editor entity (rather than
+    /// `set_value`) avoids firing a `Change` event.
+    pub fn reset(
+        &mut self,
+        body_type: BodyType,
+        body: String,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let editor = cx.new(|cx| {
+            InputState::new(window, cx)
+                .code_editor("json")
+                .tab_size(TabSize {
+                    tab_size: 2,
+                    hard_tabs: false,
+                })
+                .line_number(true)
+                .default_value(&body)
+        });
+        let subscription = cx.subscribe(&editor, |this, _, event: &InputEvent, cx| {
+            if matches!(event, InputEvent::Change) {
+                let body = this.body(cx);
+                this.http_state.update(cx, |s, cx| s.set_body(body, cx));
+            }
+        });
+        self.body_type = body_type;
+        self.editor = editor;
+        self._subscription = subscription;
+        cx.notify();
+    }
 }
 
 impl Render for RequestBody {

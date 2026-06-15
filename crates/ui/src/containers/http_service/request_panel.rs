@@ -53,20 +53,7 @@ impl RequestPanel {
             cx.new(|cx| RequestPathParams::new(http_state.clone(), path_params, window, cx));
 
         // React to URL edits: sync to HttpState + refresh path params.
-        let url_subscription = cx.subscribe_in(
-            &url,
-            window,
-            |this, url_entity, event: &InputEvent, window, cx| {
-                if !matches!(event, InputEvent::Change) {
-                    return;
-                }
-                let url_value = url_entity.read(cx).value().to_string();
-                this.path_params_panel.update(cx, |panel, cx| {
-                    panel.update_from_url(&url_value, window, cx);
-                });
-                this.http_state.update(cx, |s, cx| s.set_url(url_value, cx));
-            },
-        );
+        let url_subscription = Self::wire_url_subscription(&url, window, cx);
 
         Self {
             http_state,
@@ -78,6 +65,60 @@ impl RequestPanel {
             path_params_panel,
             _url_subscription: url_subscription,
         }
+    }
+
+    /// Wires the URL `Change` subscription: syncs the value to `HttpState` and
+    /// refreshes the path-param panel from the new URL.
+    fn wire_url_subscription(
+        url: &Entity<InputState>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Subscription {
+        cx.subscribe_in(
+            url,
+            window,
+            |this, url_entity, event: &InputEvent, window, cx| {
+                if !matches!(event, InputEvent::Change) {
+                    return;
+                }
+                let url_value = url_entity.read(cx).value().to_string();
+                this.path_params_panel.update(cx, |panel, cx| {
+                    panel.update_from_url(&url_value, window, cx);
+                });
+                this.http_state.update(cx, |s, cx| s.set_url(url_value, cx));
+            },
+        )
+    }
+
+    /// Rebuilds all editing inputs from the current `HttpState` snapshot without
+    /// writing back into the draft. Used by undo/redo to reflect restored state.
+    pub fn reset_from_state(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let state = self.http_state.read(cx);
+        let url_value = state.url().to_string();
+        let headers = state.headers();
+        let query_params = state.query_params();
+        let path_params = state.path_params();
+        let method = state.method();
+        let body_type = state.body_type();
+        let body = state.body().unwrap_or_default();
+
+        // Rebuild the URL input (rebuilding rather than `set_value` avoids
+        // firing a `Change` event that would write back into the draft).
+        let url = cx.new(|cx| InputState::new(window, cx).default_value(&url_value));
+        self._url_subscription = Self::wire_url_subscription(&url, window, cx);
+        self.url = url;
+
+        self.method_selector
+            .update(cx, |p, cx| p.reset(method, window, cx));
+        self.body_panel
+            .update(cx, |p, cx| p.reset(body_type, body, window, cx));
+        self.headers_panel
+            .update(cx, |p, cx| p.reset(headers, window, cx));
+        self.query_params_panel
+            .update(cx, |p, cx| p.reset(query_params, window, cx));
+        self.path_params_panel
+            .update(cx, |p, cx| p.reset(path_params, window, cx));
+        cx.notify();
     }
 }
 
