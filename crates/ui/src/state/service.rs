@@ -1,3 +1,4 @@
+use crate::containers::grpc_service::GrpcService;
 use crate::containers::{FolderDetailPage, HttpService};
 use crate::state::{build_tree, ContentViewHandle, EnvironmentState, PlaceholderView};
 use gpui::*;
@@ -84,20 +85,18 @@ impl ServiceState {
         self.unsaved.contains(&service_id)
     }
 
-    /// Creates a new untitled HTTP request as a draft tab: it is added to
-    /// `services` (so lookups/draft work) and opened as a tab, but is NOT written
-    /// to the DB and does NOT appear in the sidebar tree until first saved.
+    /// Creates a new untitled request of the given type as a draft tab: it is
+    /// added to `services` (so lookups/draft work) and opened as a tab, but is
+    /// NOT written to the DB and does NOT appear in the sidebar tree until first
+    /// saved.
     pub fn create_untitled_request(
         &mut self,
+        service_type: ServiceType,
         folder_id: Option<Uuid>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        let mut service = Service::new(
-            self.workspace_id,
-            "Untitled",
-            ServiceType::Http(HttpConfig::default()),
-        );
+        let mut service = Service::new(self.workspace_id, "Untitled", service_type);
         service.folder_id = folder_id;
         let id = service.id;
 
@@ -116,11 +115,22 @@ impl ServiceState {
         new_config: HttpConfig,
         cx: &mut Context<Self>,
     ) {
+        self.commit_unsaved_service_typed(service_id, ServiceType::Http(new_config), cx);
+    }
+
+    /// First-save of an untitled draft with an explicit service type (used by
+    /// both HTTP and gRPC). See [`commit_unsaved_service`].
+    pub fn commit_unsaved_service_typed(
+        &mut self,
+        service_id: Uuid,
+        service_type: ServiceType,
+        cx: &mut Context<Self>,
+    ) {
         let Some(service) = self.services.iter_mut().find(|s| s.id == service_id) else {
             error!("Unsaved service {} not found", service_id);
             return;
         };
-        service.service_type = ServiceType::Http(new_config);
+        service.service_type = service_type;
         service.updated_at = chrono::Utc::now().timestamp();
         let service = service.clone();
 
@@ -142,12 +152,23 @@ impl ServiceState {
         new_config: HttpConfig,
         cx: &mut Context<Self>,
     ) {
+        self.update_service_config_typed(service_id, ServiceType::Http(new_config), cx);
+    }
+
+    /// Writes an explicit service type to a service (DB + in-memory), used by
+    /// both HTTP and gRPC save paths.
+    pub fn update_service_config_typed(
+        &mut self,
+        service_id: Uuid,
+        service_type: ServiceType,
+        cx: &mut Context<Self>,
+    ) {
         let Some(service) = self.services.iter().find(|s| s.id == service_id).cloned() else {
             error!("Service {} not found", service_id);
             return;
         };
         let mut updated = service;
-        updated.service_type = ServiceType::Http(new_config);
+        updated.service_type = service_type;
 
         let storage = GlobalStorage::global(cx);
         if let Err(e) = storage.service.update(&updated) {
@@ -525,12 +546,10 @@ impl ServiceState {
                     Box::new(cx.new(|cx| HttpService::new(service, service_state, window, cx)))
                     // env_state is read from service_state inside HttpState.
                 }
-                ServiceType::Grpc(_) => placeholder(
-                    cx,
-                    service.name.clone(),
-                    "Grpc Page Coming soon...",
-                    IconName::Globe,
-                ),
+                ServiceType::Grpc(_) => {
+                    let service_state = cx.entity();
+                    Box::new(cx.new(|cx| GrpcService::new(service, service_state, window, cx)))
+                }
                 ServiceType::WebSocket(_) => placeholder(
                     cx,
                     service.name.clone(),

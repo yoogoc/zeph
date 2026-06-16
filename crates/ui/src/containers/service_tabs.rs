@@ -2,6 +2,7 @@ use crate::state::ServiceState;
 use gpui::*;
 use gpui_component::button::{Button, ButtonRounded};
 use gpui_component::input::{Input, InputState};
+use gpui_component::menu::DropdownMenu;
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{IconName, Sizable};
 use uuid::Uuid;
@@ -68,16 +69,44 @@ impl Render for ServiceTabs {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ss = self.service_state.read(cx);
 
-        // "+" button to open a new untitled request; always available.
+        // "+" button to open a new untitled request; always available. The
+        // dropdown lets the user pick the request type (HTTP / gRPC).
         let new_request_button = Button::new("new_untitled_request")
             .xsmall()
             .rounded(ButtonRounded::Large)
             .icon(IconName::Plus)
-            .on_click(cx.listener(|this, _, window, cx| {
-                this.service_state.update(cx, |s, cx| {
-                    s.create_untitled_request(None, window, cx);
-                });
-            }));
+            .dropdown_menu({
+                let service_state = self.service_state.clone();
+                move |menu, _window, _cx| {
+                    use gpui_component::menu::PopupMenuItem;
+                    let ss_http = service_state.clone();
+                    let ss_grpc = service_state.clone();
+                    menu.item(
+                        PopupMenuItem::new("HTTP Request").on_click(move |_, window, cx| {
+                            ss_http.update(cx, |s, cx| {
+                                s.create_untitled_request(
+                                    models::ServiceType::Http(models::HttpConfig::default()),
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                    )
+                    .item(
+                        PopupMenuItem::new("gRPC Request").on_click(move |_, window, cx| {
+                            ss_grpc.update(cx, |s, cx| {
+                                s.create_untitled_request(
+                                    models::ServiceType::Grpc(models::GrpcConfig::default()),
+                                    None,
+                                    window,
+                                    cx,
+                                );
+                            });
+                        }),
+                    )
+                }
+            });
 
         if ss.open_views().is_empty() {
             return div().pl_1().child(new_request_button).into_any_element();

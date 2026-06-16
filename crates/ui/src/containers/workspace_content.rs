@@ -49,7 +49,12 @@ impl WorkspaceContent {
 
     fn on_new_request(&mut self, _: &NewRequest, window: &mut Window, cx: &mut Context<Self>) {
         self.service_state.update(cx, |s, cx| {
-            s.create_untitled_request(None, window, cx);
+            s.create_untitled_request(
+                models::ServiceType::Http(models::HttpConfig::default()),
+                None,
+                window,
+                cx,
+            );
         });
     }
 }

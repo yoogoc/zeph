@@ -91,13 +91,33 @@ pub fn popup_menu(
         );
     }
 
-    // Direct: New Request (untitled draft tab; not persisted until saved)
+    // Direct: New Request (untitled draft tab; not persisted until saved).
+    // Two items, one per request type.
     if let Some(folder_id) = new_request_folder {
-        let service_state = service_state.clone();
+        let ss_http = service_state.clone();
         menu = menu.item(
-            PopupMenuItem::new("New Request").on_click(move |_, window, cx| {
-                service_state.update(cx, |s, cx| {
-                    s.create_untitled_request(folder_id, window, cx);
+            PopupMenuItem::new("New HTTP Request").on_click(move |_, window, cx| {
+                ss_http.update(cx, |s, cx| {
+                    s.create_untitled_request(
+                        models::ServiceType::Http(models::HttpConfig::default()),
+                        folder_id,
+                        window,
+                        cx,
+                    );
+                });
+                cx.stop_propagation();
+            }),
+        );
+        let ss_grpc = service_state.clone();
+        menu = menu.item(
+            PopupMenuItem::new("New gRPC Request").on_click(move |_, window, cx| {
+                ss_grpc.update(cx, |s, cx| {
+                    s.create_untitled_request(
+                        models::ServiceType::Grpc(models::GrpcConfig::default()),
+                        folder_id,
+                        window,
+                        cx,
+                    );
                 });
                 cx.stop_propagation();
             }),
