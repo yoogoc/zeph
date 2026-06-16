@@ -3,19 +3,14 @@ use crate::state::ApplicationState;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
+use gpui_component::dialog::DialogButtonProps;
 use gpui_component::input::{Input, InputState};
 use gpui_component::{IconName, StyledExt, WindowExt};
 use models::CreateWorkspace;
 
-pub enum HomePageEvent {
-    CreateWorkspace(CreateWorkspace),
-}
-
 pub struct HomePage {
     workspace_state: Entity<ApplicationState>,
 }
-
-impl EventEmitter<HomePageEvent> for HomePage {}
 
 impl HomePage {
     pub fn new(workspace_state: Entity<ApplicationState>) -> Self {
@@ -23,47 +18,63 @@ impl HomePage {
     }
 
     fn open_create_dialog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let this = cx.entity().downgrade();
+        let workspace_state = self.workspace_state.clone();
         let input = cx.new(|cx| InputState::new(window, cx).placeholder("Workspace name"));
         let create_sample = std::rc::Rc::new(std::cell::Cell::new(true));
 
-        window.open_dialog(cx, move |dialog, _window, _cx| {
-            let input_clone = input.clone();
-            let this_clone = this.clone();
+        // Use an alert dialog so the OK/Cancel action buttons render (a bare
+        // `Dialog` is only a content container and shows no buttons).
+        window.open_alert_dialog(cx, move |alert, _window, _cx| {
+            let input_body = input.clone();
+            let input_ok = input.clone();
+            let workspace_state = workspace_state.clone();
             let create_sample_clone = create_sample.clone();
             let create_sample_for_checkbox = create_sample.clone();
 
-            dialog
+            alert
                 .title(shared_t!("workspaces.create"))
-                .w(px(400.0))
-                .child(
-                    div()
-                        .v_flex()
-                        .gap_3()
-                        .child(Input::new(&input).w_full())
-                        .child(
-                            Checkbox::new("create_sample_services")
-                                .label(shared_t!("workspaces.create_sample_services"))
-                                .checked(create_sample_for_checkbox.get())
-                                .on_click(move |checked, _, _| {
-                                    create_sample_for_checkbox.set(*checked);
-                                }),
-                        ),
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text(shared_t!("workspaces.create"))
+                        .cancel_text(shared_t!("common.cancel"))
+                        .show_cancel(true),
                 )
+                .content(move |content, _window, _cx| {
+                    content.child(
+                        div()
+                            .v_flex()
+                            .gap_3()
+                            .child(Input::new(&input_body).w_full())
+                            .child(
+                                Checkbox::new("create_sample_services")
+                                    .label(shared_t!("workspaces.create_sample_services"))
+                                    .checked(create_sample_for_checkbox.get())
+                                    .on_click({
+                                        let create_sample_for_checkbox =
+                                            create_sample_for_checkbox.clone();
+                                        move |checked, _, _| {
+                                            create_sample_for_checkbox.set(*checked);
+                                        }
+                                    }),
+                            ),
+                    )
+                })
                 .on_ok(move |_, window, cx| {
-                    let name = input_clone.read(cx).value();
-                    if !name.trim().is_empty() {
-                        if let Some(this) = this_clone.upgrade() {
-                            let create_sample_services = create_sample_clone.get();
-                            this.update(cx, |_, cx| {
-                                cx.emit(HomePageEvent::CreateWorkspace(CreateWorkspace {
-                                    name,
-                                    create_sample_services,
-                                }));
-                            });
-                        }
+                    let name = input_ok.read(cx).value();
+                    if name.trim().is_empty() {
+                        return false; // keep open until a name is provided
                     }
-                    window.close_dialog(cx);
+                    let create_sample_services = create_sample_clone.get();
+                    workspace_state.update(cx, |ws, cx| {
+                        ws.create_workspace(
+                            CreateWorkspace {
+                                name,
+                                create_sample_services,
+                            },
+                            window,
+                            cx,
+                        );
+                    });
                     true
                 })
         });

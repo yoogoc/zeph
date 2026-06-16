@@ -1,7 +1,7 @@
 use crate::containers::WorkspaceArea;
 use crate::state::WorkspaceState;
 use gpui::{AnyView, AppContext as _, Context, SharedString, Window};
-use models::Workspace;
+use models::{CreateWorkspace, Workspace};
 use register::GlobalStorage;
 use uuid::Uuid;
 
@@ -38,6 +38,28 @@ impl ApplicationState {
             .unwrap_or(Vec::new());
 
         self.workspaces = workspaces;
+    }
+
+    /// Creates a new workspace (persists it, adds it to the list) and opens it.
+    pub fn create_workspace(
+        &mut self,
+        param: CreateWorkspace,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let workspace = Workspace::new(param.name);
+        let id = workspace.id;
+
+        if let Err(e) = GlobalStorage::global(cx).workspace.insert(&workspace) {
+            log::error!("Failed to create workspace: {e}");
+            return;
+        }
+        // TODO: seed sample services when `param.create_sample_services` is set
+        // (no sample-service generator exists yet).
+
+        self.workspaces.push(workspace);
+        self.open_workspace(id, window, cx);
+        cx.notify();
     }
 
     pub fn open_workspace(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
