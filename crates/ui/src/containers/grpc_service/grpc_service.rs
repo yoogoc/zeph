@@ -4,6 +4,7 @@
 //! response panel, driving the `GrpcState` entity which holds all logic.
 
 use super::grpc_client::MethodInfo;
+use super::grpc_metadata::GrpcMetadata;
 use super::grpc_response_panel::GrpcResponsePanel;
 use super::grpc_state::{DefinitionSource, GrpcState};
 use gpui::prelude::FluentBuilder;
@@ -15,7 +16,6 @@ use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
 use gpui_component::spinner::Spinner;
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{h_flex, v_flex, Disableable, IndexPath, Sizable};
-use models::Header;
 use uuid::Uuid;
 
 /// Which editing tab is visible in the upper area. Order matches the tab bar
@@ -52,6 +52,7 @@ pub struct GrpcService {
     endpoint: Entity<InputState>,
     proto: Entity<InputState>,
     request_body: Entity<InputState>,
+    metadata_panel: Entity<GrpcMetadata>,
     method_select: Entity<SelectState<Vec<MethodChoice>>>,
     /// Signature of the method list the `method_select` was built from; when the
     /// state's method list changes (e.g. after reflection), the select rebuilds.
@@ -73,12 +74,21 @@ impl GrpcService {
         let response_panel = cx.new(|cx| GrpcResponsePanel::new(window, cx));
         grpc_state.update(cx, |s, _| s.set_response_panel(response_panel.downgrade()));
 
-        let (endpoint_val, proto_val, body_val, method_choices, method_ix, method_sig) = {
+        let (
+            endpoint_val,
+            proto_val,
+            body_val,
+            metadata_val,
+            method_choices,
+            method_ix,
+            method_sig,
+        ) = {
             let st = grpc_state.read(cx);
             (
                 st.endpoint().to_string(),
                 st.proto_content().to_string(),
                 st.request_body().to_string(),
+                st.metadata().to_vec(),
                 Self::method_choices(st),
                 st.selected_method_index(),
                 Self::sig_of(st.methods().iter()),
@@ -106,6 +116,8 @@ impl GrpcService {
                 .line_number(true)
                 .default_value(&body_val)
         });
+        let metadata_panel =
+            cx.new(|cx| GrpcMetadata::new(grpc_state.clone(), metadata_val, window, cx));
         let method_select = cx
             .new(|cx| SelectState::new(method_choices, method_ix.map(IndexPath::new), window, cx));
 
@@ -153,6 +165,7 @@ impl GrpcService {
             endpoint,
             proto,
             request_body,
+            metadata_panel,
             method_select,
             method_sig,
             active_tab: EditTab::default(),
@@ -380,50 +393,6 @@ impl GrpcService {
                 el.child(div().text_sm().text_color(gpui::rgb(0xdc3545)).child(err))
             })
     }
-
-    fn render_metadata(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let metadata: Vec<Header> = self.grpc_state.read(cx).metadata().to_vec();
-        v_flex()
-            .gap_1()
-            .child(
-                h_flex()
-                    .justify_between()
-                    .items_center()
-                    .child("Metadata")
-                    .child(
-                        Button::new("add_metadata")
-                            .xsmall()
-                            .label("+")
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.grpc_state.update(cx, |s, cx| {
-                                    let mut m = s.metadata().to_vec();
-                                    m.push(Header::new("", ""));
-                                    s.set_metadata(m, cx);
-                                });
-                            })),
-                    ),
-            )
-            .children(metadata.into_iter().enumerate().map(|(i, h)| {
-                h_flex()
-                    .gap_2()
-                    .child(div().flex_1().child(h.key.to_string()))
-                    .child(div().flex_1().child(h.value.to_string()))
-                    .child(
-                        Button::new(("rm_meta", i))
-                            .xsmall()
-                            .label("×")
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.grpc_state.update(cx, |s, cx| {
-                                    let mut m = s.metadata().to_vec();
-                                    if i < m.len() {
-                                        m.remove(i);
-                                    }
-                                    s.set_metadata(m, cx);
-                                });
-                            })),
-                    )
-            }))
-    }
 }
 
 impl Render for GrpcService {
@@ -459,7 +428,7 @@ impl Render for GrpcService {
                         .child(Input::new(&self.request_body).h_full()),
                 )
                 .into_any_element(),
-            EditTab::Metadata => self.render_metadata(cx).into_any_element(),
+            EditTab::Metadata => self.metadata_panel.clone().into_any_element(),
         };
 
         v_flex()
