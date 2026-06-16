@@ -25,6 +25,8 @@ pub fn popup_menu(
 
     // Direct action parameters
     let mut detail_action: Option<DetailAction> = None;
+    // `Some(folder_id)` enables a "New Request" (untitled draft) item.
+    let mut new_request_folder: Option<Option<uuid::Uuid>> = None;
     let mut create_service_params: Option<(SharedString, Option<uuid::Uuid>)> = None;
     let mut create_schema_params: Option<(SharedString, Option<uuid::Uuid>)> = None;
     let mut create_folder_params: Option<(SharedString, Option<uuid::Uuid>, FolderType)> = None;
@@ -37,6 +39,7 @@ pub fn popup_menu(
 
     match id {
         TreeId::ServiceRoot => {
+            new_request_folder = Some(None);
             create_service_params = Some(("New Service".into(), None));
             create_folder_params = Some(("New Folder".into(), None, FolderType::Service));
             import_folder_id = Some(None);
@@ -56,6 +59,7 @@ pub fn popup_menu(
         }
         TreeId::ServiceFolder(id) => {
             detail_action = Some(DetailAction::Folder(id));
+            new_request_folder = Some(Some(id));
             create_service_params = Some(("New Service".into(), Some(id)));
             create_folder_params = Some(("New Folder".into(), Some(id), FolderType::Service));
             import_folder_id = Some(Some(id));
@@ -81,6 +85,19 @@ pub fn popup_menu(
                     // TODO: schema detail page not implemented yet.
                     DetailAction::Schema(_) => {}
                     DetailAction::Folder(id) => s.open_folder_detail(id, window, cx),
+                });
+                cx.stop_propagation();
+            }),
+        );
+    }
+
+    // Direct: New Request (untitled draft tab; not persisted until saved)
+    if let Some(folder_id) = new_request_folder {
+        let service_state = service_state.clone();
+        menu = menu.item(
+            PopupMenuItem::new("New Request").on_click(move |_, window, cx| {
+                service_state.update(cx, |s, cx| {
+                    s.create_untitled_request(folder_id, window, cx);
                 });
                 cx.stop_propagation();
             }),

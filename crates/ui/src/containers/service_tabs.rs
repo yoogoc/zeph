@@ -68,8 +68,19 @@ impl Render for ServiceTabs {
     fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let ss = self.service_state.read(cx);
 
+        // "+" button to open a new untitled request; always available.
+        let new_request_button = Button::new("new_untitled_request")
+            .xsmall()
+            .rounded(ButtonRounded::Large)
+            .icon(IconName::Plus)
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.service_state.update(cx, |s, cx| {
+                    s.create_untitled_request(None, window, cx);
+                });
+            }));
+
         if ss.open_views().is_empty() {
-            return div().into_any_element();
+            return div().pl_1().child(new_request_button).into_any_element();
         }
 
         let current_active_view_id = ss.active_view_ix;
@@ -141,6 +152,8 @@ impl Render for ServiceTabs {
         div()
             .size_full()
             .pl_1()
+            .flex()
+            .items_center()
             .child(
                 TabBar::new("service_tabs")
                     .selected_index(current_active_view_id.unwrap_or_default())
@@ -159,6 +172,7 @@ impl Render for ServiceTabs {
                     }))
                     .children(tabs),
             )
+            .child(new_request_button)
             .into_any_element()
     }
 }

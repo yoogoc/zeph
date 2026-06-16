@@ -269,7 +269,12 @@ impl HttpState {
         };
         let service_id = self.service.id;
         self.service_state.update(cx, |s, cx| {
-            s.update_service_config(service_id, config.to_http_config(), cx);
+            if s.is_unsaved(service_id) {
+                // First save of an untitled draft: persist (insert) and promote it.
+                s.commit_unsaved_service(service_id, config.to_http_config(), cx);
+            } else {
+                s.update_service_config(service_id, config.to_http_config(), cx);
+            }
         });
         cx.notify();
     }

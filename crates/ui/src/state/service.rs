@@ -8,6 +8,7 @@ use models::{
     Folder, FolderType, Header, HttpConfig, Schema, SearchParameter, Service, ServiceType,
 };
 use register::GlobalStorage;
+use std::collections::HashSet;
 use uuid::Uuid;
 
 /// A cached open content view (mirrors `ApplicationState::Tab`).
@@ -31,6 +32,11 @@ pub struct ServiceState {
 
     /// Environment state for this workspace (provides active env base_url).
     pub env_state: Entity<EnvironmentState>,
+
+    /// Ids of services that exist only as open draft tabs (untitled requests):
+    /// present in `services` (so lookups work) and open as a tab, but not yet
+    /// persisted to the DB and hidden from the sidebar tree until first save.
+    unsaved: HashSet<Uuid>,
 }
 
 impl ServiceState {
@@ -69,7 +75,64 @@ impl ServiceState {
             open_views: vec![],
             active_view_ix: None,
             env_state,
+            unsaved: HashSet::new(),
         }
+    }
+
+    /// Whether `service_id` is an unsaved draft (untitled request not yet persisted).
+    pub fn is_unsaved(&self, service_id: Uuid) -> bool {
+        self.unsaved.contains(&service_id)
+    }
+
+    /// Creates a new untitled HTTP request as a draft tab: it is added to
+    /// `services` (so lookups/draft work) and opened as a tab, but is NOT written
+    /// to the DB and does NOT appear in the sidebar tree until first saved.
+    pub fn create_untitled_request(
+        &mut self,
+        folder_id: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut service = Service::new(
+            self.workspace_id,
+            "Untitled",
+            ServiceType::Http(HttpConfig::default()),
+        );
+        service.folder_id = folder_id;
+        let id = service.id;
+
+        self.services.push(service);
+        self.unsaved.insert(id);
+        // No DB write and no tree rebuild: the draft stays out of the tree.
+        self.open_service(id, window, cx);
+    }
+
+    /// First-save of an untitled draft: writes the config into the in-memory
+    /// service, inserts it into the DB, promotes it out of the unsaved set, and
+    /// rebuilds the tree so it now appears as a normal service.
+    pub fn commit_unsaved_service(
+        &mut self,
+        service_id: Uuid,
+        new_config: HttpConfig,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(service) = self.services.iter_mut().find(|s| s.id == service_id) else {
+            error!("Unsaved service {} not found", service_id);
+            return;
+        };
+        service.service_type = ServiceType::Http(new_config);
+        service.updated_at = chrono::Utc::now().timestamp();
+        let service = service.clone();
+
+        let storage = GlobalStorage::global(cx);
+        if let Err(e) = storage.service.insert(&service) {
+            error!("Failed to persist untitled service {}: {}", service_id, e);
+            return;
+        }
+
+        self.unsaved.remove(&service_id);
+        self.rebuild_tree(cx);
+        cx.notify();
     }
 
     /// Writes a new HttpConfig to a service (DB + in-memory).
@@ -105,8 +168,15 @@ impl ServiceState {
     }
 
     /// Rebuilds the sidebar tree from the current folders/services/schemas.
+    /// Unsaved draft services are excluded — they exist only as open tabs.
     fn rebuild_tree(&mut self, cx: &mut Context<Self>) {
-        let items = build_tree(&self.folders, &self.services, &self.schemas);
+        let visible_services: Vec<Service> = self
+            .services
+            .iter()
+            .filter(|s| !self.unsaved.contains(&s.id))
+            .cloned()
+            .collect();
+        let items = build_tree(&self.folders, &visible_services, &self.schemas);
         self.tree.update(cx, |state, cx| {
             state.set_items(items, cx);
         });
@@ -166,7 +236,19 @@ impl ServiceState {
     }
 
     pub fn close_content(&mut self, ix: usize, cx: &mut Context<Self>) {
+        let closing_id = self.open_views.get(ix).map(|e| e.view.id(cx));
         self.remove_view(ix);
+
+        // Closing an unsaved draft discards it entirely: it was never persisted,
+        // so drop the in-memory placeholder and any draft-table record it wrote.
+        if let Some(id) = closing_id {
+            if self.unsaved.remove(&id) {
+                self.services.retain(|s| s.id != id);
+                if let Err(e) = GlobalStorage::global(cx).draft.delete(id) {
+                    error!("Failed to delete draft for discarded request {}: {}", id, e);
+                }
+            }
+        }
         cx.notify();
     }
 
@@ -212,6 +294,22 @@ impl ServiceState {
         new_name: SharedString,
         cx: &mut Context<Self>,
     ) {
+        // Unsaved drafts have no DB row yet: rename in memory and on the tab only.
+        if self.unsaved.contains(&service_id) {
+            if let Some(s) = self.services.iter_mut().find(|s| s.id == service_id) {
+                s.name = new_name.clone();
+            }
+            if let Some(ix) = self
+                .open_views
+                .iter()
+                .position(|e| e.view.id(cx) == service_id)
+            {
+                self.open_views[ix].view.set_title(new_name, cx);
+            }
+            cx.notify();
+            return;
+        }
+
         let storage = GlobalStorage::global(cx);
 
         if let Some(service) = self.services.iter().find(|s| s.id == service_id).cloned() {
