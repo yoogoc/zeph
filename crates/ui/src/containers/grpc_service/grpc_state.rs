@@ -5,7 +5,7 @@
 //! calls via [`grpc_client`]. Per design choice A, gRPC does not use the CRDT
 //! draft/undo machinery — saving writes the `GrpcConfig` directly.
 
-use super::grpc_client::{call_unary, reflect, MethodInfo, ProtoDescriptors};
+use super::grpc_client::{self, call_stream, call_unary, reflect, MethodInfo, ProtoDescriptors};
 use super::grpc_response_panel::GrpcResponsePanel;
 use gpui::*;
 use gpui_tokio::Tokio;
@@ -52,9 +52,16 @@ pub struct GrpcState {
     /// Saved config to compare against for the modified flag.
     saved_config: GrpcConfig,
 
+    /// True only during a blocking unary call (shows the loading overlay).
     pub is_loading: bool,
-    /// The in-flight unary request task; dropping it cancels the request.
+    /// True while a streaming call (server/client/bidi) is open. Non-blocking:
+    /// the user sees appended messages and can finish/cancel.
+    stream_active: bool,
+    /// The in-flight request task; dropping it cancels the request.
     pending_request: Option<Task<()>>,
+    /// For client/bidi streaming: the open request stream's sender. Present only
+    /// while a client-streaming or bidi call is accepting more messages.
+    request_tx: Option<futures::channel::mpsc::Sender<Vec<u8>>>,
 
     /// Response view to write results into (owned by `GrpcResponsePanel`).
     response_panel: Option<WeakEntity<GrpcResponsePanel>>,
@@ -87,7 +94,9 @@ impl GrpcState {
             reflecting: false,
             saved_config: config,
             is_loading: false,
+            stream_active: false,
             pending_request: None,
+            request_tx: None,
             response_panel: None,
             service,
             service_state,
@@ -358,46 +367,107 @@ impl GrpcState {
         cx.notify();
     }
 
-    // === Send (unary) ===
+    // === Send ===
 
-    pub fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(response_panel) = self.response_panel() else {
-            return;
-        };
+    /// Streaming flags of the currently selected method, if known.
+    fn selected_streaming(&self) -> (bool, bool) {
+        self.methods
+            .iter()
+            .find(|m| m.service == self.selected_service && m.method == self.selected_method)
+            .map(|m| (m.client_streaming, m.server_streaming))
+            .unwrap_or((false, false))
+    }
 
+    /// Whether a streaming call (server/client/bidi) is currently open.
+    pub fn is_streaming(&self) -> bool {
+        self.stream_active
+    }
+
+    /// Whether the open stream still accepts more request messages (client/bidi).
+    pub fn can_send_more(&self) -> bool {
+        self.request_tx.is_some()
+    }
+
+    /// Validates prerequisites and returns (descriptors, endpoint, service,
+    /// method, metadata) for a send, or writes an error to the panel and returns
+    /// `None`.
+    fn prepare_send(
+        &self,
+        panel: &Entity<GrpcResponsePanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Option<(
+        Arc<ProtoDescriptors>,
+        String,
+        String,
+        String,
+        Vec<(String, String)>,
+    )> {
         let Some(descriptors) = self.descriptors.clone() else {
-            response_panel.update(cx, |p, cx| {
+            panel.update(cx, |p, cx| {
                 p.set_error("No compiled proto. Paste a valid .proto first.", window, cx)
             });
-            return;
+            return None;
         };
         if self.selected_method.is_empty() {
-            response_panel.update(cx, |p, cx| p.set_error("No method selected.", window, cx));
-            return;
+            panel.update(cx, |p, cx| p.set_error("No method selected.", window, cx));
+            return None;
         }
         if self.endpoint.trim().is_empty() {
-            response_panel.update(cx, |p, cx| p.set_error("Endpoint is empty.", window, cx));
-            return;
+            panel.update(cx, |p, cx| p.set_error("Endpoint is empty.", window, cx));
+            return None;
         }
-
-        self.is_loading = true;
-        response_panel.update(cx, |p, cx| p.clear(window, cx));
-        cx.notify();
-
-        let endpoint = self.endpoint.clone();
-        let service = self.selected_service.clone();
-        let method = self.selected_method.clone();
-        let request_json = if self.request_body.trim().is_empty() {
-            "{}".to_string()
-        } else {
-            self.request_body.clone()
-        };
-        let metadata: Vec<(String, String)> = self
+        let metadata = self
             .metadata
             .iter()
             .filter(|h| !h.key.trim().is_empty())
             .map(|h| (h.key.to_string(), h.value.to_string()))
             .collect();
+        Some((
+            descriptors,
+            self.endpoint.clone(),
+            self.selected_service.clone(),
+            self.selected_method.clone(),
+            metadata,
+        ))
+    }
+
+    fn current_request_json(&self) -> String {
+        if self.request_body.trim().is_empty() {
+            "{}".to_string()
+        } else {
+            self.request_body.clone()
+        }
+    }
+
+    pub fn send_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.response_panel() else {
+            return;
+        };
+        let (client_streaming, server_streaming) = self.selected_streaming();
+        if client_streaming || server_streaming {
+            self.start_stream(panel, client_streaming, window, cx);
+        } else {
+            self.send_unary(panel, window, cx);
+        }
+    }
+
+    fn send_unary(
+        &mut self,
+        panel: Entity<GrpcResponsePanel>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((descriptors, endpoint, service, method, metadata)) =
+            self.prepare_send(&panel, window, cx)
+        else {
+            return;
+        };
+        let request_json = self.current_request_json();
+
+        self.is_loading = true;
+        panel.update(cx, |p, cx| p.clear(window, cx));
+        cx.notify();
 
         let task = Tokio::spawn(cx, async move {
             call_unary(
@@ -411,7 +481,7 @@ impl GrpcState {
             .await
         });
 
-        let panel = response_panel.downgrade();
+        let panel = panel.downgrade();
         let pending = cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
             let result = task.await;
             this.update_in(cx, |this, _, cx| {
@@ -442,18 +512,152 @@ impl GrpcState {
                 }
             }
         });
-        // Hold the task so it keeps running; dropping it (via cancel) aborts it.
         self.pending_request = Some(pending);
     }
 
-    /// Cancels an in-flight request, if any, and resets the loading state.
+    /// Starts a streaming call (server / client / bidi). The first request
+    /// message is the current request body. For client/bidi the request stream
+    /// stays open (`request_tx` retained) so the user can send more messages and
+    /// finish; for server-only streaming it is closed immediately.
+    fn start_stream(
+        &mut self,
+        panel: Entity<GrpcResponsePanel>,
+        client_streaming: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let Some((descriptors, endpoint, service, method, metadata)) =
+            self.prepare_send(&panel, window, cx)
+        else {
+            return;
+        };
+
+        // Encode the first request message up-front so JSON errors surface now.
+        let first =
+            match descriptors.encode_message(&service, &method, &self.current_request_json()) {
+                Ok(bytes) => bytes,
+                Err(e) => {
+                    panel.update(cx, |p, cx| p.set_error(format!("Error: {e}"), window, cx));
+                    return;
+                }
+            };
+
+        // Streaming is non-blocking: mark the stream active (no loading overlay)
+        // so the user sees messages append and can finish/cancel.
+        self.stream_active = true;
+        panel.update(cx, |p, cx| p.clear(window, cx));
+
+        let (mut req_tx, req_rx) = futures::channel::mpsc::channel::<Vec<u8>>(16);
+        let (resp_tx, mut resp_rx) = futures::channel::mpsc::channel::<grpc_client::StreamItem>(16);
+
+        // Seed the first message; capacity reserved so this can't block.
+        let _ = req_tx.try_send(first);
+        if client_streaming {
+            // Keep the sender open for further messages + finish.
+            self.request_tx = Some(req_tx);
+        } else {
+            // Server-only streaming: half-close immediately.
+            drop(req_tx);
+        }
+
+        let call = Tokio::spawn(cx, async move {
+            call_stream(
+                descriptors,
+                endpoint,
+                service,
+                method,
+                metadata,
+                req_rx,
+                resp_tx,
+            )
+            .await
+        });
+
+        let panel = panel.downgrade();
+        let pending = cx.spawn_in(window, async move |this: WeakEntity<Self>, cx| {
+            use futures::StreamExt;
+            // Append each response message as it arrives.
+            while let Some(item) = resp_rx.next().await {
+                let panel = panel.clone();
+                match item {
+                    Ok(json) => {
+                        panel
+                            .update_in(cx, |p, window, cx| p.append(&json, window, cx))
+                            .ok();
+                    }
+                    Err(e) => {
+                        panel
+                            .update_in(cx, |p, window, cx| {
+                                p.append(&format!("[error] {e}"), window, cx)
+                            })
+                            .ok();
+                    }
+                }
+            }
+            // Stream finished (server closed or call ended). Surface setup errors.
+            if let Ok(Err(e)) = call.await {
+                panel
+                    .update_in(cx, |p, window, cx| {
+                        p.append(&format!("[error] {e}"), window, cx)
+                    })
+                    .ok();
+            }
+            this.update_in(cx, |this, _, cx| {
+                this.stream_active = false;
+                this.pending_request = None;
+                this.request_tx = None;
+                cx.notify();
+            })
+            .ok();
+        });
+        self.pending_request = Some(pending);
+        cx.notify();
+    }
+
+    /// Sends an additional request message on an open client/bidi stream.
+    pub fn send_stream_message(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(descriptors) = self.descriptors.clone() else {
+            return;
+        };
+        let service = self.selected_service.clone();
+        let method = self.selected_method.clone();
+        let json = self.current_request_json();
+        let bytes = match descriptors.encode_message(&service, &method, &json) {
+            Ok(b) => b,
+            Err(e) => {
+                if let Some(panel) = self.response_panel() {
+                    panel.update(cx, |p, cx| p.append(&format!("[error] {e}"), window, cx));
+                }
+                return;
+            }
+        };
+        if let Some(tx) = self.request_tx.as_mut() {
+            // Drop the message if the buffer is full rather than blocking the UI.
+            let _ = tx.try_send(bytes);
+        }
+        cx.notify();
+    }
+
+    /// Half-closes an open client/bidi stream: no more request messages, but the
+    /// server may keep responding until it closes its side.
+    pub fn finish_stream(&mut self, cx: &mut Context<Self>) {
+        // Dropping the sender signals end-of-request-stream to the server.
+        self.request_tx = None;
+        cx.notify();
+    }
+
+    /// Cancels an in-flight request/stream, if any, and resets all run state.
     pub fn cancel_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if self.pending_request.take().is_none() {
+        self.request_tx = None;
+        // Dropping the task aborts the underlying call (unary or streaming).
+        let had_task = self.pending_request.take().is_some();
+        if !self.is_loading && !self.stream_active && !had_task {
             return;
         }
         self.is_loading = false;
+        self.stream_active = false;
         if let Some(panel) = self.response_panel() {
-            panel.update(cx, |p, cx| p.set_error("Request cancelled.", window, cx));
+            panel.update(cx, |p, cx| p.append("[cancelled]", window, cx));
         }
         cx.notify();
     }

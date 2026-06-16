@@ -37,6 +37,20 @@ impl GrpcResponsePanel {
     pub fn set_error(&self, text: impl Into<String>, window: &mut Window, cx: &mut App) {
         self.set_response(text, window, cx);
     }
+
+    /// Appends a streamed message to the response, separating entries with a
+    /// blank line. Used for server/client/bidi streaming responses.
+    pub fn append(&self, text: impl Into<String>, window: &mut Window, cx: &mut App) {
+        let text = text.into();
+        self.response.update(cx, |state, cx| {
+            let chunk = if state.value().is_empty() {
+                text
+            } else {
+                format!("\n\n{text}")
+            };
+            state.insert(chunk, window, cx);
+        });
+    }
 }
 
 impl Render for GrpcResponsePanel {

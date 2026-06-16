@@ -115,6 +115,12 @@ impl ProtoDescriptors {
             .map_err(|e| anyhow!("serializing response: {e}"))?;
         Ok(String::from_utf8(buf)?)
     }
+
+    /// Encodes a JSON request message into protobuf bytes for the given method.
+    pub fn encode_message(&self, service: &str, method: &str, json: &str) -> Result<Vec<u8>> {
+        let md = self.method_descriptor(service, method)?;
+        self.encode_request(&md, json)
+    }
 }
 
 /// Performs a unary gRPC call and returns the response as pretty JSON.
@@ -171,6 +177,88 @@ pub async fn call_unary(
         .map_err(|status| anyhow!("gRPC call failed: {status}"))?;
 
     descriptors.decode_response(&method_desc, response.get_ref())
+}
+
+/// A response message from a streaming call: decoded JSON, or an error string.
+pub type StreamItem = Result<String, String>;
+
+/// Drives a streaming gRPC call (client / server / bidi).
+///
+/// `request_rx` yields already-encoded protobuf request messages (encode them
+/// via [`ProtoDescriptors::encode_message`] before sending). For server-only
+/// streaming, push the single request then drop the sender. Each decoded
+/// response message (as pretty JSON) is sent to `response_tx`; the call ends
+/// when the server closes the response stream. Returns `Ok(())` on clean
+/// completion or `Err` if the connection / call setup failed.
+pub async fn call_stream(
+    descriptors: std::sync::Arc<ProtoDescriptors>,
+    endpoint: String,
+    service: String,
+    method: String,
+    metadata: Vec<(String, String)>,
+    request_rx: futures::channel::mpsc::Receiver<Vec<u8>>,
+    response_tx: futures::channel::mpsc::Sender<StreamItem>,
+) -> Result<()> {
+    use futures::SinkExt;
+
+    let method_desc = descriptors.method_descriptor(&service, &method)?;
+    let path: tonic::codegen::http::uri::PathAndQuery = MethodInfo {
+        service: service.clone(),
+        method: method.clone(),
+        client_streaming: method_desc.is_client_streaming(),
+        server_streaming: method_desc.is_server_streaming(),
+    }
+    .path()
+    .parse()
+    .map_err(|e| anyhow!("invalid method path: {e}"))?;
+
+    let channel = tonic::transport::Channel::from_shared(endpoint.clone())
+        .map_err(|e| anyhow!("invalid endpoint {endpoint}: {e}"))?
+        .connect()
+        .await
+        .with_context(|| format!("connecting to {endpoint}"))?;
+
+    let mut client = tonic::client::Grpc::new(channel);
+    client
+        .ready()
+        .await
+        .map_err(|e| anyhow!("service not ready: {e}"))?;
+
+    let mut request = tonic::Request::new(request_rx);
+    for (k, v) in &metadata {
+        if let (Ok(key), Ok(val)) = (
+            tonic::metadata::MetadataKey::from_bytes(k.as_bytes()),
+            v.parse::<tonic::metadata::MetadataValue<_>>(),
+        ) {
+            request.metadata_mut().insert(key, val);
+        }
+    }
+
+    let response = client
+        .streaming(request, path, RawCodec)
+        .await
+        .map_err(|status| anyhow!("gRPC call failed: {status}"))?;
+    let mut stream = response.into_inner();
+
+    let mut tx = response_tx;
+    loop {
+        match stream.message().await {
+            Ok(Some(bytes)) => {
+                let item = descriptors
+                    .decode_response(&method_desc, &bytes)
+                    .map_err(|e| e.to_string());
+                if tx.send(item).await.is_err() {
+                    break; // receiver dropped (cancelled)
+                }
+            }
+            Ok(None) => break, // server closed the stream
+            Err(status) => {
+                let _ = tx.send(Err(format!("stream error: {status}"))).await;
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 // ===== Server reflection: discover services/methods from a running server. =====

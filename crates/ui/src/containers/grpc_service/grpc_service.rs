@@ -415,6 +415,8 @@ impl Render for GrpcService {
         let is_loading = st.is_loading;
         let is_modified = st.is_modified(cx);
         let has_methods = !st.methods().is_empty();
+        let is_streaming = st.is_streaming();
+        let can_send_more = st.can_send_more();
         let active_tab = self.active_tab;
         let response_panel = self.response_panel.clone();
 
@@ -464,16 +466,48 @@ impl Render for GrpcService {
                                 })),
                         )
                     })
-                    .child(
-                        Button::new("grpc_send")
-                            .primary()
-                            .label(if is_loading { "Sending..." } else { "Invoke" })
-                            .disabled(is_loading)
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.grpc_state
-                                    .update(cx, |s, cx| s.send_request(window, cx));
-                            })),
-                    )
+                    // While a stream is open: client/bidi can send more messages and
+                    // finish; every streaming type can cancel.
+                    .when(is_streaming, |el| {
+                        el.when(can_send_more, |el| {
+                            el.child(
+                                Button::new("grpc_stream_send")
+                                    .label("Send message")
+                                    .on_click(cx.listener(|this, _, window, cx| {
+                                        this.grpc_state
+                                            .update(cx, |s, cx| s.send_stream_message(window, cx));
+                                    })),
+                            )
+                            .child(
+                                Button::new("grpc_stream_finish")
+                                    .primary()
+                                    .label("Finish")
+                                    .on_click(cx.listener(|this, _, _, cx| {
+                                        this.grpc_state.update(cx, |s, cx| s.finish_stream(cx));
+                                    })),
+                            )
+                        })
+                        .child(
+                            Button::new("grpc_stream_cancel").label("Cancel").on_click(
+                                cx.listener(|this, _, window, cx| {
+                                    this.grpc_state
+                                        .update(cx, |s, cx| s.cancel_request(window, cx));
+                                }),
+                            ),
+                        )
+                    })
+                    .when(!is_streaming, |el| {
+                        el.child(
+                            Button::new("grpc_send")
+                                .primary()
+                                .label(if is_loading { "Sending..." } else { "Invoke" })
+                                .disabled(is_loading)
+                                .on_click(cx.listener(|this, _, window, cx| {
+                                    this.grpc_state
+                                        .update(cx, |s, cx| s.send_request(window, cx));
+                                })),
+                        )
+                    })
                     .child(
                         Button::new("grpc_save")
                             .label("Save")
@@ -519,7 +553,10 @@ impl Render for GrpcService {
                         ),
                     ),
             )
-            .when(is_loading, |this| {
+            // Blocking overlay only for non-interactive waits (unary / server
+            // streaming). For an open client/bidi stream the user keeps
+            // interacting, so no overlay — cancel lives inline in the top bar.
+            .when(is_loading && !is_streaming, |this| {
                 this.child(
                     div()
                         .absolute()
