@@ -265,6 +265,7 @@ impl SchemaEditor {
         cx: &mut Context<Self>,
     ) -> AnyElement {
         let id = node.id;
+        let is_root = parent_id.is_none();
         let is_field = parent_id.is_some() || self.root_is_field;
 
         let name_input = self.input_for(id, "name", node.name.as_ref(), "name", window, cx);
@@ -292,6 +293,22 @@ impl SchemaEditor {
             .pl(px(depth as f32 * 16.0))
             .when(is_field, |el| {
                 el.child(div().w(px(140.)).child(Input::new(&name_input)))
+            })
+            // Root node: a clear "root" badge in place of the (absent) name field.
+            .when(!is_field && is_root, |el| {
+                el.child(
+                    div().w(px(140.)).child(
+                        div()
+                            .px_2()
+                            .py_0p5()
+                            .rounded_md()
+                            .bg(rgb(0xeef2ff))
+                            .text_xs()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .text_color(rgb(0x4338ca))
+                            .child("root"),
+                    ),
+                )
             })
             .child(
                 div()
