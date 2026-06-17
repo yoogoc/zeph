@@ -43,6 +43,13 @@ pub struct HttpState {
     body: String,
     method: HttpMethod,
 
+    // === Design state (contract: parameters / request body / responses) ===
+    // Stored independently of the debug draft; saved directly (no undo).
+    design_parameters: Vec<models::Parameter>,
+    design_request_body: Option<models::RequestBody>,
+    design_responses: Vec<models::Response>,
+    design_security: Vec<SharedString>,
+
     /// Response view to write request results into (owned by `HttpService`).
     response_panel: Option<WeakEntity<ResponsePanel>>,
 
@@ -92,6 +99,10 @@ impl HttpState {
             path_params: config.path_params.clone(),
             body_type: BodyType::None,
             body: String::new(),
+            design_parameters: config.parameters.clone(),
+            design_request_body: config.request_body.clone(),
+            design_responses: config.responses.clone(),
+            design_security: config.security.clone(),
             response_panel: None,
             request_panel: None,
             active_tab,
@@ -268,14 +279,68 @@ impl HttpState {
             }
         };
         let service_id = self.service.id;
+        // The draft carries only debug fields; merge the design state back in so
+        // it isn't lost on save.
+        let http_config = self.merge_design(config.to_http_config());
         self.service_state.update(cx, |s, cx| {
             if s.is_unsaved(service_id) {
                 // First save of an untitled draft: persist (insert) and promote it.
-                s.commit_unsaved_service(service_id, config.to_http_config(), cx);
+                s.commit_unsaved_service(service_id, http_config.clone(), cx);
             } else {
-                s.update_service_config(service_id, config.to_http_config(), cx);
+                s.update_service_config(service_id, http_config.clone(), cx);
             }
         });
+        cx.notify();
+    }
+
+    /// Merges the design state (parameters / request body / responses / security)
+    /// into an `HttpConfig` rebuilt from the debug draft.
+    fn merge_design(&self, mut config: HttpConfig) -> HttpConfig {
+        config.parameters = self.design_parameters.clone();
+        config.request_body = self.design_request_body.clone();
+        config.responses = self.design_responses.clone();
+        config.security = self.design_security.clone();
+        config
+    }
+
+    // === Design state accessors ===
+
+    pub fn design_parameters(&self) -> &[models::Parameter] {
+        &self.design_parameters
+    }
+
+    pub fn set_design_parameters(
+        &mut self,
+        params: Vec<models::Parameter>,
+        cx: &mut Context<Self>,
+    ) {
+        self.design_parameters = params;
+        cx.notify();
+    }
+
+    pub fn design_request_body(&self) -> Option<&models::RequestBody> {
+        self.design_request_body.as_ref()
+    }
+
+    pub fn set_design_request_body(
+        &mut self,
+        body: Option<models::RequestBody>,
+        cx: &mut Context<Self>,
+    ) {
+        self.design_request_body = body;
+        cx.notify();
+    }
+
+    pub fn design_responses(&self) -> &[models::Response] {
+        &self.design_responses
+    }
+
+    pub fn set_design_responses(
+        &mut self,
+        responses: Vec<models::Response>,
+        cx: &mut Context<Self>,
+    ) {
+        self.design_responses = responses;
         cx.notify();
     }
 
