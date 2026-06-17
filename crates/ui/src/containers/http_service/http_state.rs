@@ -173,6 +173,15 @@ impl HttpState {
         self.path_params.clone()
     }
 
+    /// Renames this service (persists + updates the open tab title) via the
+    /// shared `ServiceState`.
+    pub fn rename(&self, new_name: SharedString, cx: &mut App) {
+        let service_id = self.service.id;
+        self.service_state.update(cx, |s, cx| {
+            s.rename_service(service_id, new_name, cx);
+        });
+    }
+
     /// Folder-inherited query params (for display in the query panel).
     pub fn folder_query_params(&self, cx: &App) -> Vec<QueryParameter> {
         let Some(folder_id) = self.folder_id else {

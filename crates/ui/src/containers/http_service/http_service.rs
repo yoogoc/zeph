@@ -11,8 +11,10 @@ use crate::Badge;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::resizable::{resizable_panel, v_resizable};
 use gpui_component::spinner::Spinner;
+use gpui_component::tab::{Tab, TabBar};
 use gpui_component::{h_flex, v_flex, Sizable};
 use uuid::Uuid;
 
@@ -32,6 +34,10 @@ pub struct HttpService {
     response_panel: Entity<ResponsePanel>,
     design_panel: Entity<DesignPanel>,
     mode: ViewMode,
+    /// Inline editor for the service name (shown after the mode tabs). `Some`
+    /// while editing; committed on Enter/Blur via the input's subscription.
+    name_input: Option<Entity<InputState>>,
+    _name_subscription: Option<Subscription>,
 }
 
 impl HttpService {
@@ -55,7 +61,45 @@ impl HttpService {
             response_panel,
             design_panel,
             mode: ViewMode::default(),
+            name_input: None,
+            _name_subscription: None,
         }
+    }
+
+    /// Begins inline editing of the service name.
+    fn start_name_edit(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self.service.name.clone();
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
+        input.update(cx, |state, cx| state.set_value(name, window, cx));
+        self._name_subscription =
+            Some(
+                cx.subscribe(&input, |this, _, event: &InputEvent, cx| match event {
+                    InputEvent::PressEnter { .. } | InputEvent::Blur => this.finish_name_edit(cx),
+                    _ => {}
+                }),
+            );
+        self.name_input = Some(input);
+        cx.notify();
+    }
+
+    fn finish_name_edit(&mut self, cx: &mut Context<Self>) {
+        if let Some(input) = self.name_input.clone() {
+            let new_name = input.read(cx).value().clone();
+            let trimmed = new_name.trim();
+            if !trimmed.is_empty() && trimmed.len() <= 255 {
+                let http_state = self.http_state.clone();
+                let new_name = new_name.clone();
+                // Defer: this runs inside the input subscription (mid-update of
+                // HttpService), and `rename` re-enters HttpService via
+                // `set_title`. Schedule it after the current update unwinds.
+                cx.defer(move |cx| {
+                    http_state.update(cx, |s, cx| s.rename(new_name.clone(), cx));
+                });
+            }
+        }
+        self.name_input = None;
+        self._name_subscription = None;
+        cx.notify();
     }
 }
 
@@ -67,17 +111,38 @@ impl Render for HttpService {
         let is_loading = state.is_loading;
         let response_panel = self.response_panel.clone();
         let mode = self.mode;
+        let service_name = self.service.name.clone();
 
-        // Mode switch: Design (contract) vs Debug (send).
-        let mode_button = |label: &'static str, m: ViewMode, active: bool| {
-            Button::new(label)
-                .label(label)
-                .xsmall()
-                .when(active, |b| b.primary())
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.mode = m;
-                    cx.notify();
-                }))
+        // Mode switch: Debug (send) vs Design (contract), as a tab bar.
+        let mode_tabs = TabBar::new("http-mode-tabs")
+            .selected_index(match mode {
+                ViewMode::Debug => 0,
+                ViewMode::Design => 1,
+            })
+            .child(Tab::new().label("Debug"))
+            .child(Tab::new().label("Design"))
+            .on_click(cx.listener(|this, index: &usize, _, cx| {
+                this.mode = match index {
+                    1 => ViewMode::Design,
+                    _ => ViewMode::Debug,
+                };
+                cx.notify();
+            }));
+
+        // Service name after the tabs; click to edit inline.
+        let name_el: AnyElement = if let Some(input) = &self.name_input {
+            Input::new(input).w(px(200.)).into_any_element()
+        } else {
+            div()
+                .id("service-name")
+                .px_2()
+                .text_sm()
+                .font_weight(FontWeight::MEDIUM)
+                .cursor_pointer()
+                .hover(|s| s.opacity(0.7))
+                .child(service_name)
+                .on_click(cx.listener(|this, _, window, cx| this.start_name_edit(window, cx)))
+                .into_any_element()
         };
 
         div()
@@ -108,16 +173,9 @@ impl Render for HttpService {
                     .child(
                         h_flex()
                             .gap_2()
-                            .child(mode_button(
-                                "Debug",
-                                ViewMode::Debug,
-                                mode == ViewMode::Debug,
-                            ))
-                            .child(mode_button(
-                                "Design",
-                                ViewMode::Design,
-                                mode == ViewMode::Design,
-                            )),
+                            .items_center()
+                            .child(mode_tabs)
+                            .child(name_el),
                     )
                     .map(|el| match mode {
                         ViewMode::Debug => el.child(
