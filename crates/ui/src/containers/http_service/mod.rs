@@ -9,8 +9,9 @@ mod request_panel;
 mod request_path_params;
 mod request_query_params;
 mod response_panel;
-mod schema_editor;
+pub mod schema_editor;
 pub mod url_utils;
 
 pub use http_service::*;
 pub use http_state::HttpState;
+pub use schema_editor::SchemaEditor;
