@@ -50,6 +50,11 @@ pub struct HttpState {
     design_responses: Vec<models::Response>,
     design_security: Vec<SharedString>,
 
+    /// Named-schema `$ref` candidates for the design view's schema editor.
+    /// Captured at construction (the open path runs mid-`ServiceState` update,
+    /// so it can't be read live).
+    schema_names: Vec<SharedString>,
+
     /// Response view to write request results into (owned by `HttpService`).
     response_panel: Option<WeakEntity<ResponsePanel>>,
 
@@ -68,6 +73,7 @@ impl HttpState {
     pub fn new(
         service: models::Service,
         service_state: Entity<crate::state::ServiceState>,
+        schema_names: Vec<SharedString>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -103,6 +109,7 @@ impl HttpState {
             design_request_body: config.request_body.clone(),
             design_responses: config.responses.clone(),
             design_security: config.security.clone(),
+            schema_names,
             response_panel: None,
             request_panel: None,
             active_tab,
@@ -183,14 +190,9 @@ impl HttpState {
     }
 
     /// Names of all named schemas in this workspace (for the schema editor's
-    /// "reference schema" type option).
-    pub fn schema_names(&self, cx: &App) -> Vec<SharedString> {
-        self.service_state
-            .read(cx)
-            .schemas
-            .iter()
-            .map(|s| s.name.clone())
-            .collect()
+    /// "reference schema" type option). Captured at construction.
+    pub fn schema_names(&self) -> Vec<SharedString> {
+        self.schema_names.clone()
     }
 
     /// Folder-inherited query params (for display in the query panel).

@@ -44,10 +44,12 @@ impl HttpService {
     pub fn new(
         service: models::Service,
         service_state: Entity<crate::state::ServiceState>,
+        schema_names: Vec<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let http_state = cx.new(|cx| HttpState::new(service.clone(), service_state, window, cx));
+        let http_state =
+            cx.new(|cx| HttpState::new(service.clone(), service_state, schema_names, window, cx));
         let response_panel = cx.new(|cx| ResponsePanel::new(window, cx));
         http_state.update(cx, |s, _| s.set_response_panel(response_panel.downgrade()));
         let request_panel = cx.new(|cx| RequestPanel::new(http_state.clone(), window, cx));
