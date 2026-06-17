@@ -1,7 +1,7 @@
 use crate::example::SERVICE_SIMPLES;
 use gpui::{App, Context, Global};
 use log::error;
-use models::{CreateWorkspace, HttpConfig, HttpMethod, Service, ServiceType, Workspace};
+use models::{CreateWorkspace, HttpConfig, Service, ServiceType, Workspace};
 use std::sync::Arc;
 use storage::{
     Database, DraftStore, EnvironmentStore, EnvironmentVariableStore, FolderQueryParameterStore,
@@ -70,7 +70,7 @@ impl GlobalStorage {
         cx.global::<Self>()
     }
 
-    pub fn create_workspace(&self, param: CreateWorkspace, cx: &mut Context<Self>) {
+    pub fn create_workspace(&self, param: CreateWorkspace, _cx: &mut Context<Self>) {
         let workspace = Workspace::new(param.name);
         self.workspace.insert(&workspace).ok();
         if param.create_sample_services {

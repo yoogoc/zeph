@@ -9,7 +9,8 @@ use models::FolderType;
 #[derive(Clone)]
 enum DetailAction {
     Service(uuid::Uuid),
-    Schema(uuid::Uuid),
+    // The id is carried for the not-yet-wired schema-detail view.
+    Schema(#[allow(dead_code)] uuid::Uuid),
     Folder(uuid::Uuid),
 }
 

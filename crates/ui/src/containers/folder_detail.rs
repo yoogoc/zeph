@@ -10,7 +10,7 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::StyledExt;
-use models::{Folder, Header, SearchParameter};
+use models::Folder;
 use uuid::Uuid;
 
 #[derive(Debug, Clone, PartialEq)]
