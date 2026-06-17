@@ -47,11 +47,3 @@ fn main() {
         .expect(&i18n::t("common.failed_open_window"));
     });
 }
-
-fn db_path() -> std::path::PathBuf {
-    let data_dir = dirs::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("zeph");
-    std::fs::create_dir_all(&data_dir).ok();
-    data_dir.join("zeph.db")
-}

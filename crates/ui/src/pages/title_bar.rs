@@ -12,7 +12,7 @@ pub struct TitleBar {
 impl TitleBar {
     pub fn new(
         _window: &mut Window,
-        cx: &mut Context<Self>,
+        _cx: &mut Context<Self>,
         tabs_state: Entity<ApplicationState>,
     ) -> Self {
         Self { tabs_state }
@@ -58,8 +58,8 @@ impl Render for TitleBar {
                                             .on_click({
                                                 let ts = self.tabs_state.clone();
                                                 let tab_id = tab.id.clone();
-                                                cx.listener(move |this, _, _, cx| {
-                                                    ts.update(cx, |ts, cx| {
+                                                cx.listener(move |_this, _, _, cx| {
+                                                    ts.update(cx, |ts, _cx| {
                                                         ts.close_tab(tab_id);
                                                     });
                                                     cx.stop_propagation();
