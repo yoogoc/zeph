@@ -3,71 +3,103 @@
 //! Renders a `SchemaNode` tree as indented rows. Each row edits one node:
 //! name, type, required, description, and example. Object/Array nodes expand
 //! their children inline (recursively); a node can be added, removed, have its
-//! type changed, or be extracted into a named schema (Ref).
+//! type changed (via a select that also lists "reference schema" options), or
+//! be extracted into a named schema (Ref).
 //!
-//! The tree is held as plain data; per-node text inputs are cached by node id
-//! and their `Change` events write back into the tree. The owner reads the
-//! edited tree via `root()` and is notified through the `on_change` callback.
+//! The tree is held as plain data; per-node text inputs and the type select are
+//! cached by node id and their events write back into the tree. The owner reads
+//! the edited tree via `root()`.
 
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::checkbox::Checkbox;
 use gpui_component::input::{Input, InputEvent, InputState};
-use gpui_component::{h_flex, v_flex, IconName, Sizable};
+use gpui_component::select::{Select, SelectEvent, SelectItem, SelectState};
+use gpui_component::{h_flex, v_flex, IconName, IndexPath, Sizable};
 use models::{SchemaNode, SchemaNodeType};
 use std::collections::HashMap;
 use uuid::Uuid;
 
-/// The scalar/composite type choices shown in the per-row type dropdown.
-const TYPE_LABELS: &[&str] = &["string", "integer", "number", "boolean", "object", "array"];
+/// The built-in scalar/composite type choices (shown before any schema refs).
+const BUILTIN_TYPES: &[&str] = &["string", "integer", "number", "boolean", "object", "array"];
 
-fn type_label(ty: &SchemaNodeType) -> &'static str {
-    match ty {
-        SchemaNodeType::String => "string",
-        SchemaNodeType::Integer => "integer",
-        SchemaNodeType::Number => "number",
-        SchemaNodeType::Boolean => "boolean",
-        SchemaNodeType::Enum(_) => "string",
-        SchemaNodeType::Object(_) => "object",
-        SchemaNodeType::Array(_) => "array",
-        SchemaNodeType::Ref(_) => "object",
+/// One option in the per-node type select: a built-in type or a reference to a
+/// named schema.
+#[derive(Clone, PartialEq)]
+enum TypeChoice {
+    Builtin(SharedString),
+    Ref(SharedString),
+}
+
+impl SelectItem for TypeChoice {
+    type Value = TypeChoice;
+    fn title(&self) -> SharedString {
+        match self {
+            TypeChoice::Builtin(s) => s.clone(),
+            TypeChoice::Ref(name) => format!("$ref: {name}").into(),
+        }
+    }
+    fn value(&self) -> &Self::Value {
+        self
     }
 }
 
-/// Builds a node type from a label, preserving children where sensible.
-fn type_from_label(label: &str, prev: &SchemaNodeType) -> SchemaNodeType {
-    match label {
-        "integer" => SchemaNodeType::Integer,
-        "number" => SchemaNodeType::Number,
-        "boolean" => SchemaNodeType::Boolean,
-        "object" => match prev {
-            SchemaNodeType::Object(children) => SchemaNodeType::Object(children.clone()),
-            _ => SchemaNodeType::Object(Vec::new()),
+fn type_label(ty: &SchemaNodeType) -> SharedString {
+    match ty {
+        SchemaNodeType::String => "string".into(),
+        SchemaNodeType::Integer => "integer".into(),
+        SchemaNodeType::Number => "number".into(),
+        SchemaNodeType::Boolean => "boolean".into(),
+        SchemaNodeType::Enum(_) => "string".into(),
+        SchemaNodeType::Object(_) => "object".into(),
+        SchemaNodeType::Array(_) => "array".into(),
+        SchemaNodeType::Ref(name) => format!("$ref: {name}").into(),
+    }
+}
+
+/// Builds a node type from a chosen option, preserving children where sensible.
+fn type_from_choice(choice: &TypeChoice, prev: &SchemaNodeType) -> SchemaNodeType {
+    match choice {
+        TypeChoice::Ref(name) => SchemaNodeType::Ref(name.clone()),
+        TypeChoice::Builtin(label) => match label.as_ref() {
+            "integer" => SchemaNodeType::Integer,
+            "number" => SchemaNodeType::Number,
+            "boolean" => SchemaNodeType::Boolean,
+            "object" => match prev {
+                SchemaNodeType::Object(children) => SchemaNodeType::Object(children.clone()),
+                _ => SchemaNodeType::Object(Vec::new()),
+            },
+            "array" => match prev {
+                SchemaNodeType::Array(item) => SchemaNodeType::Array(item.clone()),
+                _ => SchemaNodeType::Array(Box::new(SchemaNode::new("", SchemaNodeType::String))),
+            },
+            _ => SchemaNodeType::String,
         },
-        "array" => match prev {
-            SchemaNodeType::Array(item) => SchemaNodeType::Array(item.clone()),
-            _ => SchemaNodeType::Array(Box::new(SchemaNode::new("", SchemaNodeType::String))),
-        },
-        _ => SchemaNodeType::String,
     }
 }
 
 pub struct SchemaEditor {
     root: SchemaNode,
-    /// Cached name/example inputs, keyed by node id then field ("name"/"example").
+    /// Names of available named schemas, offered as `$ref` type options.
+    schema_names: Vec<SharedString>,
+    /// Cached text inputs, keyed by node id then field ("name"/"example"/"description").
     inputs: HashMap<(Uuid, &'static str), Entity<InputState>>,
+    /// Cached type selects, keyed by node id.
+    type_selects: HashMap<Uuid, Entity<SelectState<Vec<TypeChoice>>>>,
     subscriptions: Vec<Subscription>,
     /// Whether the root itself is editable as a field (false for a body root).
     root_is_field: bool,
 }
 
 impl SchemaEditor {
-    pub fn new(root: SchemaNode, cx: &mut Context<Self>) -> Self {
+    pub fn new(root: SchemaNode, schema_names: Vec<SharedString>, cx: &mut Context<Self>) -> Self {
         let _ = cx;
         Self {
             root,
+            schema_names,
             inputs: HashMap::new(),
+            type_selects: HashMap::new(),
             subscriptions: Vec::new(),
             root_is_field: false,
         }
@@ -78,13 +110,24 @@ impl SchemaEditor {
         &self.root
     }
 
-    /// Replaces the tree (e.g. when the design is reloaded). Clears input caches.
+    /// Replaces the tree (e.g. when the design is reloaded). Clears all caches.
     #[allow(dead_code)]
     pub fn set_root(&mut self, root: SchemaNode, cx: &mut Context<Self>) {
         self.root = root;
         self.inputs.clear();
+        self.type_selects.clear();
         self.subscriptions.clear();
         cx.notify();
+    }
+
+    /// All type options: the built-ins followed by one `$ref` per named schema.
+    fn type_options(&self) -> Vec<TypeChoice> {
+        let mut opts: Vec<TypeChoice> = BUILTIN_TYPES
+            .iter()
+            .map(|s| TypeChoice::Builtin((*s).into()))
+            .collect();
+        opts.extend(self.schema_names.iter().map(|n| TypeChoice::Ref(n.clone())));
+        opts
     }
 
     /// Finds a node by id (depth-first) and runs `f` on it.
@@ -120,13 +163,18 @@ impl SchemaEditor {
         id: Uuid,
         field: &'static str,
         initial: &str,
+        placeholder: &'static str,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Entity<InputState> {
         if let Some(input) = self.inputs.get(&(id, field)) {
             return input.clone();
         }
-        let input = cx.new(|cx| InputState::new(window, cx).default_value(initial));
+        let input = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(placeholder)
+                .default_value(initial)
+        });
         let sub = cx.subscribe(&input, move |this, ent, ev: &InputEvent, cx| {
             if matches!(ev, InputEvent::Change) {
                 let value = ent.read(cx).value().to_string();
@@ -153,6 +201,40 @@ impl SchemaEditor {
         self.subscriptions.push(sub);
         self.inputs.insert((id, field), input.clone());
         input
+    }
+
+    /// Gets (or lazily creates) the cached type select for a node.
+    fn type_select_for(
+        &mut self,
+        id: Uuid,
+        ty: &SchemaNodeType,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Entity<SelectState<Vec<TypeChoice>>> {
+        if let Some(sel) = self.type_selects.get(&id) {
+            return sel.clone();
+        }
+        let options = self.type_options();
+        let current = type_label(ty);
+        let idx = options
+            .iter()
+            .position(|o| o.title() == current)
+            .map(IndexPath::new);
+        let select = cx.new(|cx| SelectState::new(options, idx, window, cx));
+        let sub = cx.subscribe(
+            &select,
+            move |this, _, ev: &SelectEvent<Vec<TypeChoice>>, cx| {
+                if let SelectEvent::Confirm(Some(choice)) = ev {
+                    let choice = choice.clone();
+                    this.edit_node(id, cx, |node| {
+                        node.ty = type_from_choice(&choice, &node.ty);
+                    });
+                }
+            },
+        );
+        self.subscriptions.push(sub);
+        self.type_selects.insert(id, select.clone());
+        select
     }
 
     /// Adds a child field to the object node `parent_id` (or converts to object).
@@ -184,34 +266,25 @@ impl SchemaEditor {
     ) -> AnyElement {
         let id = node.id;
         let is_field = parent_id.is_some() || self.root_is_field;
-        let current_type = type_label(&node.ty);
 
-        let name_input = self.input_for(id, "name", node.name.as_ref(), window, cx);
+        let name_input = self.input_for(id, "name", node.name.as_ref(), "name", window, cx);
         let example_input = self.input_for(
             id,
             "example",
             node.example.as_deref().unwrap_or(""),
+            "example",
             window,
             cx,
         );
-
-        // Type dropdown (simple cycling button list rendered as a small select).
-        let type_button = Button::new(SharedString::from(format!("schema_type_{id}")))
-            .label(current_type)
-            .xsmall()
-            .on_click(cx.listener(move |this, _, _, cx| {
-                // Cycle to the next type in TYPE_LABELS.
-                let next = {
-                    let pos = TYPE_LABELS
-                        .iter()
-                        .position(|t| *t == current_type)
-                        .unwrap_or(0);
-                    TYPE_LABELS[(pos + 1) % TYPE_LABELS.len()]
-                };
-                this.edit_node(id, cx, |node| {
-                    node.ty = type_from_label(next, &node.ty);
-                });
-            }));
+        let description_input = self.input_for(
+            id,
+            "description",
+            node.description.as_deref().unwrap_or(""),
+            "description",
+            window,
+            cx,
+        );
+        let type_select = self.type_select_for(id, &node.ty, window, cx);
 
         let row = h_flex()
             .gap_2()
@@ -220,7 +293,11 @@ impl SchemaEditor {
             .when(is_field, |el| {
                 el.child(div().w(px(140.)).child(Input::new(&name_input)))
             })
-            .child(div().w(px(90.)).child(type_button))
+            .child(
+                div()
+                    .w(px(130.))
+                    .child(Select::new(&type_select).placeholder("type").small()),
+            )
             .when(is_field, |el| {
                 let required = node.required;
                 el.child(
@@ -231,7 +308,8 @@ impl SchemaEditor {
                         })),
                 )
             })
-            .child(div().flex_1().child(Input::new(&example_input)))
+            .child(div().w(px(140.)).child(Input::new(&example_input)))
+            .child(div().flex_1().child(Input::new(&description_input)))
             // Add child (object only)
             .when(matches!(node.ty, SchemaNodeType::Object(_)), |el| {
                 el.child(

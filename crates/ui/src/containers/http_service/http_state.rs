@@ -182,6 +182,17 @@ impl HttpState {
         });
     }
 
+    /// Names of all named schemas in this workspace (for the schema editor's
+    /// "reference schema" type option).
+    pub fn schema_names(&self, cx: &App) -> Vec<SharedString> {
+        self.service_state
+            .read(cx)
+            .schemas
+            .iter()
+            .map(|s| s.name.clone())
+            .collect()
+    }
+
     /// Folder-inherited query params (for display in the query panel).
     pub fn folder_query_params(&self, cx: &App) -> Vec<QueryParameter> {
         let Some(folder_id) = self.folder_id else {
