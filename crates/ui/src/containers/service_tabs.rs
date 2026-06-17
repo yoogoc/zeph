@@ -1,7 +1,7 @@
 use crate::state::ServiceState;
 use gpui::*;
 use gpui_component::button::{Button, ButtonRounded};
-use gpui_component::input::{Input, InputState};
+use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::DropdownMenu;
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{IconName, Sizable};
@@ -10,6 +10,8 @@ use uuid::Uuid;
 pub struct ServiceTabs {
     service_state: Entity<ServiceState>,
     edit_input: Option<Entity<InputState>>,
+    /// Keeps the edit input's event subscription (Enter / Blur) alive.
+    _edit_subscription: Option<Subscription>,
 }
 
 impl ServiceTabs {
@@ -19,6 +21,7 @@ impl ServiceTabs {
         Self {
             service_state,
             edit_input: None,
+            _edit_subscription: None,
         }
     }
 
@@ -32,6 +35,17 @@ impl ServiceTabs {
                 state.set_value(name, window, cx);
             });
 
+            // Commit on Enter; cancel/commit on Blur (clicking away). The input
+            // owns keyboard focus, so its own events drive this — relying on an
+            // outer `on_key_down` would never see Enter while the input is focused.
+            self._edit_subscription = Some(cx.subscribe(
+                &input,
+                |this, _, event: &InputEvent, cx| match event {
+                    InputEvent::PressEnter { .. } => this.finish_editing(cx),
+                    InputEvent::Blur => this.finish_editing(cx),
+                    _ => {}
+                },
+            ));
             self.edit_input = Some(input);
             cx.notify();
         }
@@ -56,11 +70,7 @@ impl ServiceTabs {
         }
 
         self.edit_input = None;
-        cx.notify();
-    }
-
-    fn cancel_editing(&mut self, cx: &mut Context<Self>) {
-        self.edit_input = None;
+        self._edit_subscription = None;
         cx.notify();
     }
 }
@@ -151,22 +161,12 @@ impl Render for ServiceTabs {
 
                 if is_editing {
                     if let Some(input) = &self.edit_input {
+                        // Enter / Blur are handled via the input's event
+                        // subscription set up in `start_editing`.
                         return Tab::new()
                             .px_1()
                             .prefix(icon)
-                            .child(
-                                div()
-                                    .on_key_down(cx.listener(
-                                        move |this, event: &KeyDownEvent, _, cx| {
-                                            if event.keystroke.key == "enter" {
-                                                this.finish_editing(cx);
-                                            } else if event.keystroke.key == "escape" {
-                                                this.cancel_editing(cx);
-                                            }
-                                        },
-                                    ))
-                                    .child(Input::new(input).w(px(150.0))),
-                            )
+                            .child(Input::new(input).w(px(150.0)))
                             .suffix(close_button(ix, id));
                     }
                 }
