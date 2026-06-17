@@ -48,6 +48,36 @@ impl SchemaStore {
         })?;
         Ok(rows.filter_map(|r| r.ok()).collect())
     }
+
+    pub fn update(&self, schema: &Schema) -> Result<()> {
+        let updated_at = chrono::Utc::now().timestamp();
+        self.conn.execute(
+            "UPDATE schemas SET folder_id = ?2, name = ?3, description = ?4, schema_type = ?5, properties = ?6, required = ?7, sort_order = ?8, updated_at = ?9, sync_version = ?10
+             WHERE id = ?1 AND deleted = 0",
+            params![
+                schema.id.to_string(),
+                schema.folder_id.map(|id| id.to_string()),
+                schema.name.as_ref(),
+                schema.description.as_ref().map(|s| s.to_string()),
+                serde_json::to_string(&schema.schema_type)?,
+                serde_json::to_string(&schema.properties)?,
+                serde_json::to_string(&schema.required)?,
+                schema.sort_order,
+                updated_at,
+                schema.sync.sync_version,
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Soft-deletes a schema (sets `deleted = 1`).
+    pub fn delete(&self, id: Uuid) -> Result<()> {
+        self.conn.execute(
+            "UPDATE schemas SET deleted = 1 WHERE id = ?1",
+            params![id.to_string()],
+        )?;
+        Ok(())
+    }
 }
 
 fn row_to_schema(row: &rusqlite::Row) -> Result<Schema> {

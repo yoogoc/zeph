@@ -9,8 +9,7 @@ use models::FolderType;
 #[derive(Clone)]
 enum DetailAction {
     Service(uuid::Uuid),
-    // The id is carried for the not-yet-wired schema-detail view.
-    Schema(#[allow(dead_code)] uuid::Uuid),
+    Schema(uuid::Uuid),
     Folder(uuid::Uuid),
 }
 
@@ -83,8 +82,7 @@ pub fn popup_menu(
             PopupMenuItem::new("View Details").on_click(move |_, window, cx| {
                 service_state.update(cx, |s, cx| match action {
                     DetailAction::Service(id) => s.open_service(id, window, cx),
-                    // TODO: schema detail page not implemented yet.
-                    DetailAction::Schema(_) => {}
+                    DetailAction::Schema(id) => s.open_schema_detail(id, window, cx),
                     DetailAction::Folder(id) => s.open_folder_detail(id, window, cx),
                 });
                 cx.stop_propagation();
@@ -214,10 +212,10 @@ pub fn popup_menu(
 
     // Direct: Delete Schema
     if let Some(schema_id) = delete_schema_id {
+        let service_state = service_state.clone();
         menu = menu.item(
             PopupMenuItem::new("Delete").on_click(move |_, _window, cx| {
-                // TODO: ServiceState/storage lacks schema delete support yet.
-                let _ = schema_id;
+                service_state.update(cx, |s, cx| s.delete_schema(schema_id, cx));
                 cx.stop_propagation();
             }),
         );

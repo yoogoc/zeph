@@ -92,8 +92,10 @@ impl WorkspaceSidebar {
         });
     }
 
-    pub fn open_schema(&self, _id: Uuid, _window: &mut Window, _cx: &mut App) {
-        // TODO: schema detail page not implemented yet.
+    pub fn open_schema(&self, id: Uuid, window: &mut Window, cx: &mut App) {
+        self.service_state.update(cx, |s, cx| {
+            s.open_schema_detail(id, window, cx);
+        });
     }
 
     pub fn open_folder_detail(&self, id: Uuid, window: &mut Window, cx: &mut App) {

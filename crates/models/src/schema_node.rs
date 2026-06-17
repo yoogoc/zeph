@@ -285,6 +285,96 @@ impl SchemaNode {
     }
 }
 
+// ===== Bridge: models::Schema (named, persisted) ⇄ SchemaNode tree =====
+
+use crate::{PropertyType, Schema, SchemaProperty, SchemaType};
+
+/// Builds a `PropertyType` (the persisted, flatter property type) from a node's
+/// type. Object/Array nesting beyond one level is represented structurally where
+/// `PropertyType` allows (arrays), and as `Object`/`Ref` otherwise.
+fn property_type_from_node_ty(ty: &SchemaNodeType) -> PropertyType {
+    match ty {
+        SchemaNodeType::String | SchemaNodeType::Enum(_) => PropertyType::String,
+        SchemaNodeType::Integer => PropertyType::Integer,
+        SchemaNodeType::Number => PropertyType::Number,
+        SchemaNodeType::Boolean => PropertyType::Boolean,
+        SchemaNodeType::Object(_) => PropertyType::Object,
+        SchemaNodeType::Array(item) => {
+            PropertyType::Array(Box::new(property_type_from_node_ty(&item.ty)))
+        }
+        SchemaNodeType::Ref(name) => PropertyType::Ref(name.clone()),
+    }
+}
+
+/// Builds a `SchemaNodeType` from a persisted `PropertyType`.
+fn node_ty_from_property_type(pt: &PropertyType) -> SchemaNodeType {
+    match pt {
+        PropertyType::String => SchemaNodeType::String,
+        PropertyType::Integer => SchemaNodeType::Integer,
+        PropertyType::Number => SchemaNodeType::Number,
+        PropertyType::Boolean => SchemaNodeType::Boolean,
+        PropertyType::Object => SchemaNodeType::Object(Vec::new()),
+        PropertyType::Array(item) => SchemaNodeType::Array(Box::new(SchemaNode::new(
+            "",
+            node_ty_from_property_type(item),
+        ))),
+        PropertyType::Ref(name) => SchemaNodeType::Ref(name.clone()),
+    }
+}
+
+impl SchemaNode {
+    /// Builds an object-root node from a named [`Schema`]'s top-level
+    /// properties + required list. Used to drive the recursive editor on the
+    /// schema maintenance page.
+    pub fn from_schema(schema: &Schema) -> Self {
+        let props = schema
+            .properties
+            .iter()
+            .map(|p| {
+                let mut node =
+                    SchemaNode::new(p.name.clone(), node_ty_from_property_type(&p.property_type));
+                node.required = schema
+                    .required
+                    .iter()
+                    .any(|r| r.as_ref() == p.name.as_ref());
+                node.nullable = p.nullable;
+                node.description = p.description.clone();
+                node.example = p.example.clone();
+                node.default = p.default.clone();
+                node
+            })
+            .collect();
+        SchemaNode::new("", SchemaNodeType::Object(props))
+    }
+
+    /// Writes this object-root node's top-level fields back into a [`Schema`]'s
+    /// `properties` / `required` / `schema_type`. Non-object roots are treated
+    /// as an empty object. Nested object/array structure below the top level is
+    /// flattened to `PropertyType` (the persisted model is one level deep).
+    pub fn write_into_schema(&self, schema: &mut Schema) {
+        schema.schema_type = SchemaType::Object;
+        let mut properties = Vec::new();
+        let mut required = Vec::new();
+        if let SchemaNodeType::Object(props) = &self.ty {
+            for p in props {
+                if p.required {
+                    required.push(p.name.clone());
+                }
+                properties.push(SchemaProperty {
+                    name: p.name.clone(),
+                    property_type: property_type_from_node_ty(&p.ty),
+                    description: p.description.clone(),
+                    nullable: p.nullable,
+                    default: p.default.clone(),
+                    example: p.example.clone(),
+                });
+            }
+        }
+        schema.properties = properties;
+        schema.required = required;
+    }
+}
+
 // ===== Extract / inline (Object subtree ⇄ named schema Ref) =====
 
 /// An object subtree extracted into a named schema definition. The caller
@@ -404,6 +494,56 @@ mod tests {
         } else {
             panic!("expected object");
         }
+    }
+
+    #[test]
+    fn schema_bridge_round_trips_top_level_fields() {
+        let mut schema = Schema::new(Uuid::new_v4(), "User");
+        schema.properties = vec![
+            SchemaProperty {
+                name: "name".into(),
+                property_type: PropertyType::String,
+                description: Some("full name".into()),
+                nullable: false,
+                default: None,
+                example: Some("\"ada\"".into()),
+            },
+            SchemaProperty {
+                name: "age".into(),
+                property_type: PropertyType::Integer,
+                description: None,
+                nullable: true,
+                default: None,
+                example: None,
+            },
+        ];
+        schema.required = vec!["name".into()];
+
+        // Schema -> node
+        let node = SchemaNode::from_schema(&schema);
+        if let SchemaNodeType::Object(props) = &node.ty {
+            assert_eq!(props.len(), 2);
+            assert_eq!(props[0].name.as_ref(), "name");
+            assert!(props[0].required);
+            assert!(matches!(props[0].ty, SchemaNodeType::String));
+            assert!(props[1].nullable);
+            assert!(matches!(props[1].ty, SchemaNodeType::Integer));
+        } else {
+            panic!("expected object root");
+        }
+
+        // node -> Schema (into a fresh target)
+        let mut back = Schema::new(schema.workspace_id, "User");
+        node.write_into_schema(&mut back);
+        assert_eq!(back.properties.len(), 2);
+        assert_eq!(back.required, vec![SharedString::from("name")]);
+        assert_eq!(back.properties[0].name.as_ref(), "name");
+        assert_eq!(back.properties[0].example.as_deref(), Some("\"ada\""));
+        assert!(back.properties[1].nullable);
+        assert!(matches!(
+            back.properties[1].property_type,
+            PropertyType::Integer
+        ));
     }
 
     #[test]
