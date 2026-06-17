@@ -29,6 +29,7 @@ impl SchemaDetailPage {
     pub fn new(
         service_state: Entity<ServiceState>,
         schema: Schema,
+        schema_names: Vec<SharedString>,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -43,14 +44,6 @@ impl SchemaDetailPage {
                 .default_value(schema.description.as_deref().unwrap_or(""))
         });
         let root = SchemaNode::from_schema(&schema);
-        // Offer all other schemas as `$ref` options (exclude self).
-        let schema_names: Vec<SharedString> = service_state
-            .read(cx)
-            .schemas
-            .iter()
-            .filter(|s| s.id != schema.id)
-            .map(|s| s.name.clone())
-            .collect();
         let fields_editor = cx.new(|cx| SchemaEditor::new(root, schema_names, cx));
 
         Self {

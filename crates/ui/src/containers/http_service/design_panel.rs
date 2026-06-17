@@ -37,7 +37,7 @@ impl DesignPanel {
             .and_then(|mc| mc.schema.clone())
             .unwrap_or_else(SchemaNode::object_root);
         let responses = st.design_responses().to_vec();
-        let schema_names = st.schema_names(cx);
+        let schema_names = st.schema_names();
 
         let body_editor = {
             let names = schema_names.clone();
@@ -236,7 +236,7 @@ impl DesignPanel {
     }
 
     fn add_response(&mut self, cx: &mut Context<Self>) {
-        let names = self.http_state.read(cx).schema_names(cx);
+        let names = self.http_state.read(cx).schema_names();
         let editor = cx.new(|cx| SchemaEditor::new(SchemaNode::object_root(), names, cx));
         self.response_editors.push(editor);
         self.http_state.update(cx, |s, cx| {

@@ -440,9 +440,19 @@ impl ServiceState {
         let Some(schema) = self.get_schema(id).cloned() else {
             return;
         };
+        // Collect the `$ref` candidate names here (excluding self), so the page
+        // doesn't have to read `ServiceState` while it's still being updated.
+        let schema_names: Vec<SharedString> = self
+            .schemas
+            .iter()
+            .filter(|s| s.id != id)
+            .map(|s| s.name.clone())
+            .collect();
         self.open_view(id, window, cx, move |window, cx| {
             let service_state = cx.entity();
-            Box::new(cx.new(|cx| SchemaDetailPage::new(service_state, schema, window, cx)))
+            Box::new(
+                cx.new(|cx| SchemaDetailPage::new(service_state, schema, schema_names, window, cx)),
+            )
         });
     }
 
@@ -586,11 +596,17 @@ impl ServiceState {
         let Some(service) = self.get_service(id).cloned() else {
             return;
         };
+        // Named-schema `$ref` candidates for the design view's schema editor.
+        // Collected here (not read inside the factory) to avoid re-entering
+        // `ServiceState` while it is being updated.
+        let schema_names: Vec<SharedString> = self.schemas.iter().map(|s| s.name.clone()).collect();
         self.open_view(id, window, cx, move |window, cx| {
             match &service.service_type {
                 ServiceType::Http(_) => {
                     let service_state = cx.entity();
-                    Box::new(cx.new(|cx| HttpService::new(service, service_state, window, cx)))
+                    Box::new(cx.new(|cx| {
+                        HttpService::new(service, service_state, schema_names, window, cx)
+                    }))
                     // env_state is read from service_state inside HttpState.
                 }
                 ServiceType::Grpc(_) => {
