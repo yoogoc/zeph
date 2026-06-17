@@ -1,4 +1,7 @@
 pub mod autosurgeon_ext;
+pub mod schema_node;
+
+pub use schema_node::{extract_to_named, inline_ref, ExtractedSchema, SchemaNode, SchemaNodeType};
 
 use autosurgeon::{Hydrate, Reconcile};
 use gpui::SharedString;
@@ -575,7 +578,9 @@ pub struct Parameter {
     pub location: ParameterLocation,
     pub description: Option<SharedString>,
     pub required: bool,
-    pub schema: Option<SharedString>,
+    /// Structured design-time schema for this parameter's value.
+    #[serde(default)]
+    pub schema: Option<SchemaNode>,
     pub example: Option<SharedString>,
 }
 
@@ -597,7 +602,9 @@ pub struct RequestBody {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MediaContent {
     pub media_type: SharedString,
-    pub schema: Option<SharedString>,
+    /// Structured design-time schema for this media type's body.
+    #[serde(default)]
+    pub schema: Option<SchemaNode>,
     pub example: Option<SharedString>,
 }
 
