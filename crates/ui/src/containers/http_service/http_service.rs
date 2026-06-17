@@ -3,6 +3,7 @@
 //! Owns the request/response views and forwards `ContentView` lifecycle calls
 //! to the `HttpState` entity, which holds all request state and logic.
 
+use super::design_panel::DesignPanel;
 use super::http_state::HttpState;
 use super::request_panel::RequestPanel;
 use super::response_panel::ResponsePanel;
@@ -12,8 +13,16 @@ use gpui::*;
 use gpui_component::button::{Button, ButtonVariants};
 use gpui_component::resizable::{resizable_panel, v_resizable};
 use gpui_component::spinner::Spinner;
-use gpui_component::{v_flex, Sizable};
+use gpui_component::{h_flex, v_flex, Sizable};
 use uuid::Uuid;
+
+/// Top-level mode: edit the API contract (Design) vs. fill values and send (Debug).
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+enum ViewMode {
+    #[default]
+    Debug,
+    Design,
+}
 
 pub struct HttpService {
     /// Snapshot of the service this view renders; used for tab title/icon.
@@ -21,6 +30,8 @@ pub struct HttpService {
     http_state: Entity<HttpState>,
     request_panel: Entity<RequestPanel>,
     response_panel: Entity<ResponsePanel>,
+    design_panel: Entity<DesignPanel>,
+    mode: ViewMode,
 }
 
 impl HttpService {
@@ -35,12 +46,15 @@ impl HttpService {
         http_state.update(cx, |s, _| s.set_response_panel(response_panel.downgrade()));
         let request_panel = cx.new(|cx| RequestPanel::new(http_state.clone(), window, cx));
         http_state.update(cx, |s, _| s.set_request_panel(request_panel.downgrade()));
+        let design_panel = cx.new(|cx| DesignPanel::new(http_state.clone(), window, cx));
 
         Self {
             service,
             http_state,
             request_panel,
             response_panel,
+            design_panel,
+            mode: ViewMode::default(),
         }
     }
 }
@@ -52,6 +66,19 @@ impl Render for HttpService {
         let can_redo = state.can_redo(cx);
         let is_loading = state.is_loading;
         let response_panel = self.response_panel.clone();
+        let mode = self.mode;
+
+        // Mode switch: Design (contract) vs Debug (send).
+        let mode_button = |label: &'static str, m: ViewMode, active: bool| {
+            Button::new(label)
+                .label(label)
+                .xsmall()
+                .when(active, |b| b.primary())
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.mode = m;
+                    cx.notify();
+                }))
+        };
 
         div()
             .size_full()
@@ -75,13 +102,36 @@ impl Render for HttpService {
                 }
             }))
             .child(
-                v_flex().size_full().gap_2().child(
-                    v_resizable("http-service")
-                        .child(self.request_panel.clone().into_any_element())
-                        .child(
-                            resizable_panel().child(div().pt_2().size_full().child(response_panel)),
+                v_flex()
+                    .size_full()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .child(mode_button(
+                                "Debug",
+                                ViewMode::Debug,
+                                mode == ViewMode::Debug,
+                            ))
+                            .child(mode_button(
+                                "Design",
+                                ViewMode::Design,
+                                mode == ViewMode::Design,
+                            )),
+                    )
+                    .map(|el| match mode {
+                        ViewMode::Debug => el.child(
+                            v_resizable("http-service")
+                                .child(self.request_panel.clone().into_any_element())
+                                .child(
+                                    resizable_panel()
+                                        .child(div().pt_2().size_full().child(response_panel)),
+                                ),
                         ),
-                ),
+                        ViewMode::Design => {
+                            el.child(div().flex_1().child(self.design_panel.clone()))
+                        }
+                    }),
             )
             .when(is_loading, |this| {
                 this.child(
