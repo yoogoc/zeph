@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
 use models::{
     Folder, FolderType, HttpConfig, HttpMethod, MediaContent, Parameter, ParameterLocation,
-    PathParameter, PropertyType, QueryParameter, RequestBody, Response, Schema, SchemaProperty,
-    SchemaType, Service, ServiceType,
+    PathParameter, PropertyType, QueryParameter, RequestBody, Response, Schema, SchemaNode,
+    SchemaNodeType, SchemaProperty, SchemaType, Service, ServiceType,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -136,6 +136,57 @@ pub struct SchemaObject {
     pub nullable: Option<bool>,
     #[serde(default)]
     pub example: Option<serde_json::Value>,
+}
+
+/// Converts an OpenAPI `SchemaObject` (the parser's intermediate schema tree)
+/// into a design-time [`SchemaNode`], preserving nesting, refs, and metadata.
+fn schema_object_to_node(name: impl Into<SharedString>, obj: &SchemaObject) -> SchemaNode {
+    let name = name.into();
+
+    // $ref → Ref(name)
+    if let Some(r) = &obj.ref_path {
+        let ref_name = r.rsplit('/').next().unwrap_or(r.as_ref()).to_string();
+        return SchemaNode::new(name, SchemaNodeType::Ref(ref_name.into()));
+    }
+
+    let ty = match obj.schema_type.as_deref() {
+        Some("object") => {
+            let required = obj.required.clone().unwrap_or_default();
+            let mut props = Vec::new();
+            if let Some(properties) = &obj.properties {
+                for (k, v) in properties {
+                    let mut child = schema_object_to_node(k.clone(), v);
+                    child.required = required.iter().any(|r| r == k);
+                    props.push(child);
+                }
+            }
+            SchemaNodeType::Object(props)
+        }
+        Some("array") => {
+            let item = obj
+                .items
+                .as_ref()
+                .map(|i| schema_object_to_node("", i))
+                .unwrap_or_else(|| SchemaNode::new("", SchemaNodeType::String));
+            SchemaNodeType::Array(Box::new(item))
+        }
+        Some("integer") => SchemaNodeType::Integer,
+        Some("number") => SchemaNodeType::Number,
+        Some("boolean") => SchemaNodeType::Boolean,
+        _ => {
+            if let Some(values) = &obj.enum_values {
+                SchemaNodeType::Enum(values.clone())
+            } else {
+                SchemaNodeType::String
+            }
+        }
+    };
+
+    let mut node = SchemaNode::new(name, ty);
+    node.nullable = obj.nullable.unwrap_or(false);
+    node.description = obj.description.clone();
+    node.example = obj.example.as_ref().map(|e| e.to_string().into());
+    node
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -710,7 +761,10 @@ pub fn import_openapi_with_options_and_existing_folders(
                         },
                         description: p.description.clone(),
                         required: p.required,
-                        schema: p.schema.as_ref().and_then(|s| s.schema_type.clone()),
+                        schema: p
+                            .schema
+                            .as_ref()
+                            .map(|s| schema_object_to_node(p.name.clone(), s)),
                         example: p
                             .schema
                             .as_ref()
@@ -795,10 +849,7 @@ pub fn import_openapi_with_options_and_existing_folders(
                         .iter()
                         .map(|(media_type, mt)| MediaContent {
                             media_type: media_type.clone(),
-                            schema: mt
-                                .schema
-                                .as_ref()
-                                .and_then(|s| s.ref_path.clone().or_else(|| s.schema_type.clone())),
+                            schema: mt.schema.as_ref().map(|s| schema_object_to_node("", s)),
                             example: mt.example.as_ref().map(|e| e.to_string().into()),
                         })
                         .collect(),
@@ -817,9 +868,10 @@ pub fn import_openapi_with_options_and_existing_folders(
                                 c.iter()
                                     .map(|(media_type, mt)| MediaContent {
                                         media_type: media_type.clone(),
-                                        schema: mt.schema.as_ref().and_then(|s| {
-                                            s.ref_path.clone().or_else(|| s.schema_type.clone())
-                                        }),
+                                        schema: mt
+                                            .schema
+                                            .as_ref()
+                                            .map(|s| schema_object_to_node("", s)),
                                         example: mt.example.as_ref().map(|e| e.to_string().into()),
                                     })
                                     .collect()
