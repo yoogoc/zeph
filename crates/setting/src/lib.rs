@@ -84,6 +84,8 @@ pub const ACCENT_PRESETS: &[(&str, u32)] = &[
 
 pub fn init(cx: &mut App) {
     let setting = Setting::load();
+    // Apply the persisted locale before any UI is built.
+    i18n::set_locale(&setting.lang);
     let registry = cx.new(|_| SettingRegistry { setting });
     cx.set_global(GlobalSettingRegistry(registry));
 }
@@ -149,8 +151,10 @@ impl SettingRegistry {
         self.setting.accent
     }
 
+    /// Switches the UI locale, persists it, and emits `SetLang`.
     pub fn set_lang(&mut self, lang: impl Into<String>, cx: &mut Context<Self>) {
         self.setting.lang = lang.into();
+        i18n::set_locale(&self.setting.lang);
         self.persist();
         cx.emit(WorkspaceEvent::SetLang);
     }

@@ -15,6 +15,7 @@ fn main() {
         tracing::warn!("Continuing with degraded i18n support");
     }
 
+    // Default locale; overridden by the persisted setting in `setting::init`.
     i18n::set_locale("zh-CN");
 
     let app = gpui_platform::application()

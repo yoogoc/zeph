@@ -6747,6 +6747,7 @@ dependencies = [
  "gpui",
  "gpui-component",
  "gpui_tokio",
+ "i18n",
  "serde",
  "serde_json",
  "uuid",
