@@ -101,7 +101,7 @@ impl ApplicationState {
         }
     }
 
-    pub fn delete_workspace(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn delete_workspace(&mut self, _id: Uuid, _window: &mut Window, _cx: &mut Context<Self>) {
         todo!()
     }
 }

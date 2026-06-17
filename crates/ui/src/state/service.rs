@@ -1,5 +1,5 @@
 use crate::containers::grpc_service::GrpcService;
-use crate::containers::{FolderDetailPage, HttpService};
+use crate::containers::{FolderDetailPage, HttpService, SchemaDetailPage};
 use crate::state::{build_tree, ContentViewHandle, EnvironmentState, PlaceholderView};
 use gpui::*;
 use gpui_component::tree::TreeState;
@@ -399,6 +399,63 @@ impl ServiceState {
         cx.notify();
     }
 
+    pub fn get_schema(&self, id: Uuid) -> Option<&Schema> {
+        self.schemas.iter().find(|s| s.id == id)
+    }
+
+    /// Persists `schema` (by id) and updates the in-memory copy + tab title.
+    pub fn update_schema(&mut self, schema: Schema, cx: &mut Context<Self>) {
+        let storage = GlobalStorage::global(cx);
+        if let Err(e) = storage.schema.update(&schema) {
+            error!("Failed to update schema {}: {}", schema.id, e);
+            return;
+        }
+        let id = schema.id;
+        let name = schema.name.clone();
+        if let Some(existing) = self.schemas.iter_mut().find(|s| s.id == id) {
+            *existing = schema;
+        }
+        if let Some(ix) = self.open_views.iter().position(|e| e.view.id(cx) == id) {
+            self.open_views[ix].view.set_title(name, cx);
+        }
+        self.rebuild_tree(cx);
+        cx.notify();
+    }
+
+    pub fn delete_schema(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let storage = GlobalStorage::global(cx);
+        if let Err(e) = storage.schema.delete(id) {
+            error!("Failed to delete schema {}: {}", id, e);
+            return;
+        }
+        self.schemas.retain(|s| s.id != id);
+        if let Some(ix) = self.open_views.iter().position(|e| e.view.id(cx) == id) {
+            self.close_content(ix, cx);
+        }
+        self.rebuild_tree(cx);
+        cx.notify();
+    }
+
+    pub fn open_schema_detail(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(schema) = self.get_schema(id).cloned() else {
+            return;
+        };
+        // Collect the `$ref` candidate names here (excluding self), so the page
+        // doesn't have to read `ServiceState` while it's still being updated.
+        let schema_names: Vec<SharedString> = self
+            .schemas
+            .iter()
+            .filter(|s| s.id != id)
+            .map(|s| s.name.clone())
+            .collect();
+        self.open_view(id, window, cx, move |window, cx| {
+            let service_state = cx.entity();
+            Box::new(
+                cx.new(|cx| SchemaDetailPage::new(service_state, schema, schema_names, window, cx)),
+            )
+        });
+    }
+
     pub fn create_folder(
         &mut self,
         name: SharedString,
@@ -539,11 +596,17 @@ impl ServiceState {
         let Some(service) = self.get_service(id).cloned() else {
             return;
         };
+        // Named-schema `$ref` candidates for the design view's schema editor.
+        // Collected here (not read inside the factory) to avoid re-entering
+        // `ServiceState` while it is being updated.
+        let schema_names: Vec<SharedString> = self.schemas.iter().map(|s| s.name.clone()).collect();
         self.open_view(id, window, cx, move |window, cx| {
             match &service.service_type {
                 ServiceType::Http(_) => {
                     let service_state = cx.entity();
-                    Box::new(cx.new(|cx| HttpService::new(service, service_state, window, cx)))
+                    Box::new(cx.new(|cx| {
+                        HttpService::new(service, service_state, schema_names, window, cx)
+                    }))
                     // env_state is read from service_state inside HttpState.
                 }
                 ServiceType::Grpc(_) => {

@@ -43,6 +43,18 @@ pub struct HttpState {
     body: String,
     method: HttpMethod,
 
+    // === Design state (contract: parameters / request body / responses) ===
+    // Stored independently of the debug draft; saved directly (no undo).
+    design_parameters: Vec<models::Parameter>,
+    design_request_body: Option<models::RequestBody>,
+    design_responses: Vec<models::Response>,
+    design_security: Vec<SharedString>,
+
+    /// Named-schema `$ref` candidates for the design view's schema editor.
+    /// Captured at construction (the open path runs mid-`ServiceState` update,
+    /// so it can't be read live).
+    schema_names: Vec<SharedString>,
+
     /// Response view to write request results into (owned by `HttpService`).
     response_panel: Option<WeakEntity<ResponsePanel>>,
 
@@ -61,6 +73,7 @@ impl HttpState {
     pub fn new(
         service: models::Service,
         service_state: Entity<crate::state::ServiceState>,
+        schema_names: Vec<SharedString>,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
@@ -92,6 +105,11 @@ impl HttpState {
             path_params: config.path_params.clone(),
             body_type: BodyType::None,
             body: String::new(),
+            design_parameters: config.parameters.clone(),
+            design_request_body: config.request_body.clone(),
+            design_responses: config.responses.clone(),
+            design_security: config.security.clone(),
+            schema_names,
             response_panel: None,
             request_panel: None,
             active_tab,
@@ -160,6 +178,21 @@ impl HttpState {
 
     pub fn path_params(&self) -> Vec<models::PathParameter> {
         self.path_params.clone()
+    }
+
+    /// Renames this service (persists + updates the open tab title) via the
+    /// shared `ServiceState`.
+    pub fn rename(&self, new_name: SharedString, cx: &mut App) {
+        let service_id = self.service.id;
+        self.service_state.update(cx, |s, cx| {
+            s.rename_service(service_id, new_name, cx);
+        });
+    }
+
+    /// Names of all named schemas in this workspace (for the schema editor's
+    /// "reference schema" type option). Captured at construction.
+    pub fn schema_names(&self) -> Vec<SharedString> {
+        self.schema_names.clone()
     }
 
     /// Folder-inherited query params (for display in the query panel).
@@ -268,14 +301,68 @@ impl HttpState {
             }
         };
         let service_id = self.service.id;
+        // The draft carries only debug fields; merge the design state back in so
+        // it isn't lost on save.
+        let http_config = self.merge_design(config.to_http_config());
         self.service_state.update(cx, |s, cx| {
             if s.is_unsaved(service_id) {
                 // First save of an untitled draft: persist (insert) and promote it.
-                s.commit_unsaved_service(service_id, config.to_http_config(), cx);
+                s.commit_unsaved_service(service_id, http_config.clone(), cx);
             } else {
-                s.update_service_config(service_id, config.to_http_config(), cx);
+                s.update_service_config(service_id, http_config.clone(), cx);
             }
         });
+        cx.notify();
+    }
+
+    /// Merges the design state (parameters / request body / responses / security)
+    /// into an `HttpConfig` rebuilt from the debug draft.
+    fn merge_design(&self, mut config: HttpConfig) -> HttpConfig {
+        config.parameters = self.design_parameters.clone();
+        config.request_body = self.design_request_body.clone();
+        config.responses = self.design_responses.clone();
+        config.security = self.design_security.clone();
+        config
+    }
+
+    // === Design state accessors ===
+
+    pub fn design_parameters(&self) -> &[models::Parameter] {
+        &self.design_parameters
+    }
+
+    pub fn set_design_parameters(
+        &mut self,
+        params: Vec<models::Parameter>,
+        cx: &mut Context<Self>,
+    ) {
+        self.design_parameters = params;
+        cx.notify();
+    }
+
+    pub fn design_request_body(&self) -> Option<&models::RequestBody> {
+        self.design_request_body.as_ref()
+    }
+
+    pub fn set_design_request_body(
+        &mut self,
+        body: Option<models::RequestBody>,
+        cx: &mut Context<Self>,
+    ) {
+        self.design_request_body = body;
+        cx.notify();
+    }
+
+    pub fn design_responses(&self) -> &[models::Response] {
+        &self.design_responses
+    }
+
+    pub fn set_design_responses(
+        &mut self,
+        responses: Vec<models::Response>,
+        cx: &mut Context<Self>,
+    ) {
+        self.design_responses = responses;
         cx.notify();
     }
 

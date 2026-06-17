@@ -1,7 +1,6 @@
 use crate::state::ServiceState;
 use gpui::*;
 use gpui_component::button::{Button, ButtonRounded};
-use gpui_component::input::{Input, InputEvent, InputState};
 use gpui_component::menu::DropdownMenu;
 use gpui_component::tab::{Tab, TabBar, TabVariant};
 use gpui_component::{IconName, Sizable};
@@ -9,69 +8,13 @@ use uuid::Uuid;
 
 pub struct ServiceTabs {
     service_state: Entity<ServiceState>,
-    edit_input: Option<Entity<InputState>>,
-    /// Keeps the edit input's event subscription (Enter / Blur) alive.
-    _edit_subscription: Option<Subscription>,
 }
 
 impl ServiceTabs {
     // Re-renders automatically when `service_state` changes: GPUI tracks the
     // entities `read` during `render` and invalidates this view on their `notify`.
     pub fn new(service_state: Entity<ServiceState>) -> Self {
-        Self {
-            service_state,
-            edit_input: None,
-            _edit_subscription: None,
-        }
-    }
-
-    fn start_editing(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let ss = self.service_state.read(cx);
-        let ac = ss.active_content();
-        if let Some(ov) = ac {
-            let name = ov.view.title(cx);
-            let input = cx.new(|cx| InputState::new(window, cx).placeholder("请输入新名称"));
-            input.update(cx, |state, cx| {
-                state.set_value(name, window, cx);
-            });
-
-            // Commit on Enter; cancel/commit on Blur (clicking away). The input
-            // owns keyboard focus, so its own events drive this — relying on an
-            // outer `on_key_down` would never see Enter while the input is focused.
-            self._edit_subscription = Some(cx.subscribe(
-                &input,
-                |this, _, event: &InputEvent, cx| match event {
-                    InputEvent::PressEnter { .. } => this.finish_editing(cx),
-                    InputEvent::Blur => this.finish_editing(cx),
-                    _ => {}
-                },
-            ));
-            self.edit_input = Some(input);
-            cx.notify();
-        }
-    }
-
-    fn finish_editing(&mut self, cx: &mut Context<Self>) {
-        let ss = self.service_state.read(cx);
-        let ei = self.edit_input.clone();
-        let ac = ss.active_content();
-        if let Some(ov) = ac {
-            if let Some(input) = ei {
-                let new_name = input.read(cx).value();
-                let trimmed = new_name.trim();
-                if !trimmed.is_empty() && trimmed.len() <= 255 {
-                    let service_id = ov.view.id(cx);
-                    let new_name = new_name.clone();
-                    self.service_state.update(cx, |s, cx| {
-                        s.rename_service(service_id, new_name, cx);
-                    });
-                }
-            }
-        }
-
-        self.edit_input = None;
-        self._edit_subscription = None;
-        cx.notify();
+        Self { service_state }
     }
 }
 
@@ -154,22 +97,6 @@ impl Render for ServiceTabs {
             .into_iter()
             .enumerate()
             .map(|(ix, (id, title, icon))| {
-                let is_editing = self
-                    .edit_input
-                    .as_ref()
-                    .map_or(false, |_| Some(ix).eq(&current_active_view_id));
-
-                if is_editing {
-                    if let Some(input) = &self.edit_input {
-                        // Enter / Blur are handled via the input's event
-                        // subscription set up in `start_editing`.
-                        return Tab::new()
-                            .px_1()
-                            .prefix(icon)
-                            .child(Input::new(input).w(px(150.0)))
-                            .suffix(close_button(ix, id));
-                    }
-                }
                 Tab::new()
                     .px_1()
                     .label(title)
@@ -189,14 +116,10 @@ impl Render for ServiceTabs {
                     .with_variant(TabVariant::Pill)
                     .on_click(cx.listener({
                         let ss = self.service_state.clone();
-                        move |this, index: &usize, window, cx| {
-                            if Some(*index).eq(&current_active_view_id) {
-                                this.start_editing(window, cx);
-                            } else {
-                                ss.update(cx, |s, cx| {
-                                    s.set_active_content(*index, cx);
-                                });
-                            }
+                        move |_this, index: &usize, _window, cx| {
+                            ss.update(cx, |s, cx| {
+                                s.set_active_content(*index, cx);
+                            });
                         }
                     }))
                     .children(tabs),

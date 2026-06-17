@@ -4320,6 +4320,7 @@ dependencies = [
  "chrono",
  "gpui",
  "serde",
+ "serde_json",
  "uuid",
 ]
 

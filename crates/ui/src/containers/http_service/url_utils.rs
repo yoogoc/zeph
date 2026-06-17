@@ -1,4 +1,3 @@
-use gpui::*;
 /// URL utility functions for combining base URLs with paths.
 ///
 /// This module provides functions to:
