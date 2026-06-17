@@ -37,8 +37,12 @@ impl DesignPanel {
             .and_then(|mc| mc.schema.clone())
             .unwrap_or_else(SchemaNode::object_root);
         let responses = st.design_responses().to_vec();
+        let schema_names = st.schema_names(cx);
 
-        let body_editor = cx.new(|cx| SchemaEditor::new(body_node, cx));
+        let body_editor = {
+            let names = schema_names.clone();
+            cx.new(|cx| SchemaEditor::new(body_node, names, cx))
+        };
         let response_editors = responses
             .iter()
             .map(|r| {
@@ -47,7 +51,8 @@ impl DesignPanel {
                     .first()
                     .and_then(|mc| mc.schema.clone())
                     .unwrap_or_else(SchemaNode::object_root);
-                cx.new(|cx| SchemaEditor::new(node, cx))
+                let names = schema_names.clone();
+                cx.new(|cx| SchemaEditor::new(node, names, cx))
             })
             .collect();
 
@@ -231,7 +236,8 @@ impl DesignPanel {
     }
 
     fn add_response(&mut self, cx: &mut Context<Self>) {
-        let editor = cx.new(|cx| SchemaEditor::new(SchemaNode::object_root(), cx));
+        let names = self.http_state.read(cx).schema_names(cx);
+        let editor = cx.new(|cx| SchemaEditor::new(SchemaNode::object_root(), names, cx));
         self.response_editors.push(editor);
         self.http_state.update(cx, |s, cx| {
             let mut responses = s.design_responses().to_vec();
