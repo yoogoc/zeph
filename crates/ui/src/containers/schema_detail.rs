@@ -74,9 +74,15 @@ impl SchemaDetailPage {
         };
         node.write_into_schema(&mut updated);
 
-        self.service_state
-            .update(cx, |s, cx| s.update_schema(updated.clone(), cx));
-        self.schema = updated;
+        // Update our local snapshot immediately, but defer the persist: it runs
+        // through `update_schema` -> `set_title`, which re-enters this same view
+        // entity (the tab is backed by this page). Deferring lets `save` unwind
+        // first, avoiding "cannot read SchemaDetailPage while being updated".
+        self.schema = updated.clone();
+        let service_state = self.service_state.clone();
+        cx.defer(move |cx| {
+            service_state.update(cx, |s, cx| s.update_schema(updated.clone(), cx));
+        });
         cx.notify();
     }
 }
