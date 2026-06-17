@@ -23,6 +23,7 @@ ui = { path = "../ui" }
 models = { path = "../models" }
 workspace = { path = "../workspace" }
 register = { path = "../register" }
+setting = { path = "../setting" }
 lazy_static = "1.5.0"
 
 [package.metadata.bundle]

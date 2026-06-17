@@ -1,7 +1,9 @@
 mod lang;
 mod menu;
+mod theme;
 
 use crate::global_setting::lang::LangSettings;
+use crate::global_setting::theme::ThemeSettings;
 use gpui::prelude::FluentBuilder;
 use gpui::*;
 use gpui_component::list::{List, ListState};
@@ -28,6 +30,7 @@ pub fn open_settings(cx: &mut App) {
 pub struct GlobalSettings {
     menu_state: Entity<ListState<MenuList>>,
     lang: Entity<LangSettings>,
+    theme: Entity<ThemeSettings>,
 }
 
 impl GlobalSettings {
@@ -35,9 +38,11 @@ impl GlobalSettings {
         let delegate = MenuList::new();
         let state = cx.new(|cx| ListState::new(delegate, window, cx));
         let lang = cx.new(|cx| LangSettings::new(window, cx));
+        let theme = cx.new(|cx| ThemeSettings::new(cx));
         Self {
             menu_state: state,
             lang,
+            theme,
         }
     }
 }
@@ -95,14 +100,7 @@ impl Render for GlobalSettings {
                                 this.child(self.lang.clone())
                             })
                             .when(menu.delegate().selected_item == Some(Menu::Theme), |this| {
-                                this.child(
-                                    div()
-                                        .child("Theme")
-                                        .text_center()
-                                        .text_2xl()
-                                        .font_bold()
-                                        .p_2(),
-                                )
+                                this.child(self.theme.clone())
                             })
                             .when(menu.delegate().selected_item == Some(Menu::Proxy), |this| {
                                 this.child(

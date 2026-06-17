@@ -198,6 +198,11 @@ settings:
   i18n: "语言"
   theme: "主题"
   proxy: "代理"
+  theme_appearance: "外观"
+  theme_light: "浅色"
+  theme_dark: "深色"
+  theme_accent: "主题色"
+  theme_accent_default: "默认"
 
 url:
   warning:

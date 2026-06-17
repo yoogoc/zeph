@@ -8,6 +8,7 @@ publish.workspace = true
 models = { path = "../models" }
 workspace = { path = "../workspace" }
 register = { path = "../register" }
+setting = { path = "../setting" }
 gpui.workspace = true
 gpui-component.workspace = true
 gpui_tokio.workspace = true

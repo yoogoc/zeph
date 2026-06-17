@@ -22,9 +22,14 @@ fn main() {
         .with_http_client(Arc::new(reqwest_client::ReqwestClient::new()));
 
     app.run(move |cx| {
-        // Initialize gpui-component
+        // Initialize gpui-component (creates the global Theme).
         init(cx);
         theme::init(cx);
+
+        // Load persisted settings and apply the saved theme (mode + accent).
+        // `::setting` disambiguates from the glob-imported `gpui_component::setting`.
+        ::setting::init(cx);
+        ::setting::apply_theme(cx);
 
         gpui_tokio::init(cx);
 

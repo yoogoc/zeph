@@ -6743,9 +6743,12 @@ dependencies = [
 name = "setting"
 version = "0.0.1"
 dependencies = [
+ "dirs",
  "gpui",
  "gpui-component",
  "gpui_tokio",
+ "serde",
+ "serde_json",
  "uuid",
 ]
 
@@ -7939,6 +7942,7 @@ dependencies = [
  "reqwest",
  "rust-i18n 3.1.5",
  "serde_json",
+ "setting",
  "smallvec",
  "tonic",
  "urlencoding",
@@ -9964,6 +9968,7 @@ dependencies = [
  "register",
  "reqwest_client",
  "rust-i18n 3.1.5",
+ "setting",
  "tracing",
  "tracing-subscriber",
  "ui",
