@@ -1,0 +1,16 @@
+syntax = "proto3";
+package shop.v1;
+service OrderService {
+  rpc GetOrder(GetOrderRequest) returns (Order);
+  rpc WatchOrders(WatchOrdersRequest) returns (stream OrderEvent);
+  rpc CreateOrders(stream CreateOrderRequest) returns (CreateOrdersSummary);
+  rpc SyncOrders(stream SyncOrderRequest) returns (stream SyncOrderResponse);
+}
+message GetOrderRequest { string order_id = 1; bool include_items = 2; }
+message Order { string order_id = 1; string status = 2; int64 total_amount = 3; string currency = 4; }
+message WatchOrdersRequest { string customer_id = 1; bool include_history = 2; }
+message OrderEvent { string order_id = 1; string status = 2; int64 version = 3; }
+message CreateOrderRequest { string customer_id = 1; string sku = 2; int32 quantity = 3; }
+message CreateOrdersSummary { int32 created_count = 1; repeated string order_ids = 2; }
+message SyncOrderRequest { string order_id = 1; string status = 2; int64 version = 3; }
+message SyncOrderResponse { string order_id = 1; bool accepted = 2; int64 version = 3; }

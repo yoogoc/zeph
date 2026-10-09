@@ -1,0 +1,61 @@
+openapi: 3.1.0
+info:
+  title: Zeph local shop demo
+  version: 1.0.0
+servers:
+  - url: http://localhost:8080
+paths:
+  /v1/customers/{customer_id}/orders:
+    parameters:
+      - name: customer_id
+        in: path
+        required: true
+        schema: {type: string, default: cus_1024}
+    get:
+      summary: OpenAPI · 查询客户订单
+      parameters:
+        - name: status
+          in: query
+          schema: {type: string, default: paid}
+      responses:
+        '200': {description: Orders}
+    post:
+      summary: OpenAPI · 创建订单
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreateOrder'}
+      responses:
+        '200': {description: Created}
+  /v1/orders/{order_id}:
+    parameters:
+      - name: order_id
+        in: path
+        required: true
+        schema: {type: string, default: ord_1024}
+    patch:
+      summary: OpenAPI · 修改订单备注
+      requestBody:
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+              properties:
+                note: {type: [string, 'null'], default: 工作日配送}
+      responses:
+        '200': {description: Updated}
+components:
+  schemas:
+    CreateOrder:
+      type: object
+      required: [currency, items]
+      properties:
+        currency: {type: string, default: CNY}
+        items:
+          type: array
+          items:
+            type: object
+            properties:
+              sku: {type: string, default: zeph-pro}
+              quantity: {type: integer, minimum: 1}
