@@ -1,8 +1,9 @@
+use gpui_kit::component::TitleBar;
 use gpui_kit::*;
 use std::sync::Arc;
 use zeph::{
     storage::ProjectStore,
-    ui::{Quit, SaveProject, SendRequest, Workbench},
+    ui::{Quit, SaveProject, SendRequest, WORKBENCH_TITLEBAR_HEIGHT, Workbench},
 };
 fn main() -> anyhow::Result<()> {
     env_logger::init();
@@ -47,11 +48,15 @@ fn main() -> anyhow::Result<()> {
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Zeph — Local API Workbench".into()),
-                    ..Default::default()
+                    traffic_light_position: Some(point(
+                        px(9.),
+                        (WORKBENCH_TITLEBAR_HEIGHT - px(14.)) / 2.,
+                    )),
+                    ..TitleBar::title_bar_options()
                 }),
                 window_bounds: Some(WindowBounds::centered(size(px(1440.), px(960.)), cx)),
                 window_min_size: Some(size(px(1100.), px(720.))),
-                ..Default::default()
+                ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
                 cx.new(|cx| Workbench::new(project, store, runtime, window, cx))

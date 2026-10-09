@@ -4,7 +4,7 @@ use crate::{
     transport::{self, RunRecord, SessionCommand, SessionEvent},
 };
 use gpui_kit::component::{
-    ActiveTheme, Disableable, IndexPath, Selectable, Sizable, Theme, ThemeMode,
+    ActiveTheme, Disableable, IndexPath, Selectable, Sizable, Theme, ThemeMode, TitleBar,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
@@ -25,6 +25,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 gpui_kit::actions!(zeph, [SendRequest, SaveProject, Quit]);
+
+pub const WORKBENCH_TITLEBAR_HEIGHT: Pixels = px(44.);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -1780,13 +1782,12 @@ impl Render for Workbench {
         let protocol = r.protocol.clone();
         let current_running = self.job.as_ref().is_some_and(|j| j.request == r.id);
         let top = h_flex()
-            .h(px(60.))
-            .flex_shrink_0()
-            .px_4()
+            .h_full()
+            .flex_1()
+            .min_w_0()
+            .pr_4()
             .gap_3()
             .items_center()
-            .border_b_1()
-            .border_color(cx.theme().border)
             .child(div().text_lg().font_weight(FontWeight::BOLD).child("zeph."))
             .child(
                 div()
@@ -2103,7 +2104,13 @@ impl Render for Workbench {
             .text_color(cx.theme().foreground)
             .font_family(".AppleSystemUIFont")
             .text_sm()
-            .child(top)
+            .child(
+                TitleBar::new()
+                    .h(WORKBENCH_TITLEBAR_HEIGHT)
+                    .bg(cx.theme().background)
+                    .border_color(cx.theme().border)
+                    .child(top),
+            )
             .child(
                 h_flex()
                     .items_stretch()
