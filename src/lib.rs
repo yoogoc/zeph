@@ -4,3 +4,5 @@ pub mod storage;
 pub mod transport;
 #[cfg(feature = "desktop")]
 pub mod ui;
+#[cfg(feature = "desktop")]
+pub mod workspace;

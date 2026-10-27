@@ -4,8 +4,8 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-pub const HTTP_METHODS: [&str; 9] = [
-    "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT",
+pub const HTTP_METHODS: [&str; 10] = [
+    "GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS", "TRACE", "CONNECT", "QUERY",
 ];
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -184,6 +184,105 @@ impl Request {
         }
         Ok(url.to_string())
     }
+    pub fn encoding_preview(&self, vars: &BTreeMap<String, String>) -> Result<String> {
+        let url = self.resolved_url(vars)?;
+        let mut text = if self.protocol == Protocol::Http {
+            format!("{} {url}\n", self.method)
+        } else if self.protocol == Protocol::Grpc {
+            format!("gRPC {url}\nMethod: {}\n", self.grpc_method)
+        } else {
+            format!("WebSocket {url}\n")
+        };
+        for header in self
+            .headers
+            .iter()
+            .filter(|h| h.enabled && !h.name.is_empty())
+        {
+            let name = interpolate(&header.name, vars)?;
+            let value = if ["authorization", "cookie", "proxy-authorization"]
+                .iter()
+                .any(|h| name.eq_ignore_ascii_case(h))
+            {
+                "[已隐藏凭据]".into()
+            } else {
+                interpolate(&header.value, vars)?
+            };
+            text.push_str(&format!("{name}: {value}\n"));
+        }
+        if !matches!(self.auth, Auth::None) {
+            text.push_str("Authorization: [已隐藏凭据]\n");
+        }
+        if self.protocol == Protocol::Http
+            && let Some(content_type) = self.body.kind.content_type()
+            && !self
+                .headers
+                .iter()
+                .any(|h| h.enabled && h.name.eq_ignore_ascii_case("content-type"))
+        {
+            text.push_str(&format!("Content-Type: {content_type}\n"));
+        }
+        text.push('\n');
+        if self.protocol != Protocol::Http {
+            text.push_str(&format!(
+                "消息草稿{}\n{}",
+                if self.protocol == Protocol::WebSocket {
+                    "（连接后手动发送）"
+                } else {
+                    ""
+                },
+                interpolate(&self.body.text, vars)?
+            ));
+        } else {
+            match self.body.kind {
+                BodyKind::None => text.push_str("无 Body"),
+                BodyKind::Json | BodyKind::Text | BodyKind::Xml => {
+                    let body = interpolate(&self.body.text, vars)?;
+                    if self.body.kind == BodyKind::Json {
+                        serde_json::from_str::<serde_json::Value>(&body)?;
+                    }
+                    text.push_str(&body);
+                }
+                BodyKind::UrlEncoded => {
+                    let mut serializer = url::form_urlencoded::Serializer::new(String::new());
+                    for field in self
+                        .body
+                        .fields
+                        .iter()
+                        .filter(|f| f.enabled && !f.name.is_empty())
+                    {
+                        serializer.append_pair(
+                            &interpolate(&field.name, vars)?,
+                            &interpolate(&field.value, vars)?,
+                        );
+                    }
+                    text.push_str(&serializer.finish());
+                }
+                BodyKind::FormData => {
+                    text.push_str(
+                        "multipart/form-data 字段清单（boundary 与文件内容在发送时生成）\n",
+                    );
+                    for field in self
+                        .body
+                        .fields
+                        .iter()
+                        .filter(|f| f.enabled && !f.name.is_empty())
+                    {
+                        text.push_str(&format!(
+                            "{}{}: {}\n",
+                            interpolate(&field.name, vars)?,
+                            if field.file { " [File]" } else { " [Text]" },
+                            interpolate(&field.value, vars)?
+                        ));
+                    }
+                }
+                BodyKind::Binary => text.push_str(&format!(
+                    "本地二进制文件: {}",
+                    interpolate(&self.body.file_path, vars)?
+                )),
+            }
+        }
+        Ok(text)
+    }
 }
 
 pub fn encode_path_segment(value: &str) -> String {
@@ -252,6 +351,25 @@ pub struct Environment {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct PaneLayout {
+    pub sidebar: f32,
+    pub schema: f32,
+    pub request_height: f32,
+    pub request_width: f32,
+}
+impl Default for PaneLayout {
+    fn default() -> Self {
+        Self {
+            sidebar: 260.,
+            schema: 258.,
+            request_height: 360.,
+            request_width: 520.,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Project {
     pub version: u32,
     pub name: String,
@@ -259,6 +377,11 @@ pub struct Project {
     pub environments: Vec<Environment>,
     pub active_environment: usize,
     pub active_request: usize,
+    /// None migrates projects saved before request tabs were introduced.
+    #[serde(default)]
+    pub opened_requests: Option<Vec<Uuid>>,
+    #[serde(default)]
+    pub panes: PaneLayout,
     pub horizontal: bool,
     pub show_schema: bool,
 }
@@ -275,6 +398,7 @@ impl Project {
                 "HEAD" => "检查订单资源",
                 "OPTIONS" => "检查接口能力",
                 "TRACE" => "诊断请求链路",
+                "QUERY" => "检索订单",
                 _ => "建立代理隧道",
             };
             let mut r = Request::new(Protocol::Http, name);
@@ -292,6 +416,11 @@ impl Project {
                         Parameter::new("tag", "priority"),
                         Parameter::new("tag", "gift"),
                     ];
+                }
+                "QUERY" => {
+                    r.body.kind = BodyKind::Json;
+                    r.body.text =
+                        "{\n  \"filter\": {\"status\": \"paid\"},\n  \"limit\": 20\n}".into();
                 }
                 "POST" => {
                     r.url = "{{base_url}}/v1/customers/{customer_id}/orders".into();
@@ -365,6 +494,7 @@ impl Project {
                 ("ws_url".into(), "wss://api.staging.example.com".into()),
             ]),
         };
+        let opened_requests = Some(vec![requests[0].id]);
         Self {
             version: 1,
             name: "商城服务".into(),
@@ -372,6 +502,8 @@ impl Project {
             environments: vec![local, staging],
             active_environment: 0,
             active_request: 0,
+            opened_requests,
+            panes: PaneLayout::default(),
             horizontal: false,
             show_schema: true,
         }
@@ -382,12 +514,57 @@ impl Project {
             .map(|e| e.variables.clone())
             .unwrap_or_default()
     }
+    pub fn empty(name: impl Into<String>) -> Self {
+        let mut project = Self::examples();
+        project.name = name.into();
+        project.requests.clear();
+        project.opened_requests = Some(vec![]);
+        project
+    }
+    pub fn tabs(&self) -> &[Uuid] {
+        self.opened_requests.as_deref().unwrap_or_default()
+    }
+    pub fn open_request(&mut self, id: Uuid) {
+        if let Some(index) = self.requests.iter().position(|r| r.id == id) {
+            let tabs = self.opened_requests.get_or_insert_with(Vec::new);
+            if !tabs.contains(&id) {
+                tabs.push(id);
+            }
+            self.active_request = index;
+        }
+    }
+    pub fn close_request(&mut self, id: Uuid) {
+        let active = self.requests.get(self.active_request).map(|r| r.id);
+        let tabs = self.opened_requests.get_or_insert_with(Vec::new);
+        if let Some(index) = tabs.iter().position(|tab| *tab == id) {
+            tabs.remove(index);
+            if active == Some(id)
+                && let Some(next) = tabs.get(index.min(tabs.len().saturating_sub(1))).copied()
+                && let Some(index) = self.requests.iter().position(|r| r.id == next)
+            {
+                self.active_request = index;
+            }
+        }
+    }
+    pub fn delete_request(&mut self, id: Uuid) -> Option<(usize, Request)> {
+        let index = self.requests.iter().position(|r| r.id == id)?;
+        self.close_request(id);
+        let active = self.requests.get(self.active_request).map(|r| r.id);
+        let removed = self.requests.remove(index);
+        self.active_request = self
+            .requests
+            .iter()
+            .position(|r| Some(r.id) == active)
+            .unwrap_or(0);
+        Some((index, removed))
+    }
     pub fn normalize(&mut self) -> Result<()> {
         if self.version != 1 {
             bail!("不支持的项目版本: {}", self.version);
         }
-        if self.requests.is_empty() {
-            self.requests.push(Request::new(Protocol::Http, "新请求"));
+        let mut ids = std::collections::HashSet::new();
+        if self.requests.iter().any(|r| !ids.insert(r.id)) {
+            bail!("项目含有重复请求 ID，原文件未修改");
         }
         if self.environments.is_empty() {
             self.environments.push(Environment {
@@ -395,7 +572,20 @@ impl Project {
                 variables: BTreeMap::new(),
             });
         }
-        self.active_request = self.active_request.min(self.requests.len() - 1);
+        self.active_request = self
+            .active_request
+            .min(self.requests.len().saturating_sub(1));
+        let active = self.requests.get(self.active_request).map(|r| r.id);
+        let tabs = self
+            .opened_requests
+            .get_or_insert_with(|| active.into_iter().collect());
+        let mut seen = std::collections::HashSet::new();
+        tabs.retain(|id| ids.contains(id) && seen.insert(*id));
+        if !tabs.contains(&active.unwrap_or(Uuid::nil()))
+            && let Some(id) = tabs.first()
+        {
+            self.active_request = self.requests.iter().position(|r| &r.id == id).unwrap_or(0);
+        }
         self.active_environment = self.active_environment.min(self.environments.len() - 1);
         Ok(())
     }

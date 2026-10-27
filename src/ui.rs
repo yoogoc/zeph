@@ -1,22 +1,30 @@
 use crate::{
     model::*,
-    storage::ProjectStore,
-    transport::{self, RunRecord, SessionCommand, SessionEvent},
+    storage::{ContractInfo, ProjectStore},
+    transport::{self, RunRecord, SessionCommand, SessionEvent, SessionMessage, TimingMark},
+    workspace::WorkspaceStrip,
 };
+use gpui_kit::base::ElementExt;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, IndexPath, Selectable, Sizable, Theme, ThemeMode, TitleBar,
+    ActiveTheme, Disableable, Icon, IconName, IndexPath, Selectable, Sizable, Theme, ThemeMode,
+    TitleBar,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
+    menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
     select::{Select, SelectEvent, SelectState},
+    tab::{Tab as RequestTab, TabBar},
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::*;
 use prost_reflect::DescriptorPool;
 use std::{
+    cell::Cell,
     collections::HashMap,
     path::PathBuf,
+    rc::Rc,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -24,9 +32,25 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-gpui_kit::actions!(zeph, [SendRequest, SaveProject, Quit]);
+gpui_kit::actions!(
+    zeph,
+    [
+        SendRequest,
+        SaveProject,
+        Quit,
+        SearchRequests,
+        CloseRequest,
+        NewRequest,
+        UndoDelete
+    ]
+);
 
-pub const WORKBENCH_TITLEBAR_HEIGHT: Pixels = px(44.);
+pub const WORKBENCH_TITLEBAR_HEIGHT: Pixels = px(48.);
+
+const SIDEBAR_GUTTER: f32 = 12.;
+const SIDEBAR_ROW_INSET: f32 = 8.;
+const SIDEBAR_ROW_HEIGHT: f32 = 32.;
+const SIDEBAR_METHOD_WIDTH: f32 = 62.;
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Tab {
@@ -36,6 +60,13 @@ enum Tab {
     Body,
     Auth,
     Settings,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ResponseTab {
+    Body,
+    Headers,
+    Trailers,
+    Timeline,
 }
 impl Tab {
     fn label(self) -> &'static str {
@@ -51,8 +82,10 @@ impl Tab {
 }
 #[derive(Clone, Copy)]
 enum Field {
+    ProjectName,
     Name,
     Url,
+    Method,
     Body,
     Token,
     User,
@@ -62,28 +95,41 @@ enum Field {
     Environment,
     Search,
 }
+#[derive(Clone, Copy)]
+enum Split {
+    Sidebar,
+    Schema,
+    Vertical,
+    Horizontal,
+}
+
 struct ParamInputs {
     name: Entity<InputState>,
     value: Entity<InputState>,
 }
 struct Job {
     id: Uuid,
-    request: Uuid,
     cancel: CancellationToken,
     commands: Option<tokio::sync::mpsc::Sender<SessionCommand>>,
     half_closed: bool,
 }
 enum WorkerEvent {
     Record(Uuid, RunRecord),
-    Session(Uuid, Uuid, SessionEvent),
+    Session(Uuid, Uuid, u128, SessionEvent),
     Done(Uuid),
     Pool(Uuid, Result<DescriptorPool, String>, String),
     Imported(Result<crate::openapi::ImportedSpec, String>),
     Saved(u64, Result<(), String>),
     Notice(String),
+    Contracts(Result<Vec<ContractInfo>, String>),
+    Definition(PathBuf, Result<String, String>),
 }
 
 pub struct Workbench {
+    workspace_strip: Option<Entity<WorkspaceStrip>>,
+    empty_request: Request,
+    project_name: Entity<InputState>,
+    environment_name: Entity<InputState>,
     project: Project,
     store: ProjectStore,
     runtime: Arc<tokio::runtime::Runtime>,
@@ -91,6 +137,10 @@ pub struct Workbench {
     rx: mpsc::Receiver<WorkerEvent>,
     name: Entity<InputState>,
     url: Entity<InputState>,
+    url_editing: bool,
+    split_sizes: Rc<Cell<[Size<Pixels>; 4]>>,
+    resizing: Option<(Split, Point<Pixels>, f32)>,
+    selected_messages: HashMap<Uuid, usize>,
     search: Entity<InputState>,
     token: Entity<InputState>,
     user: Entity<InputState>,
@@ -99,9 +149,10 @@ pub struct Workbench {
     proxy: Entity<InputState>,
     body: Entity<EditorState>,
     response: Entity<EditorState>,
+    response_override: bool,
     environment: Entity<EditorState>,
     schema: Entity<EditorState>,
-    method: Entity<SelectState<Vec<String>>>,
+    method: Entity<InputState>,
     body_kind: Entity<SelectState<Vec<String>>>,
     rpc_method: Entity<SelectState<Vec<String>>>,
     env_select: Entity<SelectState<Vec<String>>>,
@@ -113,12 +164,27 @@ pub struct Workbench {
     loading: bool,
     environment_open: bool,
     history_open: bool,
-    response_headers: bool,
+    definitions_open: bool,
+    contracts: Vec<ContractInfo>,
+    definition_path: Option<PathBuf>,
+    definition: Entity<EditorState>,
+    history_response: Entity<EditorState>,
+    history_preview: bool,
+    encoding_open: bool,
+    encoding: Entity<EditorState>,
+    response_tab: ResponseTab,
+    request_views: HashMap<Uuid, (Tab, ResponseTab)>,
+    request_tab_scroll: ScrollHandle,
+    revealed_request_tab: Cell<Option<(Uuid, usize, usize)>>,
+    deleted_requests: Vec<(usize, Request)>,
+    deleted_environment: Option<(usize, Environment)>,
+    environment_drafts: HashMap<String, (String, String)>,
     pools: HashMap<Uuid, DescriptorPool>,
     records: HashMap<Uuid, RunRecord>,
     logs: HashMap<Uuid, String>,
     history: Vec<RunRecord>,
-    job: Option<Job>,
+    jobs: HashMap<Uuid, Job>,
+    session_records: HashMap<Uuid, RunRecord>,
     notice: String,
     revision: u64,
     saved_revision: u64,
@@ -139,6 +205,9 @@ impl Workbench {
             cx.new(|cx| InputState::new(window, cx).placeholder(hint))
         };
         let name = input(window, cx, "请求名称");
+        let project_name = input(window, cx, "工作区名称");
+        project_name.update(cx, |s, cx| s.set_value(project.name.clone(), window, cx));
+        let environment_name = input(window, cx, "环境名称");
         let url = input(window, cx, "https://api.example.com");
         let search = input(window, cx, "搜索请求…");
         let token = input(window, cx, "Token 或 {{token}}");
@@ -154,17 +223,10 @@ impl Workbench {
         let response = cx.new(|cx| EditorState::new(window, cx).language("json"));
         let environment = cx.new(|cx| EditorState::new(window, cx).language("json"));
         let schema = cx.new(|cx| EditorState::new(window, cx).language("json"));
-        let method = cx.new(|cx| {
-            SelectState::new(
-                HTTP_METHODS
-                    .iter()
-                    .map(|s| s.to_string())
-                    .collect::<Vec<_>>(),
-                Some(IndexPath::new(0)),
-                window,
-                cx,
-            )
-        });
+        let definition = cx.new(|cx| EditorState::new(window, cx).language("json"));
+        let history_response = cx.new(|cx| EditorState::new(window, cx).language("text"));
+        let encoding = cx.new(|cx| EditorState::new(window, cx).language("text"));
+        let method = input(window, cx, "METHOD");
         let body_kind = cx.new(|cx| {
             SelectState::new(
                 BodyKind::ALL
@@ -214,6 +276,10 @@ impl Workbench {
         });
         let history = store.history().unwrap_or_default();
         let mut this = Self {
+            workspace_strip: None,
+            empty_request: Request::new(Protocol::Http, ""),
+            project_name,
+            environment_name,
             project,
             store,
             runtime,
@@ -221,6 +287,10 @@ impl Workbench {
             rx,
             name,
             url,
+            url_editing: false,
+            split_sizes: Rc::new(Cell::new([Size::default(); 4])),
+            resizing: None,
+            selected_messages: HashMap::new(),
             search,
             token,
             user,
@@ -229,6 +299,7 @@ impl Workbench {
             proxy,
             body,
             response,
+            response_override: false,
             environment,
             schema,
             method,
@@ -243,13 +314,28 @@ impl Workbench {
             loading: false,
             environment_open: false,
             history_open: false,
-            response_headers: false,
+            definitions_open: false,
+            contracts: vec![],
+            definition_path: None,
+            definition,
+            history_response,
+            history_preview: false,
+            encoding_open: false,
+            encoding,
+            response_tab: ResponseTab::Body,
+            request_views: HashMap::new(),
+            request_tab_scroll: ScrollHandle::new(),
+            revealed_request_tab: Cell::new(None),
+            deleted_requests: vec![],
+            deleted_environment: None,
+            environment_drafts: HashMap::new(),
             pools: HashMap::new(),
             records: HashMap::new(),
             logs: HashMap::new(),
             history,
-            job: None,
-            notice: "仅本地 · 请求尚未发送".into(),
+            jobs: HashMap::new(),
+            session_records: HashMap::new(),
+            notice: "就绪 · 请求尚未发送".into(),
             revision: 0,
             saved_revision: 0,
             save_pending: false,
@@ -259,7 +345,9 @@ impl Workbench {
         };
         for (entity, field) in [
             (this.name.clone(), Field::Name),
+            (this.project_name.clone(), Field::ProjectName),
             (this.url.clone(), Field::Url),
+            (this.method.clone(), Field::Method),
             (this.search.clone(), Field::Search),
             (this.token.clone(), Field::Token),
             (this.user.clone(), Field::User),
@@ -292,15 +380,15 @@ impl Workbench {
             ));
         }
         this.subscriptions.push(cx.subscribe_in(
-            &this.method,
+            &this.url,
             window,
-            |this, _, event: &SelectEvent<Vec<String>>, _, cx| {
-                let SelectEvent::Confirm(Some(value)) = event else {
-                    return;
-                };
-                if !this.loading {
-                    this.current_mut().method = value.clone();
-                    this.dirty(cx);
+            |this, _, event, window, cx| {
+                if matches!(event, InputEvent::Blur | InputEvent::PressEnter { .. }) {
+                    this.url_editing = false;
+                    if matches!(event, InputEvent::PressEnter { .. }) {
+                        this.focus.focus(window, cx);
+                    }
+                    cx.notify();
                 }
             },
         ));
@@ -336,6 +424,7 @@ impl Workbench {
                         .iter()
                         .position(|e| &e.name == value)
                 {
+                    this.stash_environment(cx);
                     this.project.active_environment = i;
                     this.load_environment(window, cx);
                     this.dirty(cx);
@@ -397,10 +486,16 @@ impl Workbench {
         this
     }
     fn current(&self) -> &Request {
-        &self.project.requests[self.project.active_request]
+        self.project
+            .requests
+            .get(self.project.active_request)
+            .unwrap_or(&self.empty_request)
     }
     fn current_mut(&mut self) -> &mut Request {
-        &mut self.project.requests[self.project.active_request]
+        self.project
+            .requests
+            .get_mut(self.project.active_request)
+            .unwrap_or(&mut self.empty_request)
     }
     fn dirty(&mut self, cx: &mut Context<Self>) {
         self.revision += 1;
@@ -420,8 +515,14 @@ impl Workbench {
                 cx.notify();
                 return;
             }
+            Field::ProjectName => {
+                if !value.trim().is_empty() {
+                    self.project.name = value.trim().to_owned();
+                }
+            }
             Field::Name => self.current_mut().name = value,
             Field::Url => self.current_mut().url = value,
+            Field::Method => self.current_mut().method = value.trim().to_owned(),
             Field::Body => self.current_mut().body.text = value,
             Field::Token => {
                 if let Auth::Bearer(token) = &mut self.current_mut().auth {
@@ -460,9 +561,9 @@ impl Workbench {
         }
         self.body
             .update(cx, |state, cx| state.set_value(r.body.text, window, cx));
-        self.method.update(cx, |state, cx| {
-            state.set_selected_value(&r.method, window, cx)
-        });
+        self.url_editing = false;
+        self.method
+            .update(cx, |state, cx| state.set_value(r.method, window, cx));
         self.body_kind.update(cx, |state, cx| {
             state.set_selected_value(&r.body.kind.label().to_string(), window, cx)
         });
@@ -503,9 +604,23 @@ impl Workbench {
     }
     fn load_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.loading = true;
-        let value = serde_json::to_string_pretty(&self.project.variables()).unwrap_or_default();
+        let name = self.project.environments[self.project.active_environment]
+            .name
+            .clone();
+        let (draft_name, value) =
+            self.environment_drafts
+                .get(&name)
+                .cloned()
+                .unwrap_or_else(|| {
+                    (
+                        name.clone(),
+                        serde_json::to_string_pretty(&self.project.variables()).unwrap_or_default(),
+                    )
+                });
         self.environment
             .update(cx, |s, cx| s.set_value(value, window, cx));
+        self.environment_name
+            .update(cx, |s, cx| s.set_value(draft_name, window, cx));
         self.loading = false;
     }
     fn update_rpc_select(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -650,18 +765,39 @@ impl Workbench {
                     }
                 }
                 WorkerEvent::Notice(text) => self.notice = text,
-                WorkerEvent::Record(job, record) => {
-                    if self.job.as_ref().is_some_and(|j| j.id == job) {
-                        self.job = None;
+                WorkerEvent::Contracts(result) => match result {
+                    Ok(contracts) => self.contracts = contracts,
+                    Err(error) => self.notice = format!("接口定义读取失败: {error}"),
+                },
+                WorkerEvent::Definition(path, result) => {
+                    if self.definition_path.as_ref() == Some(&path) {
+                        match result {
+                            Ok(text) => self
+                                .definition
+                                .update(cx, |s, cx| s.set_value(text, window, cx)),
+                            Err(error) => self.notice = format!("接口定义读取失败: {error}"),
+                        }
                     }
-                    self.notice = format!("{} · {} ms", record.status, record.elapsed_ms);
-                    self.records.insert(record.request_id, record.clone());
+                }
+                WorkerEvent::Record(job, record) => {
+                    if self
+                        .jobs
+                        .get(&record.request_id)
+                        .is_some_and(|j| j.id == job)
+                    {
+                        self.jobs.remove(&record.request_id);
+                        self.session_records.remove(&record.request_id);
+                        self.notice = format!("{} · {} ms", record.status, record.elapsed_ms);
+                        self.records.insert(record.request_id, record.clone());
+                        if record.request_id == self.current().id {
+                            self.update_response(window, cx);
+                        }
+                    }
                     self.history.insert(0, record);
                     self.history.truncate(100);
-                    self.update_response(window, cx);
                 }
-                WorkerEvent::Session(job, id, event) => {
-                    if self.job.as_ref().is_some_and(|j| j.id == job) {
+                WorkerEvent::Session(job, id, elapsed_ms, event) => {
+                    if self.jobs.get(&id).is_some_and(|j| j.id == job) {
                         let log = self.logs.entry(id).or_default();
                         if log.len() + event_text(&event).len() + 40 < 1024 * 1024 {
                             log.push_str(&format!(
@@ -670,56 +806,73 @@ impl Workbench {
                                 event_text(&event)
                             ));
                         }
+                        if let Some(record) = self.session_records.get_mut(&id) {
+                            record.elapsed_ms = elapsed_ms;
+                            record_session_event(record, &event, elapsed_ms);
+                            record.bytes = record.messages.iter().map(|m| m.body.len()).sum();
+                        }
                         if id == self.current().id {
                             self.update_response(window, cx);
                         }
                     }
                 }
                 WorkerEvent::Done(job) => {
-                    if self.job.as_ref().is_some_and(|j| j.id == job) {
-                        self.job = None;
+                    self.jobs.retain(|_, j| j.id != job);
+                }
+                WorkerEvent::Pool(id, result, source) => {
+                    if !self.project.requests.iter().any(|r| r.id == id) {
+                        continue;
+                    }
+                    match result {
+                        Ok(pool) => {
+                            let count = transport::grpc::methods(&pool).len();
+                            let valid = transport::grpc::method(
+                                &pool,
+                                &self
+                                    .project
+                                    .requests
+                                    .iter()
+                                    .find(|r| r.id == id)
+                                    .map(|r| r.grpc_method.clone())
+                                    .unwrap_or_default(),
+                            )
+                            .is_ok();
+                            let first = transport::grpc::methods(&pool)
+                                .first()
+                                .map(|m| m.path.clone())
+                                .unwrap_or_default();
+                            self.pools.insert(id, pool);
+                            if let Some(r) = self.project.requests.iter_mut().find(|r| r.id == id) {
+                                r.proto_path = source;
+                                if !valid {
+                                    r.grpc_method = first;
+                                }
+                            }
+                            self.notice = format!("已读取 {count} 个 gRPC 方法");
+                            if id == self.current().id {
+                                self.loading = true;
+                                self.update_rpc_select(window, cx);
+                                self.update_schema(window, cx);
+                                self.loading = false;
+                            }
+                            self.dirty(cx);
+                        }
+                        Err(e) => self.notice = e,
                     }
                 }
-                WorkerEvent::Pool(id, result, source) => match result {
-                    Ok(pool) => {
-                        let count = transport::grpc::methods(&pool).len();
-                        let valid = transport::grpc::method(
-                            &pool,
-                            &self
-                                .project
-                                .requests
-                                .iter()
-                                .find(|r| r.id == id)
-                                .map(|r| r.grpc_method.clone())
-                                .unwrap_or_default(),
-                        )
-                        .is_ok();
-                        let first = transport::grpc::methods(&pool)
-                            .first()
-                            .map(|m| m.path.clone())
-                            .unwrap_or_default();
-                        self.pools.insert(id, pool);
-                        if let Some(r) = self.project.requests.iter_mut().find(|r| r.id == id) {
-                            r.proto_path = source;
-                            if !valid {
-                                r.grpc_method = first;
-                            }
-                        }
-                        self.notice = format!("已读取 {count} 个 gRPC 方法");
-                        if id == self.current().id {
-                            self.loading = true;
-                            self.update_rpc_select(window, cx);
-                            self.update_schema(window, cx);
-                            self.loading = false;
-                        }
-                        self.dirty(cx);
-                    }
-                    Err(e) => self.notice = e,
-                },
                 WorkerEvent::Imported(result) => match result {
                     Ok(import) => {
                         let count = import.requests.len();
+                        let first = import.requests.first().map(|r| r.id);
                         self.project.requests.extend(import.requests);
+                        if self.project.tabs().is_empty()
+                            && let Some(id) = first
+                        {
+                            self.project.open_request(id);
+                            self.restore_view();
+                            self.load_request(window, cx);
+                        }
+                        self.refresh_contracts();
                         self.notice = format!(
                             "已导入 OpenAPI {} · {count} 个接口{}",
                             import.version,
@@ -748,41 +901,49 @@ impl Workbench {
         }
     }
     fn update_response(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.response_override = false;
         let id = self.current().id;
-        let text = if self.response_headers {
-            self.records
-                .get(&id)
-                .map(|r| {
-                    r.headers
-                        .iter()
-                        .map(|(k, v)| format!("{k}: {v}"))
-                        .collect::<Vec<_>>()
-                        .join("\n")
-                })
-                .unwrap_or_default()
-        } else if self.current().protocol != Protocol::Http {
-            self.logs
-                .get(&id)
-                .cloned()
-                .or_else(|| self.records.get(&id).map(|r| r.body.clone()))
-                .unwrap_or_else(|| {
-                    "还没有连接。连接后这里显示真实的消息、Metadata 和结束状态。".into()
-                })
-        } else {
-            self.records
-                .get(&id)
-                .map(|r| r.body.clone())
-                .unwrap_or_else(|| {
-                    "还没有响应。\n\n配置 URL 和参数后，点击发送或按 ⌘ Enter。".into()
-                })
+        let record = self
+            .session_records
+            .get(&id)
+            .or_else(|| self.records.get(&id));
+        let text = match self.response_tab {
+            ResponseTab::Headers => record.map(|r| headers_text(&r.headers)).unwrap_or_else(|| "尚未收到 Headers / Metadata".into()),
+            ResponseTab::Trailers => record.map(|r| {
+                if r.trailers.is_empty() { if self.jobs.contains_key(&id) { "等待调用结束".into() } else { format!("调用状态: {}\n没有额外 Trailers", r.status) } }
+                else { format!("调用状态: {}\n{}", r.status, headers_text(&r.trailers)) }
+            }).unwrap_or_else(|| "尚未调用".into()),
+            ResponseTab::Timeline => record.map(|r| format!("开始: {}\n环境: {}\n状态: {}\n总耗时: {} ms\n预览: {} B{}\n\n{}", r.started_at.with_timezone(&chrono::Local).format("%Y-%m-%d %H:%M:%S%.3f"), r.environment, r.status, r.elapsed_ms, r.bytes, if r.truncated { "（已截断）" } else { "" }, r.timeline.iter().map(|m| format!("{:>7} ms  {}", m.elapsed_ms, m.label)).collect::<Vec<_>>().join("\n")))
+                .unwrap_or_else(|| "发送后显示实际观测到的时间线。HTTP 的连接与服务端等待包含在 Headers 到达耗时中。".into()),
+            ResponseTab::Body if self.current().protocol != Protocol::Http => record.and_then(|r| {
+                let index = self.selected_messages.get(&id).copied().filter(|i| *i < r.messages.len())
+                    .unwrap_or_else(|| r.messages.len().saturating_sub(1));
+                r.messages.get(index).map(|m| pretty_payload(&m.body))
+            }).or_else(|| record.filter(|r| r.messages.is_empty() && !r.body.is_empty()).map(|r| r.body.clone()))
+                .unwrap_or_default(),
+            ResponseTab::Body => record.map(|r| r.body.clone()).unwrap_or_else(|| "还没有响应。\n\n配置 URL 和参数后，点击发送或按 ⌘ Enter。".into()),
         };
-        self.response
-            .update(cx, |s, cx| s.set_value(text, window, cx));
+        self.response.update(cx, |s, cx| {
+            s.set_highlighter(
+                if self.response_tab == ResponseTab::Body
+                    && serde_json::from_str::<serde_json::Value>(&text).is_ok()
+                {
+                    "json"
+                } else {
+                    "text"
+                },
+                cx,
+            );
+            s.set_value(text, window, cx);
+        });
     }
     fn send(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
-        if self.job.is_some() {
-            self.notice = "已有请求正在执行，先停止当前请求。".into();
+        if self.jobs.contains_key(&self.current().id) {
+            self.notice = "该请求正在执行，请先停止。".into();
             cx.notify();
+            return;
+        }
+        if self.project.tabs().is_empty() || self.project.requests.is_empty() {
             return;
         }
         let mut request = self.current().clone();
@@ -806,6 +967,7 @@ impl Workbench {
             let token = cancel.clone();
             self.runtime.spawn(async move {
                 let started = Instant::now();
+                let started_at = chrono::Utc::now();
                 let record = match transport::http::execute(
                     request.clone(),
                     vars,
@@ -817,7 +979,12 @@ impl Workbench {
                     Ok(r) => r,
                     Err(e) => {
                         let mut r = RunRecord::error(&request, environment, format!("{e:#}"));
+                        r.started_at = started_at;
                         r.elapsed_ms = started.elapsed().as_millis();
+                        r.timeline = vec![TimingMark {
+                            elapsed_ms: r.elapsed_ms,
+                            label: "执行失败或取消".into(),
+                        }];
                         r
                     }
                 };
@@ -829,13 +996,15 @@ impl Workbench {
                         .await;
                 }
             });
-            self.job = Some(Job {
-                id: job,
-                request: id,
-                cancel,
-                commands: None,
-                half_closed: false,
-            });
+            self.jobs.insert(
+                id,
+                Job {
+                    id: job,
+                    cancel,
+                    commands: None,
+                    half_closed: false,
+                },
+            );
         } else {
             let pool = self.pools.get(&id).cloned();
             if request.protocol == Protocol::Grpc && pool.is_none() {
@@ -843,6 +1012,13 @@ impl Workbench {
                 cx.notify();
                 return;
             }
+            let mut initial = RunRecord::error(&request, environment.clone(), String::new());
+            initial.method = request.protocol.label().into();
+            initial.status = "连接中…".into();
+            initial.error = false;
+            self.selected_messages.remove(&id);
+            self.session_records.insert(id, initial);
+            self.records.remove(&id);
             let (commands, rx) = tokio::sync::mpsc::channel(32);
             let (events, mut incoming) = tokio::sync::mpsc::channel(64);
             let token = cancel.clone();
@@ -866,18 +1042,7 @@ impl Workbench {
                 record.error = false;
                 while let Some(mut event) = incoming.recv().await {
                     record.truncated |= bound_event(&mut event);
-                    match &event {
-                        SessionEvent::Metadata(headers) => record.headers.extend(headers.clone()),
-                        SessionEvent::Finished { code, trailers } => {
-                            record.status = code.clone();
-                            record.headers.extend(trailers.clone());
-                        }
-                        SessionEvent::Failed(error) => {
-                            record.status = error.clone();
-                            record.error = true;
-                        }
-                        _ => {}
-                    }
+                    record_session_event(&mut record, &event, started.elapsed().as_millis());
                     let text = event_text(&event);
                     if record.body.len() + text.len() < 1024 * 1024 {
                         record.body.push_str(&text);
@@ -885,10 +1050,17 @@ impl Workbench {
                     } else {
                         record.truncated = true;
                     }
-                    let _ = tx.send(WorkerEvent::Session(job, id, event)).await;
+                    let _ = tx
+                        .send(WorkerEvent::Session(
+                            job,
+                            id,
+                            started.elapsed().as_millis(),
+                            event,
+                        ))
+                        .await;
                 }
                 record.elapsed_ms = started.elapsed().as_millis();
-                record.bytes = record.body.len();
+                record.bytes = record.messages.iter().map(|m| m.body.len()).sum();
                 let saved = store.record(&record);
                 let _ = tx.send(WorkerEvent::Record(job, record)).await;
                 let _ = tx.send(WorkerEvent::Done(job)).await;
@@ -899,31 +1071,32 @@ impl Workbench {
                 }
             });
             self.logs.insert(id, String::new());
-            self.job = Some(Job {
-                id: job,
-                request: id,
-                cancel,
-                commands: Some(commands),
-                half_closed: false,
-            });
+            self.jobs.insert(
+                id,
+                Job {
+                    id: job,
+                    cancel,
+                    commands: Some(commands),
+                    half_closed: false,
+                },
+            );
         }
         self.notice = "正在执行…".into();
+        self.update_response(_window, cx);
         cx.notify();
     }
     fn stop(&mut self, cx: &mut Context<Self>) {
-        if let Some(job) = &self.job {
+        if let Some(job) = self.jobs.get(&self.current().id) {
             job.cancel.cancel();
         }
         self.notice = "正在停止…".into();
         cx.notify();
     }
     fn command(&mut self, command: SessionCommand, cx: &mut Context<Self>) {
-        let Some(job) = self.job.as_mut() else {
+        let id = self.current().id;
+        let Some(job) = self.jobs.get_mut(&id) else {
             return;
         };
-        if job.request != self.project.requests[self.project.active_request].id {
-            return;
-        }
         let half = matches!(command, SessionCommand::HalfClose);
         if let Some(sender) = &job.commands {
             match sender.try_send(command) {
@@ -1015,22 +1188,33 @@ impl Workbench {
         cx.notify();
     }
     fn new_request(&mut self, protocol: Protocol, window: &mut Window, cx: &mut Context<Self>) {
-        let mut request = Request::new(protocol.clone(), "新请求");
+        let mut request = Request::new(protocol.clone(), format!("新 {} 请求", protocol.label()));
         request.url = match protocol {
             Protocol::Http => "{{base_url}}",
             Protocol::Grpc => "{{grpc_host}}",
             Protocol::WebSocket => "{{ws_url}}",
         }
         .into();
+        if protocol != Protocol::Http {
+            request.body.kind = BodyKind::Json;
+        }
+        let id = request.id;
+        let first = self.project.requests.is_empty();
         self.project.requests.push(request);
-        self.project.active_request = self.project.requests.len() - 1;
-        self.tab = if protocol == Protocol::Http {
-            Tab::Query
-        } else {
-            Tab::Body
-        };
-        self.load_request(window, cx);
-        self.dirty(cx);
+        if first {
+            self.request_views.insert(
+                id,
+                (
+                    if protocol == Protocol::Http {
+                        Tab::Query
+                    } else {
+                        Tab::Body
+                    },
+                    ResponseTab::Body,
+                ),
+            );
+        }
+        self.switch_request(self.project.requests.len() - 1, window, cx);
     }
     fn choose_file(&mut self, index: Option<usize>, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(path) = rfd::FileDialog::new().pick_file() {
@@ -1069,56 +1253,769 @@ impl Workbench {
             self.dirty(cx);
         }
     }
-    fn save_environment(&mut self, cx: &mut Context<Self>) {
+    fn stash_environment(&mut self, cx: &Context<Self>) {
+        if self.environment_open {
+            let key = self.project.environments[self.project.active_environment]
+                .name
+                .clone();
+            self.environment_drafts.insert(
+                key,
+                (
+                    self.environment_name.read(cx).value().to_string(),
+                    self.environment.read(cx).value().to_string(),
+                ),
+            );
+        }
+    }
+    fn refresh_environments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.loading = true;
+        self.env_select.update(cx, |s, cx| {
+            s.set_items(
+                self.project
+                    .environments
+                    .iter()
+                    .map(|e| e.name.clone())
+                    .collect(),
+                window,
+                cx,
+            );
+            s.set_selected_index(
+                Some(IndexPath::new(self.project.active_environment)),
+                window,
+                cx,
+            );
+        });
+        self.loading = false;
+        self.load_environment(window, cx);
+    }
+    fn new_environment(&mut self, duplicate: bool, window: &mut Window, cx: &mut Context<Self>) {
+        self.stash_environment(cx);
+        let mut environment = if duplicate {
+            self.project.environments[self.project.active_environment].clone()
+        } else {
+            Environment {
+                name: String::new(),
+                variables: std::collections::BTreeMap::new(),
+            }
+        };
+        let base = if duplicate {
+            format!("{} 副本", environment.name)
+        } else {
+            "新环境".into()
+        };
+        let mut name = base.clone();
+        let mut suffix = 2;
+        while self.project.environments.iter().any(|e| e.name == name) {
+            name = format!("{base} {suffix}");
+            suffix += 1;
+        }
+        environment.name = name;
+        self.project.environments.push(environment);
+        self.project.active_environment = self.project.environments.len() - 1;
+        self.refresh_environments(window, cx);
+        self.dirty(cx);
+    }
+    fn delete_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.project.environments.len() <= 1 {
+            return;
+        }
+        self.stash_environment(cx);
+        let index = self.project.active_environment;
+        self.deleted_environment = Some((index, self.project.environments.remove(index)));
+        self.project.active_environment = index.min(self.project.environments.len() - 1);
+        self.refresh_environments(window, cx);
+        self.notice = "环境已删除，可恢复上次删除的环境".into();
+        self.dirty(cx);
+    }
+    fn save_environment(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let name = self
+            .environment_name
+            .read(cx)
+            .value()
+            .to_string()
+            .trim()
+            .to_owned();
+        if name.is_empty()
+            || self
+                .project
+                .environments
+                .iter()
+                .enumerate()
+                .any(|(i, e)| i != self.project.active_environment && e.name == name)
+        {
+            self.notice = "环境名称不能为空或重复".into();
+            cx.notify();
+            return;
+        }
         match serde_json::from_str::<std::collections::BTreeMap<String, String>>(
-            &self.environment.read(cx).value(),
+            self.environment.read(cx).value().as_ref(),
         ) {
             Ok(vars) => {
-                self.project.environments[self.project.active_environment].variables = vars;
+                let environment = &mut self.project.environments[self.project.active_environment];
+                self.environment_drafts.remove(&environment.name);
+                environment.name = name;
+                environment.variables = vars;
+                self.refresh_environments(window, cx);
                 self.environment_open = false;
                 self.dirty(cx);
-                self.notice = "环境变量已更新".into();
+                self.notice = "环境已更新".into();
             }
-            Err(e) => {
-                self.notice = format!("环境变量需要 JSON 字符串键值表: {e}");
+            Err(error) => {
+                self.notice = format!("环境变量需要 JSON 字符串键值表: {error}");
                 cx.notify();
             }
         }
     }
-    fn switch_request(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
-        self.project.active_request = index;
-        self.environment_open = false;
-        self.history_open = false;
-        self.tab = if self.current().protocol == Protocol::Http {
+    fn environment_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        v_flex().flex_1().min_h_0().p_5().gap_4()
+            .child(h_flex().gap_3().items_center().child(div().flex_1().child("工作区与环境"))
+                .child(Button::new("environment-back").small().ghost().label("返回").on_click(cx.listener(|this, _, _, cx| { this.stash_environment(cx); this.environment_open = false; cx.notify(); })))
+                .child(Button::new("save-environment").primary().label("应用变量").on_click(cx.listener(|this, _, window, cx| this.save_environment(window, cx)))))
+            .child(h_flex().gap_3().items_center().child(div().w(px(80.)).text_color(cx.theme().muted_foreground).child("工作区名称"))
+                .child(Input::new(&self.project_name).w(px(280.))))
+            .child(div().text_xs().text_color(cx.theme().muted_foreground).child("请求、环境与执行历史均独立保存在此工作区。"))
+            .child(h_flex().gap_2().items_center().child(div().child("环境名称")).child(Input::new(&self.environment_name).w(px(220.)))
+                .child(Button::new("environment-new").small().label("新建环境").on_click(cx.listener(|this, _, window, cx| this.new_environment(false, window, cx))))
+                .child(Button::new("environment-copy").small().ghost().label("复制环境").on_click(cx.listener(|this, _, window, cx| this.new_environment(true, window, cx))))
+                .child(Button::new("environment-delete").small().ghost().label("删除环境").disabled(self.project.environments.len() <= 1).on_click(cx.listener(|this, _, window, cx| this.delete_environment(window, cx)))))
+            .when(self.deleted_environment.is_some(), |column| column.child(Button::new("environment-restore").small().ghost().label("恢复上次删除的环境")
+                .on_click(cx.listener(|this, _, window, cx| {
+                    if let Some((index, mut environment)) = this.deleted_environment.take() {
+                        while this.project.environments.iter().any(|e| e.name == environment.name) { environment.name.push_str(" 恢复"); }
+                        let index = index.min(this.project.environments.len());
+                        this.project.environments.insert(index, environment);
+                        this.project.active_environment = index;
+                        this.refresh_environments(window, cx); this.dirty(cx);
+                    }
+                }))))
+            .child(div().text_sm().text_color(cx.theme().muted_foreground).child("用 JSON 字符串键值表编辑。在 URL、参数、Headers 和 Body 中使用 {{variable}}。"))
+            .child(Editor::new(&self.environment).h(relative(1.)).flex_1()).into_any_element()
+    }
+    fn remember_view(&mut self) {
+        if !self.project.tabs().contains(&self.current().id) {
+            return;
+        }
+        self.request_views
+            .insert(self.current().id, (self.tab, self.response_tab));
+    }
+    fn restore_view(&mut self) {
+        let default = if self.current().protocol == Protocol::Http {
             Tab::Query
         } else {
             Tab::Body
         };
+        (self.tab, self.response_tab) = self
+            .request_views
+            .get(&self.current().id)
+            .copied()
+            .unwrap_or((default, ResponseTab::Body));
+    }
+    fn switch_request(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.project.requests.get(index).map(|r| r.id) else {
+            return;
+        };
+        self.remember_view();
+        self.project.open_request(id);
+        self.stash_environment(cx);
+        self.environment_open = false;
+        self.history_open = false;
+        self.definitions_open = false;
+        self.encoding_open = false;
+        self.restore_view();
         self.load_request(window, cx);
         self.dirty(cx);
+    }
+    fn close_request(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        self.encoding_open = false;
+        self.remember_view();
+        self.project.close_request(id);
+        if !self.project.tabs().is_empty() {
+            self.restore_view();
+            self.load_request(window, cx);
+        }
+        self.dirty(cx);
+    }
+    fn delete_request(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        self.encoding_open = false;
+        self.remember_view();
+        if let Some(removed) = self.project.delete_request(id) {
+            if let Some(job) = self.jobs.remove(&id) {
+                job.cancel.cancel();
+            }
+            self.session_records.remove(&id);
+            self.notice = format!("已删除“{}”，可撤销", removed.1.name);
+            self.deleted_requests.push(removed);
+            if !self.project.tabs().is_empty() {
+                self.restore_view();
+                self.load_request(window, cx);
+            }
+            self.dirty(cx);
+        }
+    }
+    fn undo_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((index, request)) = self.deleted_requests.pop() {
+            let index = index.min(self.project.requests.len());
+            self.project.requests.insert(index, request);
+            self.switch_request(index, window, cx);
+            self.notice = "请求已恢复".into();
+        }
+    }
+    fn duplicate_request(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(mut request) = self.project.requests.iter().find(|r| r.id == id).cloned() else {
+            return;
+        };
+        request.id = Uuid::new_v4();
+        request.name.push_str(" 副本");
+        if let Some(pool) = self.pools.get(&id).cloned() {
+            self.pools.insert(request.id, pool);
+        }
+        self.project.requests.push(request);
+        self.switch_request(self.project.requests.len() - 1, window, cx);
+    }
+    pub fn set_workspace_strip(&mut self, strip: Entity<WorkspaceStrip>) {
+        self.workspace_strip = Some(strip);
+    }
+    fn move_request(&mut self, id: Uuid, offset: isize, cx: &mut Context<Self>) {
+        let Some(index) = self.project.requests.iter().position(|r| r.id == id) else {
+            return;
+        };
+        let Some(next) = index
+            .checked_add_signed(offset)
+            .filter(|i| *i < self.project.requests.len())
+        else {
+            return;
+        };
+        let active = self.current().id;
+        self.project.requests.swap(index, next);
+        self.project.active_request = self
+            .project
+            .requests
+            .iter()
+            .position(|r| r.id == active)
+            .unwrap_or(0);
+        self.dirty(cx);
+    }
+    fn save_response(&mut self, cx: &mut Context<Self>) {
+        let text = self.response.read(cx).value().to_string();
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            if let Some(path) = rfd::FileDialog::new()
+                .set_file_name("response-preview.txt")
+                .save_file()
+            {
+                let notice = match std::fs::write(&path, text) {
+                    Ok(()) => format!("预览已保存: {}", path.display()),
+                    Err(error) => format!("保存预览失败: {error}"),
+                };
+                let _ = tx.blocking_send(WorkerEvent::Notice(notice));
+            }
+        });
+    }
+    fn refresh_contracts(&self) {
+        let store = self.store.clone();
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            let _ = tx.blocking_send(WorkerEvent::Contracts(
+                store.contracts().map_err(|e| e.to_string()),
+            ));
+        });
+    }
+    fn definitions_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let mut list = v_flex().gap_2().p_3();
+        for (i, contract) in self.contracts.iter().enumerate() {
+            let path = contract.path.clone();
+            list = list.child(Button::new(("contract", i)).ghost().label(format!("{} · {}", contract.label, contract.version))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.definition_path = Some(path.clone());
+                    let path = path.clone(); let tx = this.tx.clone();
+                    this.runtime.spawn_blocking(move || {
+                        let result = (|| -> anyhow::Result<String> {
+                            let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+                            let sources: serde_json::Value = serde_json::from_slice(&std::fs::read(path.with_file_name("sources.json"))?)?;
+                            Ok(serde_json::to_string_pretty(&serde_json::json!({"document": document, "source": sources.get("source"), "diagnostics": sources.get("diagnostics"), "localReferences": sources.get("files")}))?)
+                        })().map_err(|e| e.to_string());
+                        let _ = tx.blocking_send(WorkerEvent::Definition(path, result));
+                    });
+                    cx.notify();
+                })));
+        }
+        v_flex()
+            .flex_1()
+            .min_h_0()
+            .child(
+                h_flex()
+                    .p_4()
+                    .gap_3()
+                    .child(div().flex_1().child("接口定义 · 本地导入的原文与诊断"))
+                    .child(
+                        Button::new("definition-import")
+                            .small()
+                            .label("导入 OpenAPI")
+                            .on_click(cx.listener(|this, _, _, cx| this.import_openapi(cx))),
+                    ),
+            )
+            .when(self.contracts.is_empty(), |column| {
+                column.child(
+                    div()
+                        .p_4()
+                        .text_sm()
+                        .text_color(cx.theme().muted_foreground)
+                        .child("尚未导入 OpenAPI。gRPC 的本地 Proto 与方法可在对应请求中查看。"),
+                )
+            })
+            .child(
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .items_stretch()
+                    .child(
+                        div()
+                            .id("definitions-scroll")
+                            .w(px(250.))
+                            .overflow_y_scroll()
+                            .child(list),
+                    )
+                    .child(
+                        Editor::new(&self.definition)
+                            .readonly(true)
+                            .appearance(false)
+                            .h(relative(1.))
+                            .flex_1(),
+                    ),
+            )
+            .into_any_element()
+    }
+    pub fn workspace_name(&self) -> &str {
+        &self.project.name
+    }
+    pub fn running_count(&self) -> usize {
+        self.jobs.len()
+    }
+    pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.focus.focus(window, cx);
+        cx.notify();
+    }
+    pub fn flush(&mut self) -> anyhow::Result<()> {
+        if self.revision != self.saved_revision {
+            self.store.save_versioned(&self.project, self.revision)?;
+            self.saved_revision = self.revision;
+        }
+        Ok(())
+    }
+    fn request_tabs(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let mut bar = TabBar::new(SharedString::from(format!(
+            "request-tabs-{:?}",
+            cx.entity_id()
+        )))
+        .track_scroll(&self.request_tab_scroll)
+        .segmented()
+        .menu(true)
+        .max_width(px(232.))
+        .bg(cx.theme().sidebar)
+        .rounded_none()
+        .px_2()
+        .gap(px(4.));
+        let mut request_indices = Vec::new();
+        for id in self.project.tabs() {
+            let Some((index, request)) = self
+                .project
+                .requests
+                .iter()
+                .enumerate()
+                .find(|(_, r)| r.id == *id)
+            else {
+                continue;
+            };
+            let id = *id;
+            let active = index == self.project.active_request;
+            if active {
+                let position = request_indices.len();
+                bar = bar.selected_index(position);
+                let reveal = (id, position, self.project.tabs().len());
+                if self.revealed_request_tab.get() != Some(reveal) {
+                    let scroll = self.request_tab_scroll.clone();
+                    // The new tab must be measured before ScrollHandle can reveal it.
+                    window.on_next_frame(move |window, _| {
+                        scroll.scroll_to_item(position);
+                        window.refresh();
+                    });
+                    self.revealed_request_tab.set(Some(reveal));
+                }
+            }
+            request_indices.push(index);
+            let tag = if request.protocol == Protocol::Http {
+                request.method.as_str()
+            } else {
+                request.protocol.label()
+            };
+            let mut color = method_color(tag);
+            color.l = if cx.theme().is_dark() {
+                color.l.max(0.64)
+            } else {
+                color.l.min(0.34)
+            };
+            let group = SharedString::from(format!("request-tab-{id}"));
+            let running = self.jobs.contains_key(&id);
+            let close = Button::new(("request-tab-close", index))
+                .xsmall()
+                .ghost()
+                .size(px(20.))
+                .icon(IconName::Close)
+                .text_color(cx.theme().muted_foreground)
+                .accessibility_label(format!("关闭请求标签 {}", request.name))
+                .tooltip("关闭标签，保留请求和运行中的会话")
+                .on_click(cx.listener(move |this, _, window, cx| {
+                    cx.stop_propagation();
+                    this.close_request(id, window, cx)
+                }));
+            bar = bar.child(
+                RequestTab::new()
+                    .group(group.clone())
+                    .aria_label(format!(
+                        "{}{}",
+                        request.name,
+                        if running { "，运行中" } else { "" }
+                    ))
+                    .label(request.name.clone())
+                    .prefix(
+                        div()
+                            .ml(px(8.))
+                            .w(px(46.))
+                            .h(px(18.))
+                            .flex_shrink_0()
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .rounded(px(4.))
+                            .bg(color.opacity(0.08))
+                            .text_color(color)
+                            .font_family("Menlo")
+                            .text_size(px(9.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .line_height(relative(1.))
+                            .truncate()
+                            .child(tag.to_owned()),
+                    )
+                    .suffix(
+                        h_flex()
+                            .mr(px(6.))
+                            .gap_1()
+                            .items_center()
+                            .when(running, |row| {
+                                row.child(div().size(px(5.)).rounded_full().bg(cx.theme().primary))
+                            })
+                            .child(
+                                div()
+                                    .w(px(20.))
+                                    .h(px(20.))
+                                    .when(!active, |item| {
+                                        item.invisible().group_hover(group, |s| s.visible())
+                                    })
+                                    .child(close),
+                            ),
+                    ),
+            );
+        }
+        div()
+            .h(px(40.))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .bg(cx.theme().sidebar)
+            .border_b_1()
+            .border_color(cx.theme().border)
+            .child(
+                bar.w_full()
+                    .on_click(cx.listener(move |this, selected: &usize, window, cx| {
+                        if let Some(index) = request_indices.get(*selected) {
+                            this.switch_request(*index, window, cx);
+                        }
+                    })),
+            )
+            .into_any_element()
+    }
+    fn pane_size(&self, kind: Split) -> f32 {
+        let bounds = self.split_sizes.get()[kind as usize];
+        let (value, min, max) = match kind {
+            Split::Sidebar => (
+                self.project.panes.sidebar,
+                210.,
+                (f32::from(bounds.width) - 365.).min(420.),
+            ),
+            Split::Schema => (
+                self.project.panes.schema,
+                180.,
+                (f32::from(bounds.width) - 365.).min(620.),
+            ),
+            Split::Vertical => (
+                self.project.panes.request_height,
+                140.,
+                f32::from(bounds.height) - 145.,
+            ),
+            Split::Horizontal => (
+                self.project.panes.request_width,
+                240.,
+                f32::from(bounds.width) - 245.,
+            ),
+        };
+        if bounds.width == px(0.) || bounds.height == px(0.) {
+            value.max(min)
+        } else {
+            value.clamp(min, max.max(min))
+        }
+    }
+    fn resize_to(&mut self, kind: Split, value: f32, cx: &mut Context<Self>) {
+        match kind {
+            Split::Sidebar => self.project.panes.sidebar = value,
+            Split::Schema => self.project.panes.schema = value,
+            Split::Vertical => self.project.panes.request_height = value,
+            Split::Horizontal => self.project.panes.request_width = value,
+        }
+        let bounded = self.pane_size(kind);
+        match kind {
+            Split::Sidebar => self.project.panes.sidebar = bounded,
+            Split::Schema => self.project.panes.schema = bounded,
+            Split::Vertical => self.project.panes.request_height = bounded,
+            Split::Horizontal => self.project.panes.request_width = bounded,
+        }
+        self.dirty(cx);
+    }
+    fn split(
+        &self,
+        kind: Split,
+        first: AnyElement,
+        second: AnyElement,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let vertical = matches!(kind, Split::Vertical);
+        let size = px(self.pane_size(kind));
+        let mut left = v_flex().min_h_0().min_w_0().overflow_hidden().child(first);
+        let mut right = v_flex().min_h_0().min_w_0().overflow_hidden().child(second);
+        if matches!(kind, Split::Schema) {
+            left = left.flex_1();
+            right = right.w(size).h_full().flex_shrink_0();
+        } else if vertical {
+            left = left.h(size).w_full().flex_shrink_0();
+            right = right.flex_1();
+        } else {
+            left = left.w(size).h_full().flex_shrink_0();
+            right = right.flex_1();
+        }
+        let separator = div()
+            .id(("split-handle", kind as usize))
+            .flex_shrink_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(cx.theme().background)
+            .hover(|s| s.bg(cx.theme().primary.opacity(0.15)))
+            .map(|s| {
+                if vertical {
+                    s.h(px(5.)).w_full().cursor_row_resize()
+                } else {
+                    s.w(px(5.)).h_full().cursor_col_resize()
+                }
+            })
+            .child(div().bg(cx.theme().border).map(|s| {
+                if vertical {
+                    s.h(px(1.)).w_full()
+                } else {
+                    s.w(px(1.)).h_full()
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |this, e: &MouseDownEvent, _, cx| {
+                    this.resizing = Some((kind, e.position, this.pane_size(kind)));
+                    cx.stop_propagation();
+                    cx.notify();
+                }),
+            );
+        let sizes = self.split_sizes.clone();
+        let view = cx.entity().downgrade();
+        let group = if vertical { v_flex() } else { h_flex() };
+        group
+            .id(("split-group", kind as usize))
+            .items_stretch()
+            .size_full()
+            .min_w_0()
+            .min_h_0()
+            .overflow_hidden()
+            .on_prepaint(move |bounds, window, cx| {
+                let mut all = sizes.get();
+                if all[kind as usize] != bounds.size {
+                    all[kind as usize] = bounds.size;
+                    sizes.set(all);
+                    let view = view.clone();
+                    window.defer(cx, move |_, cx| {
+                        let _ = view.update(cx, |_, cx| cx.notify());
+                    });
+                }
+            })
+            .child(left)
+            .child(separator)
+            .child(right)
+            .into_any_element()
+    }
+    fn address(&self, cx: &mut Context<Self>) -> AnyElement {
+        if self.url_editing {
+            return Input::new(&self.url)
+                .appearance(false)
+                .h(px(42.))
+                .flex_1()
+                .into_any_element();
+        }
+        let resolved = self.current().resolved_url(&self.project.variables());
+        let (text, error) = match resolved {
+            Ok(text) => (text, None),
+            Err(e) => (self.current().url.clone(), Some(e.to_string())),
+        };
+        let mut highlights = Vec::new();
+        let query_start = text.find('?').unwrap_or(text.len());
+        if self.current().url.starts_with("{{") {
+            let end = text
+                .find("://")
+                .map(|i| {
+                    text[i + 3..]
+                        .find('/')
+                        .map(|j| i + 3 + j)
+                        .unwrap_or(query_start)
+                })
+                .unwrap_or(query_start);
+            highlights.push((
+                0..end,
+                HighlightStyle {
+                    color: Some(cx.theme().primary),
+                    ..Default::default()
+                },
+            ));
+        }
+        for param in self.current().path.iter().filter(|p| p.enabled) {
+            if let Ok(value) = interpolate(&param.value, &self.project.variables()) {
+                let value = encode_path_segment(&value);
+                for (start, _) in text[..query_start]
+                    .match_indices(&value)
+                    .filter(|(_, v)| !v.is_empty())
+                {
+                    if start > 0 && text.as_bytes()[start - 1] == b'/' {
+                        highlights.push((
+                            start..start + value.len(),
+                            HighlightStyle {
+                                color: Some(method_color("HEAD")),
+                                background_color: Some(method_color("HEAD").opacity(0.08)),
+                                ..Default::default()
+                            },
+                        ));
+                    }
+                }
+            }
+        }
+        if query_start < text.len() {
+            let mut offset = query_start + 1;
+            for pair in text[offset..].split('&') {
+                if let Some(equal) = pair.find('=') {
+                    highlights.push((
+                        offset + equal + 1..offset + pair.len(),
+                        HighlightStyle {
+                            color: Some(method_color("POST")),
+                            ..Default::default()
+                        },
+                    ));
+                }
+                offset += pair.len() + 1;
+            }
+        }
+        highlights.sort_by_key(|(range, _)| range.start);
+        // Skip overlaps where an environment expansion also contains a path value.
+        let mut end = 0;
+        highlights.retain(|(r, _)| {
+            let keep = r.start >= end && !r.is_empty();
+            if keep {
+                end = r.end;
+            }
+            keep
+        });
+        let tip = error.unwrap_or_else(|| {
+            format!(
+                "模板：{}\n点击编辑 · 紫色：环境变量，青色：Path，金色：Query",
+                self.current().url
+            )
+        });
+        Button::new("address-edit")
+            .accessibility_label(text.clone())
+            .ghost()
+            .h(px(42.))
+            .flex_1()
+            .min_w_0()
+            .justify_start()
+            .tooltip(tip)
+            .child(
+                div()
+                    .flex_1()
+                    .w_full()
+                    .text_left()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(14.))
+                    .child(StyledText::new(text).with_highlights(highlights)),
+            )
+            .on_click(cx.listener(|this, _, window, cx| {
+                this.url_editing = true;
+                this.url.update(cx, |s, cx| s.focus(window, cx));
+                cx.notify();
+            }))
+            .into_any_element()
+    }
+    fn format_json(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match serde_json::from_str::<serde_json::Value>(self.body.read(cx).value().as_ref()) {
+            Ok(value) => {
+                let text = serde_json::to_string_pretty(&value).unwrap();
+                self.current_mut().body.text = text.clone();
+                self.body.update(cx, |s, cx| s.set_value(text, window, cx));
+                self.dirty(cx);
+            }
+            Err(error) => {
+                self.notice = format!("JSON 格式错误: {error}");
+                cx.notify();
+            }
+        }
     }
     fn param_editor(&self, cx: &mut Context<Self>) -> AnyElement {
         let is_form = self.tab == Tab::Body;
         let is_multipart = is_form && self.current().body.kind == BodyKind::FormData;
-        let mut rows = v_flex().gap_2().child(
-            h_flex()
-                .gap_3()
-                .px_2()
-                .text_xs()
-                .text_color(cx.theme().muted_foreground)
-                .child(div().w(px(26.)).child("启用"))
-                .child(div().w(px(170.)).child("KEY"))
-                .child(div().flex_1().child(if is_multipart {
-                    "VALUE / FILE PATH"
-                } else {
-                    "VALUE"
-                })),
-        );
+        let mut rows = v_flex()
+            .rounded_lg()
+            .border_1()
+            .border_color(cx.theme().border)
+            .overflow_hidden()
+            .child(
+                h_flex()
+                    .h(px(32.))
+                    .items_center()
+                    .bg(cx.theme().muted)
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .gap_3()
+                    .px_3()
+                    .text_size(px(10.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(div().w(px(26.)).child("启用"))
+                    .child(div().w(px(140.)).child("KEY"))
+                    .child(div().flex_1().child(if is_multipart {
+                        "VALUE / FILE PATH"
+                    } else {
+                        "VALUE"
+                    })),
+            );
         for (i, p) in self.param_data().iter().enumerate() {
             if let Some(inputs) = self.params.get(i) {
                 let mut row =
                     h_flex()
-                        .gap_2()
+                        .h(px(38.))
+                        .px_3()
+                        .gap_3()
+                        .border_b_1()
+                        .border_color(cx.theme().border)
                         .items_center()
                         .child(Checkbox::new(("enabled", i)).checked(p.enabled).on_click(
                             cx.listener(move |this, value, _, cx| {
@@ -1128,8 +2025,13 @@ impl Workbench {
                                 this.dirty(cx);
                             }),
                         ))
-                        .child(Input::new(&inputs.name).small().w(px(170.)))
-                        .child(Input::new(&inputs.value).small().flex_1());
+                        .child(
+                            Input::new(&inputs.name)
+                                .small()
+                                .appearance(false)
+                                .w(px(140.)),
+                        )
+                        .child(Input::new(&inputs.value).small().appearance(false).flex_1());
                 if is_multipart {
                     row = row
                         .child(
@@ -1159,7 +2061,9 @@ impl Workbench {
                     Button::new(("delete-param", i))
                         .small()
                         .ghost()
-                        .label("×")
+                        .icon(IconName::Close)
+                        .accessibility_label("删除参数")
+                        .tooltip("删除参数")
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.param_data_mut().remove(i);
                             this.rebuild_params(window, cx);
@@ -1173,7 +2077,8 @@ impl Workbench {
             Button::new("add-param")
                 .small()
                 .ghost()
-                .label("＋ 添加参数")
+                .icon(IconName::Plus)
+                .label("添加参数")
                 .on_click(cx.listener(|this, _, window, cx| {
                     this.param_data_mut().push(Parameter::new("", ""));
                     this.rebuild_params(window, cx);
@@ -1181,6 +2086,14 @@ impl Workbench {
                 })),
         )
         .into_any_element()
+    }
+    fn format_json_button(&self, cx: &mut Context<Self>) -> Button {
+        Button::new("format-json")
+            .small()
+            .ghost()
+            .icon(IconName::CaseSensitive)
+            .label("格式化 JSON")
+            .on_click(cx.listener(|this, _, window, cx| this.format_json(window, cx)))
     }
     fn request_editor(&self, cx: &mut Context<Self>) -> AnyElement {
         let r = self.current();
@@ -1204,16 +2117,14 @@ impl Workbench {
                             .items_center()
                             .child(
                                 div()
-                                    .w(px(215.))
+                                    .w(px(150.))
                                     .h(px(28.))
                                     .child(Select::new(&self.body_kind).small().w_full()),
                             )
-                            .child(
-                                div()
-                                    .text_xs()
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("独立于 HTTP method 选择 Body"),
-                            ),
+                            .child(div().flex_1())
+                            .when(r.body.kind == BodyKind::Json, |row| {
+                                row.child(self.format_json_button(cx))
+                            }),
                     );
                 }
                 if protocol == Protocol::Grpc {
@@ -1222,10 +2133,7 @@ impl Workbench {
                         .get(&r.id)
                         .and_then(|p| transport::grpc::method(p, &r.grpc_method).ok())
                         .is_some_and(|m| m.is_client_streaming());
-                    let active = self
-                        .job
-                        .as_ref()
-                        .is_some_and(|j| j.request == r.id && !j.half_closed);
+                    let active = self.jobs.get(&r.id).is_some_and(|j| !j.half_closed);
                     content =
                         content.child(
                             h_flex()
@@ -1266,7 +2174,7 @@ impl Workbench {
                         );
                 }
                 if protocol == Protocol::WebSocket {
-                    let active = self.job.as_ref().is_some_and(|j| j.request == r.id);
+                    let active = self.jobs.contains_key(&r.id);
                     content = content.child(
                         h_flex()
                             .gap_2()
@@ -1317,6 +2225,10 @@ impl Workbench {
                 if protocol != Protocol::Http
                     || matches!(r.body.kind, BodyKind::Json | BodyKind::Text | BodyKind::Xml)
                 {
+                    if protocol == Protocol::Grpc {
+                        content = content
+                            .child(h_flex().justify_end().child(self.format_json_button(cx)));
+                    }
                     content = content.child(
                         Editor::new(&self.body)
                             .h(relative(1.))
@@ -1445,211 +2357,564 @@ impl Workbench {
         }
         content.into_any_element()
     }
-    fn response_panel(&self, cx: &mut Context<Self>) -> AnyElement {
-        let record = self.records.get(&self.current().id);
-        let running = self
-            .job
-            .as_ref()
-            .is_some_and(|j| j.request == self.current().id);
-        let status = if running {
-            "执行中…".to_string()
-        } else {
-            record
-                .map(|r| {
-                    format!(
-                        "{}   {} ms   {} B{}",
-                        r.status,
-                        r.elapsed_ms,
-                        r.bytes,
-                        if r.truncated { " · 预览截断" } else { "" }
+    fn message_view(&self, record: Option<&RunRecord>, cx: &mut Context<Self>) -> AnyElement {
+        let Some(record) = record else {
+            return empty_state(
+                IconName::Inbox,
+                "等待消息",
+                "连接建立后，收发的消息会按顺序出现在这里。",
+                cx,
+            );
+        };
+        if record.messages.is_empty() {
+            if !record.body.is_empty() && !self.session_records.contains_key(&record.request_id) {
+                return Editor::new(&self.response)
+                    .readonly(true)
+                    .appearance(false)
+                    .h(relative(1.))
+                    .flex_1()
+                    .into_any_element();
+            }
+            return empty_state(
+                IconName::Inbox,
+                "等待消息",
+                "Metadata 和连接事件可在对应标签中查看。",
+                cx,
+            );
+        }
+        let id = record.request_id;
+        let selected = self
+            .selected_messages
+            .get(&id)
+            .copied()
+            .filter(|i| *i < record.messages.len())
+            .unwrap_or(record.messages.len() - 1);
+        let mut list = v_flex().gap_1().p_2();
+        for (index, message) in record.messages.iter().enumerate() {
+            let color = if message.sent {
+                cx.theme().primary
+            } else {
+                method_color("GET")
+            };
+            list = list.child(
+                v_flex()
+                    .id(("message", index))
+                    .role(Role::Button)
+                    .aria_label(format!(
+                        "{}消息 #{}，{} B",
+                        if message.sent { "发送" } else { "收到" },
+                        index + 1,
+                        message.body.len()
+                    ))
+                    .on_a11y_action(AccessibleAction::Click, {
+                        let view = cx.entity().downgrade();
+                        move |_, window, cx| {
+                            let _ = view.update(cx, |this, cx| {
+                                this.selected_messages.insert(id, index);
+                                this.update_response(window, cx);
+                                cx.notify();
+                            });
+                        }
+                    })
+                    .px_2()
+                    .py_2()
+                    .gap_1()
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(if selected == index {
+                        cx.theme().primary.opacity(0.25)
+                    } else {
+                        transparent_black()
+                    })
+                    .bg(if selected == index {
+                        cx.theme().primary.opacity(0.06)
+                    } else {
+                        transparent_black()
+                    })
+                    .cursor_pointer()
+                    .hover(|s| s.bg(cx.theme().muted))
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                Icon::new(if message.sent {
+                                    IconName::ArrowUp
+                                } else {
+                                    IconName::ArrowDown
+                                })
+                                .size(px(13.))
+                                .text_color(color),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(format!(
+                                        "{} #{}",
+                                        if message.sent { "发送" } else { "收到" },
+                                        index + 1
+                                    )),
+                            ),
                     )
-                })
-                .unwrap_or("尚未发送".into())
+                    .child(
+                        div()
+                            .text_size(px(10.))
+                            .text_color(cx.theme().muted_foreground)
+                            .child(format!(
+                                "+{} ms · {} B",
+                                message.elapsed_ms,
+                                message.body.len()
+                            )),
+                    )
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.selected_messages.insert(id, index);
+                        this.update_response(window, cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        let message = &record.messages[selected];
+        let json = serde_json::from_str::<serde_json::Value>(&message.body).is_ok();
+        h_flex()
+            .flex_1()
+            .min_h_0()
+            .min_w_0()
+            .overflow_hidden()
+            .items_stretch()
+            .child(
+                div()
+                    .id("message-list")
+                    .w(px(156.))
+                    .flex_shrink_0()
+                    .overflow_y_scroll()
+                    .border_r_1()
+                    .border_color(cx.theme().border)
+                    .child(list),
+            )
+            .child(
+                v_flex()
+                    .flex_1()
+                    .min_w_0()
+                    .min_h_0()
+                    .child(
+                        h_flex()
+                            .h(px(32.))
+                            .flex_shrink_0()
+                            .px_3()
+                            .items_center()
+                            .gap_2()
+                            .child(
+                                div()
+                                    .text_size(px(11.))
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child(format!(
+                                        "{}消息 #{}",
+                                        if message.sent { "发送" } else { "收到" },
+                                        selected + 1
+                                    )),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(if json { "JSON" } else { "TEXT" }),
+                            ),
+                    )
+                    .child(
+                        Editor::new(&self.response)
+                            .readonly(true)
+                            .appearance(false)
+                            .h(relative(1.))
+                            .flex_1()
+                            .min_h_0(),
+                    ),
+            )
+            .into_any_element()
+    }
+    fn response_panel(&self, cx: &mut Context<Self>) -> AnyElement {
+        let id = self.current().id;
+        let record = self
+            .session_records
+            .get(&id)
+            .or_else(|| self.records.get(&id));
+        let running = self.jobs.contains_key(&id);
+        let status = if running {
+            "执行中…".into()
+        } else {
+            record.map(|r| r.status.clone()).unwrap_or("未发送".into())
+        };
+        let status_color = if record.is_some_and(|r| r.error) {
+            rgb(0xd85c6b).into()
+        } else if record.is_some() {
+            method_color("GET")
+        } else {
+            cx.theme().muted_foreground
+        };
+        let protocol = &self.current().protocol;
+        let mut tabs = h_flex().h_full().items_center().gap_2();
+        for (key, tab, label) in [
+            (
+                "response-body",
+                ResponseTab::Body,
+                if *protocol == Protocol::Http {
+                    "Body"
+                } else {
+                    "消息"
+                },
+            ),
+            (
+                "response-headers",
+                ResponseTab::Headers,
+                if *protocol == Protocol::Grpc {
+                    "Metadata"
+                } else if *protocol == Protocol::WebSocket {
+                    "握手"
+                } else {
+                    "Headers"
+                },
+            ),
+            ("response-trailers", ResponseTab::Trailers, "Trailers"),
+            ("response-timeline", ResponseTab::Timeline, "时间线"),
+        ] {
+            if tab == ResponseTab::Trailers && *protocol != Protocol::Grpc {
+                continue;
+            }
+            tabs = tabs.child(
+                Button::new(key)
+                    .small()
+                    .ghost()
+                    .h_full()
+                    .rounded_none()
+                    .border_b_2()
+                    .border_color(if self.response_tab == tab {
+                        cx.theme().primary
+                    } else {
+                        transparent_black()
+                    })
+                    .text_color(if self.response_tab == tab {
+                        cx.theme().foreground
+                    } else {
+                        cx.theme().muted_foreground
+                    })
+                    .label(label)
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.response_tab = tab;
+                        this.update_response(window, cx);
+                        cx.notify();
+                    })),
+            );
+        }
+        let content = if record.is_none()
+            && !running
+            && !self.logs.contains_key(&id)
+            && !self.response_override
+            && self.response_tab == ResponseTab::Body
+        {
+            empty_state(
+                IconName::Inbox,
+                "响应会显示在这里",
+                "发送请求后，查看响应内容、Headers 与耗时。",
+                cx,
+            )
+        } else if *protocol != Protocol::Http
+            && self.response_tab == ResponseTab::Body
+            && !self.response_override
+        {
+            self.message_view(record, cx)
+        } else {
+            Editor::new(&self.response)
+                .h(relative(1.))
+                .readonly(true)
+                .appearance(false)
+                .flex_1()
+                .min_h_0()
+                .into_any_element()
         };
         v_flex()
             .flex_1()
             .min_w_0()
             .min_h_0()
+            .bg(cx.theme().background)
+            .overflow_hidden()
             .border_t_1()
             .border_color(cx.theme().border)
             .child(
                 h_flex()
-                    .h(px(43.))
+                    .h(px(42.))
                     .flex_shrink_0()
                     .px_4()
                     .gap_3()
                     .items_center()
-                    .border_b_1()
-                    .border_color(cx.theme().border)
                     .child(
                         div()
-                            .text_sm()
+                            .text_size(px(12.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("响应"),
                     )
                     .child(
                         div()
-                            .flex_1()
-                            .text_xs()
-                            .text_color(if record.is_some_and(|r| r.error) {
-                                rgb(0xd84f5a).into()
-                            } else {
-                                cx.theme().muted_foreground
-                            })
+                            .px_2()
+                            .py_1()
+                            .rounded(px(4.))
+                            .text_size(px(10.))
+                            .text_color(status_color)
+                            .bg(status_color.opacity(0.08))
                             .child(status),
                     )
+                    .when_some(record, |row, record| {
+                        row.child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(cx.theme().muted_foreground)
+                                .child(format!(
+                                    "{} ms   ·   {} B{}",
+                                    record.elapsed_ms,
+                                    record.bytes,
+                                    if record.truncated {
+                                        " · 预览截断"
+                                    } else {
+                                        ""
+                                    }
+                                )),
+                        )
+                    })
+                    .child(div().flex_1())
                     .child(
-                        Button::new("response-body")
+                        Button::new("layout-toggle")
                             .small()
                             .ghost()
-                            .selected(!self.response_headers)
-                            .label("Body / Messages")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.response_headers = false;
-                                this.update_response(window, cx);
-                                cx.notify();
-                            })),
-                    )
-                    .child(
-                        Button::new("response-headers")
-                            .small()
-                            .ghost()
-                            .selected(self.response_headers)
-                            .label("Headers")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.response_headers = true;
-                                this.update_response(window, cx);
-                                cx.notify();
+                            .icon(if self.project.horizontal {
+                                IconName::PanelBottom
+                            } else {
+                                IconName::PanelRight
+                            })
+                            .accessibility_label("切换请求与响应布局")
+                            .tooltip("切换上下 / 左右布局")
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.project.horizontal = !this.project.horizontal;
+                                this.dirty(cx);
                             })),
                     )
                     .child(
                         Button::new("response-copy")
                             .small()
                             .ghost()
-                            .label("复制")
+                            .icon(IconName::Copy)
+                            .accessibility_label("复制响应")
+                            .tooltip("复制当前响应预览")
                             .on_click(cx.listener(|this, _, _, cx| {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     this.response.read(cx).value().to_string(),
                                 ))
                             })),
+                    )
+                    .child(
+                        Button::new("response-save")
+                            .small()
+                            .ghost()
+                            .icon(IconName::ArrowDown)
+                            .accessibility_label("保存响应预览")
+                            .tooltip("保存响应预览")
+                            .disabled(record.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| this.save_response(cx))),
                     ),
             )
             .child(
-                Editor::new(&self.response)
-                    .h(relative(1.))
-                    .readonly(true)
-                    .appearance(false)
-                    .flex_1()
-                    .min_h_0(),
+                div()
+                    .id("response-tabs-scroll")
+                    .h(px(32.))
+                    .flex_shrink_0()
+                    .px_4()
+                    .overflow_x_scroll()
+                    .border_b_1()
+                    .border_color(cx.theme().border)
+                    .child(tabs),
             )
+            .child(content)
             .into_any_element()
     }
     fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let filter = self.search.read(cx).value().to_lowercase();
-        let mut list = v_flex().gap_1().p_2();
-        for (i, r) in self.project.requests.iter().enumerate().filter(|(_, r)| {
-            filter.is_empty()
-                || format!("{} {} {}", r.name, r.method, r.protocol.label())
+        let mut list = v_flex().gap(px(2.)).px(px(SIDEBAR_GUTTER)).pb_3();
+        for (i, request) in self
+            .project
+            .requests
+            .iter()
+            .enumerate()
+            .filter(|(_, request)| {
+                filter.is_empty()
+                    || format!(
+                        "{} {} {}",
+                        request.name,
+                        request.method,
+                        request.protocol.label()
+                    )
                     .to_lowercase()
                     .contains(&filter)
-        }) {
-            let tag = if r.protocol == Protocol::Http {
-                r.method.as_str()
+            })
+        {
+            let id = request.id;
+            let view = cx.entity().downgrade();
+            let menu_view = view.clone();
+            let tag = if request.protocol == Protocol::Http {
+                request.method.as_str()
             } else {
-                r.protocol.label()
+                request.protocol.label()
+            };
+            let selected = i == self.project.active_request && self.project.tabs().contains(&id);
+            let mut method_color = method_color(tag);
+            // Keep the small method labels legible on both sidebar surfaces.
+            method_color.l = if cx.theme().is_dark() {
+                method_color.l.max(0.64)
+            } else {
+                method_color.l.min(0.28)
+            };
+            let hover_background = if selected {
+                cx.theme().background
+            } else {
+                cx.theme().muted
             };
             list = list.child(
                 h_flex()
                     .id(("request", i))
                     .role(Role::Button)
-                    .aria_label(format!("{tag} {}", r.name))
+                    .aria_label(format!("{tag} {}", request.name))
                     .on_a11y_action(AccessibleAction::Click, {
                         let view = cx.entity().downgrade();
                         move |_, window, cx| {
                             let _ = view.update(cx, |this, cx| this.switch_request(i, window, cx));
                         }
                     })
-                    .h(px(39.))
-                    .px_2()
+                    .w_full()
+                    .h(px(SIDEBAR_ROW_HEIGHT))
+                    .flex_shrink_0()
+                    // Keep the inner columns on the shared inset despite the 1 px row border.
+                    .px(px(SIDEBAR_ROW_INSET - 1.))
                     .gap_2()
-                    .rounded_md()
                     .items_center()
-                    .cursor_pointer()
-                    .bg(if i == self.project.active_request {
-                        cx.theme().accent
+                    .rounded(px(5.))
+                    .border_1()
+                    .border_color(if selected {
+                        cx.theme().primary.opacity(0.22)
                     } else {
-                        cx.theme().background
+                        transparent_black()
                     })
-                    .hover(|s| s.bg(cx.theme().muted))
+                    .bg(if selected {
+                        cx.theme().background
+                    } else {
+                        transparent_black()
+                    })
+                    .cursor_pointer()
+                    .hover(move |style| style.bg(hover_background))
                     .on_click(
                         cx.listener(move |this, _, window, cx| this.switch_request(i, window, cx)),
                     )
                     .child(
                         div()
-                            .w(px(70.))
+                            .w(px(SIDEBAR_METHOD_WIDTH))
+                            .h(px(20.))
                             .flex_shrink_0()
-                            .text_xs()
+                            .rounded(px(4.))
+                            .bg(method_color.opacity(0.08))
+                            .text_color(method_color)
+                            .font_family("Menlo")
+                            .text_size(px(9.))
                             .font_weight(FontWeight::SEMIBOLD)
-                            .text_color(method_color(tag))
+                            .line_height(relative(1.))
+                            .whitespace_nowrap()
+                            .flex()
+                            .items_center()
+                            .justify_center()
                             .child(tag.to_owned()),
                     )
-                    .child(div().text_sm().truncate().child(r.name.clone())),
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .text_size(px(12.))
+                            .font_weight(if selected {
+                                FontWeight::MEDIUM
+                            } else {
+                                FontWeight::NORMAL
+                            })
+                            .truncate()
+                            .child(request.name.clone()),
+                    )
+                    .child(
+                        Button::new(("request-operations", i))
+                            .xsmall()
+                            .ghost()
+                            .size(px(24.))
+                            .flex_shrink_0()
+                            .icon(IconName::Ellipsis)
+                            .accessibility_label(format!("请求操作 {}", request.name))
+                            .tooltip("请求操作")
+                            .dropdown_menu(move |menu, _, _| {
+                                request_menu(menu, menu_view.clone(), id)
+                            }),
+                    )
+                    .context_menu(move |menu, _, _| request_menu(menu, view.clone(), id)),
             );
         }
+        let new_request_view = cx.entity().downgrade();
         v_flex()
-            .w(px(248.))
+            .w_full()
             .flex_shrink_0()
             .h_full()
-            .bg(cx.theme().background)
+            .bg(cx.theme().sidebar)
             .border_r_1()
             .border_color(cx.theme().border)
             .child(
                 h_flex()
-                    .px_4()
-                    .h(px(52.))
-                    .items_center()
+                    .h(px(44.))
+                    .flex_shrink_0()
+                    .px(px(SIDEBAR_GUTTER + SIDEBAR_ROW_INSET))
                     .gap_2()
+                    .items_center()
                     .child(
                         div()
-                            .flex_1()
-                            .text_sm()
+                            .text_size(px(12.))
                             .font_weight(FontWeight::SEMIBOLD)
                             .child("请求集合"),
                     )
                     .child(
-                        Button::new("new-http")
-                            .small()
+                        div()
+                            .min_w(px(20.))
+                            .h(px(18.))
+                            .px_1()
+                            .rounded(px(4.))
+                            .bg(cx.theme().border.opacity(0.45))
+                            .text_color(cx.theme().muted_foreground)
+                            .text_size(px(10.))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .child(self.project.requests.len().to_string()),
+                    )
+                    .child(div().flex_1())
+                    .child(
+                        Button::new("new-request")
+                            .xsmall()
                             .ghost()
-                            .label("＋")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.new_request(Protocol::Http, window, cx)
-                            })),
+                            .size(px(24.))
+                            .flex_shrink_0()
+                            .icon(IconName::Plus)
+                            .accessibility_label("新建请求")
+                            .tooltip("新建 HTTP、gRPC 或 WebSocket 请求")
+                            .dropdown_menu(move |menu, _, _| {
+                                new_request_menu(menu, new_request_view.clone())
+                            }),
                     ),
             )
-            .child(div().px_3().pb_3().child(Input::new(&self.search).small()))
             .child(
-                h_flex()
-                    .px_3()
-                    .pb_2()
-                    .gap_1()
-                    .child(
-                        Button::new("new-grpc")
-                            .small()
-                            .ghost()
-                            .label("＋ gRPC")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.new_request(Protocol::Grpc, window, cx)
-                            })),
-                    )
-                    .child(
-                        Button::new("new-ws")
-                            .small()
-                            .ghost()
-                            .label("＋ WS")
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.new_request(Protocol::WebSocket, window, cx)
-                            })),
-                    ),
+                div().px(px(SIDEBAR_GUTTER)).pb_2().child(
+                    Input::new(&self.search)
+                        .small()
+                        .h(px(30.))
+                        .w_full()
+                        .prefix(Icon::new(IconName::Search).size(px(14.))),
+                ),
             )
             .child(
                 div()
@@ -1661,25 +2926,55 @@ impl Workbench {
             )
             .child(
                 v_flex()
-                    .p_3()
-                    .gap_2()
+                    .px(px(SIDEBAR_GUTTER))
+                    .py_2()
+                    .gap(px(2.))
                     .border_t_1()
                     .border_color(cx.theme().border)
                     .child(
-                        Button::new("history-open")
-                            .ghost()
-                            .label(format!("历史记录 · {}", self.history.len()))
+                        navigation_button("history-open", IconName::RotateCw, "历史记录")
+                            .selected(self.history_open)
+                            .accessibility_label(format!("历史记录，共 {} 条", self.history.len()))
+                            .child(
+                                div()
+                                    .w(px(24.))
+                                    .flex_shrink_0()
+                                    .text_size(px(10.))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .text_center()
+                                    .child(self.history.len().to_string()),
+                            )
                             .on_click(cx.listener(|this, _, _, cx| {
+                                this.stash_environment(cx);
                                 this.history_open = !this.history_open;
                                 this.environment_open = false;
+                                this.definitions_open = false;
                                 cx.notify();
                             })),
                     )
                     .child(
-                        Button::new("import-openapi")
-                            .label("导入 OpenAPI")
+                        navigation_button("definitions-open", IconName::BookOpen, "接口定义")
+                            .selected(self.definitions_open)
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.stash_environment(cx);
+                                this.environment_open = false;
+                                this.history_open = false;
+                                this.definitions_open = !this.definitions_open;
+                                this.refresh_contracts();
+                                cx.notify();
+                            })),
+                    )
+                    .child(
+                        navigation_button("import-openapi", IconName::FileText, "导入 OpenAPI")
                             .on_click(cx.listener(|this, _, _, cx| this.import_openapi(cx))),
-                    ),
+                    )
+                    .when(!self.deleted_requests.is_empty(), |column| {
+                        column.child(
+                            navigation_button("undo-delete", IconName::Undo, "撤销删除").on_click(
+                                cx.listener(|this, _, window, cx| this.undo_delete(window, cx)),
+                            ),
+                        )
+                    }),
             )
             .into_any_element()
     }
@@ -1708,7 +3003,9 @@ impl Workbench {
                             this.logs.insert(record.request_id, record.body);
                             this.update_response(window, cx);
                         } else {
-                            this.notice = "这条历史对应的请求已不存在。".into();
+                            this.history_preview = true;
+                            this.history_response.update(cx, |s, cx| s.set_value(format!("{} · {}\n{} · {} ms\n\nHeaders / Metadata\n{}\n\nTrailers\n{}\n\n{}", record.request_name, record.environment, record.status, record.elapsed_ms, headers_text(&record.headers), headers_text(&record.trailers), record.body), window, cx));
+                            this.notice = "请求已删除，保留的执行历史仍可查看".into();
                         }
                         cx.notify();
                     }))
@@ -1773,40 +3070,35 @@ impl Workbench {
                     .overflow_y_scroll()
                     .child(list),
             )
+            .when(self.history_preview, |column| {
+                column.child(
+                    Editor::new(&self.history_response)
+                        .readonly(true)
+                        .appearance(false)
+                        .h(px(250.))
+                        .flex_shrink_0(),
+                )
+            })
             .into_any_element()
     }
 }
 impl Render for Workbench {
-    fn render(&mut self, _window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let r = self.current();
         let protocol = r.protocol.clone();
-        let current_running = self.job.as_ref().is_some_and(|j| j.request == r.id);
+        let current_running = self.jobs.contains_key(&r.id);
         let top = h_flex()
             .h_full()
             .flex_1()
             .min_w_0()
             .pr_4()
-            .gap_3()
+            .gap_2()
             .items_center()
-            .child(div().text_lg().font_weight(FontWeight::BOLD).child("zeph."))
+            .child(brandmark(cx))
+            .children(self.workspace_strip.clone())
             .child(
                 div()
-                    .pl_3()
-                    .border_l_1()
-                    .border_color(cx.theme().border)
-                    .text_sm()
-                    .child(self.project.name.clone()),
-            )
-            .child(div().flex_1())
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("LOCAL WORKSPACE"),
-            )
-            .child(
-                div()
-                    .w(px(135.))
+                    .w(px(110.))
                     .h(px(28.))
                     .child(Select::new(&self.env_select).small().w_full()),
             )
@@ -1814,69 +3106,174 @@ impl Render for Workbench {
                 Button::new("environment-open")
                     .small()
                     .ghost()
+                    .icon(IconName::Settings2)
                     .label("变量")
+                    .accessibility_label("工作区与环境")
+                    .tooltip("工作区名称与环境变量")
                     .on_click(cx.listener(|this, _, window, cx| {
+                        this.stash_environment(cx);
                         this.environment_open = !this.environment_open;
                         this.history_open = false;
+                        this.definitions_open = false;
                         this.load_environment(window, cx);
                         cx.notify();
                     })),
             )
             .child(
-                Button::new("layout-toggle")
+                Button::new("workbench-options")
                     .small()
                     .ghost()
-                    .label(if self.project.horizontal {
-                        "左右布局"
-                    } else {
-                        "上下布局"
-                    })
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.project.horizontal = !this.project.horizontal;
-                        this.dirty(cx);
-                    })),
-            )
-            .child(
-                Button::new("theme-toggle")
-                    .small()
-                    .ghost()
-                    .label(if cx.theme().is_dark() {
-                        "浅色"
-                    } else {
-                        "深色"
-                    })
-                    .on_click(cx.listener(|_, _, window, cx| {
-                        let mode = if cx.theme().is_dark() {
-                            ThemeMode::Light
-                        } else {
-                            ThemeMode::Dark
-                        };
-                        Theme::change(mode, Some(window), cx);
-                        apply_theme(cx);
-                    })),
-            )
-            .child(
-                Button::new("save-project")
-                    .small()
-                    .label("保存")
-                    .on_click(cx.listener(|this, _, _, cx| this.save(cx))),
+                    .icon(IconName::Ellipsis)
+                    .tooltip("更多选项")
+                    .accessibility_label("更多选项")
+                    .dropdown_menu({
+                        let view = cx.entity().downgrade();
+                        move |menu, _, _| {
+                            let save = view.clone();
+                            let encoding = view.clone();
+                            menu.item(PopupMenuItem::new("切换深浅主题").on_click(
+                                |_, window, cx| {
+                                    let mode = if cx.theme().is_dark() {
+                                        ThemeMode::Light
+                                    } else {
+                                        ThemeMode::Dark
+                                    };
+                                    Theme::change(mode, Some(window), cx);
+                                    apply_theme(cx);
+                                },
+                            ))
+                            .item(PopupMenuItem::new("保存工作区 · ⌘ S").on_click(
+                                move |_, _, cx| {
+                                    let _ = save.update(cx, |this, cx| this.save(cx));
+                                },
+                            ))
+                            .separator()
+                            .item(PopupMenuItem::new("请求编码预览").on_click(
+                                move |_, window, cx| {
+                                    let _ = encoding.update(cx, |this, cx| {
+                                        let text = this
+                                            .current()
+                                            .encoding_preview(&this.project.variables())
+                                            .unwrap_or_else(|e| format!("预览失败: {e}"));
+                                        this.encoding
+                                            .update(cx, |s, cx| s.set_value(text, window, cx));
+                                        this.encoding_open = true;
+                                        cx.notify();
+                                    });
+                                },
+                            ))
+                            .item(
+                                PopupMenuItem::new("复制实际 URL").on_click({
+                                    let view = view.clone();
+                                    move |_, _, cx| {
+                                        let _ = view.update(cx, |this, cx| {
+                                            if let Ok(url) = this
+                                                .current()
+                                                .resolved_url(&this.project.variables())
+                                            {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    url,
+                                                ));
+                                            }
+                                        });
+                                    }
+                                }),
+                            )
+                        }
+                    }),
             );
         let main: AnyElement = if self.environment_open {
-            v_flex().flex_1().min_h_0().p_5().gap_4().child(h_flex().gap_3().child(div().flex_1().child(format!("{} 环境变量",self.project.environments[self.project.active_environment].name))).child(Button::new("save-environment").primary().label("应用变量").on_click(cx.listener(|this,_,_,cx|this.save_environment(cx))))).child(div().text_sm().text_color(cx.theme().muted_foreground).child("用 JSON 字符串键值表编辑。在 URL、参数、Headers 和 Body 中使用 {{variable}}。" )).child(Editor::new(&self.environment).h(relative(1.)).flex_1()).into_any_element()
+            self.environment_panel(cx)
         } else if self.history_open {
             self.history_panel(cx)
+        } else if self.definitions_open {
+            self.definitions_panel(cx)
+        } else if self.encoding_open {
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .p_4()
+                .gap_3()
+                .child(
+                    h_flex()
+                        .items_center()
+                        .gap_3()
+                        .child(div().flex_1().child("请求参数与 Body 编码预览"))
+                        .child(
+                            Button::new("encoding-copy")
+                                .small()
+                                .ghost()
+                                .label("复制预览")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(
+                                        this.encoding.read(cx).value().to_string(),
+                                    ))
+                                })),
+                        )
+                        .child(
+                            Button::new("encoding-back")
+                                .small()
+                                .label("返回请求")
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    this.encoding_open = false;
+                                    cx.notify();
+                                })),
+                        ),
+                )
+                .child(
+                    Editor::new(&self.encoding)
+                        .readonly(true)
+                        .appearance(false)
+                        .h(relative(1.))
+                        .flex_1(),
+                )
+                .into_any_element()
+        } else if self.project.tabs().is_empty() || self.project.requests.is_empty() {
+            v_flex()
+                .flex_1()
+                .min_h_0()
+                .items_center()
+                .justify_center()
+                .gap_4()
+                .child(
+                    Icon::new(IconName::SquareTerminal)
+                        .size(px(32.))
+                        .text_color(cx.theme().primary),
+                )
+                .child(
+                    div()
+                        .text_size(px(20.))
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child("从一个请求开始"),
+                )
+                .child(
+                    div()
+                        .text_size(px(12.))
+                        .text_color(cx.theme().muted_foreground)
+                        .child("打开左侧的请求，或新建 HTTP、gRPC、WebSocket 请求。"),
+                )
+                .child(
+                    Button::new("empty-new-request")
+                        .primary()
+                        .icon(IconName::Plus)
+                        .label("新建 HTTP 请求")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.new_request(Protocol::Http, window, cx)
+                        })),
+                )
+                .into_any_element()
         } else {
             let mut heading = h_flex()
-                .h(px(53.))
+                .h(px(58.))
                 .flex_shrink_0()
-                .px_4()
+                .px_5()
                 .gap_3()
                 .items_center()
                 .child(
                     div()
                         .text_xs()
                         .font_weight(FontWeight::SEMIBOLD)
-                        .text_color(method_color(protocol.label()))
+                        .text_color(cx.theme().muted_foreground)
                         .child(protocol.label()),
                 )
                 .child(Input::new(&self.name).small().appearance(false).flex_1())
@@ -1884,16 +3281,22 @@ impl Render for Workbench {
                     Button::new("duplicate-request")
                         .small()
                         .ghost()
-                        .label("复制请求")
+                        .icon(IconName::Copy)
+                        .accessibility_label("复制请求")
+                        .tooltip("复制请求")
                         .on_click(cx.listener(|this, _, window, cx| {
-                            let mut r = this.current().clone();
-                            r.id = Uuid::new_v4();
-                            r.name.push_str(" 副本");
-                            if let Some(pool) = this.pools.get(&this.current().id).cloned() {
-                                this.pools.insert(r.id, pool);
-                            }
-                            this.project.requests.push(r);
-                            this.switch_request(this.project.requests.len() - 1, window, cx);
+                            this.duplicate_request(this.current().id, window, cx);
+                        })),
+                )
+                .child(
+                    Button::new("delete-request")
+                        .small()
+                        .ghost()
+                        .icon(IconName::Delete)
+                        .accessibility_label("删除请求")
+                        .tooltip("删除请求")
+                        .on_click(cx.listener(|this, _, window, cx| {
+                            this.delete_request(this.current().id, window, cx)
                         })),
                 )
                 .child(
@@ -1901,7 +3304,9 @@ impl Render for Workbench {
                         .small()
                         .ghost()
                         .selected(self.project.show_schema)
-                        .label("Schema")
+                        .icon(IconName::PanelRight)
+                        .accessibility_label("请求结构面板")
+                        .tooltip("显示 / 隐藏请求结构")
                         .on_click(cx.listener(|this, _, _, cx| {
                             this.project.show_schema = !this.project.show_schema;
                             this.dirty(cx);
@@ -1922,29 +3327,82 @@ impl Render for Workbench {
                             .on_click(cx.listener(|this, _, _, cx| this.reflect(cx))),
                     );
             }
-            let mut url_row = h_flex().px_4().pb_3().gap_2().items_center();
+            let mut url_row = h_flex()
+                .h(px(46.))
+                .mx_5()
+                .mb_2()
+                .px_1()
+                .rounded_lg()
+                .border_1()
+                .border_color(cx.theme().input)
+                .bg(cx.theme().background)
+                .gap_2()
+                .items_center();
             if protocol == Protocol::Http {
                 url_row = url_row.child(
-                    div()
-                        .w(px(118.))
-                        .h(px(34.))
-                        .child(Select::new(&self.method).w_full()),
+                    h_flex()
+                        .w(px(142.))
+                        .h(px(42.))
+                        .items_center()
+                        .gap_0()
+                        .border_r_1()
+                        .border_color(cx.theme().border)
+                        .child(
+                            Input::new(&self.method)
+                                .appearance(false)
+                                .h(px(42.))
+                                .flex_1()
+                                .text_center()
+                                .text_size(px(15.))
+                                .font_weight(FontWeight::SEMIBOLD)
+                                .text_color(method_color(&self.current().method)),
+                        )
+                        .child(
+                            Button::new("method-presets")
+                                .ghost()
+                                .small()
+                                .icon(IconName::ChevronDown)
+                                .tooltip("选择 Method，或在左侧直接输入")
+                                .accessibility_label("HTTP method 预设")
+                                .dropdown_menu({
+                                    let view = cx.entity().downgrade();
+                                    move |mut menu, _, _| {
+                                        for method in HTTP_METHODS {
+                                            let view = view.clone();
+                                            menu = menu.item(PopupMenuItem::new(method).on_click(
+                                                move |_, window, cx| {
+                                                    let _ = view.update(cx, |this, cx| {
+                                                        this.current_mut().method = method.into();
+                                                        this.method.update(cx, |s, cx| {
+                                                            s.set_value(method, window, cx)
+                                                        });
+                                                        this.dirty(cx);
+                                                    });
+                                                },
+                                            ));
+                                        }
+                                        menu
+                                    }
+                                }),
+                        ),
                 );
             }
-            url_row = url_row.child(Input::new(&self.url).flex_1()).child(
+            url_row = url_row.child(self.address(cx)).child(
                 Button::new("send-request")
+                    .icon(IconName::ArrowRight)
+                    .tooltip("发送请求 · ⌘ Enter")
                     .primary()
                     .label(if protocol == Protocol::Http {
-                        "发送  ⌘ ↵"
+                        "发送"
                     } else if protocol == Protocol::Grpc {
                         "调用"
                     } else {
                         "连接"
                     })
-                    .disabled(self.job.is_some())
+                    .disabled(self.jobs.contains_key(&self.current().id))
                     .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
             );
-            if self.job.is_some() {
+            if self.jobs.contains_key(&self.current().id) {
                 url_row = url_row.child(
                     Button::new("stop-request")
                         .label("停止")
@@ -1955,7 +3413,7 @@ impl Render for Workbench {
             if protocol == Protocol::Grpc {
                 editor = editor.child(
                     h_flex()
-                        .px_4()
+                        .px_5()
                         .pb_3()
                         .gap_3()
                         .items_center()
@@ -2016,7 +3474,19 @@ impl Render for Workbench {
                     Button::new(("request-tab", i))
                         .small()
                         .ghost()
-                        .selected(self.tab == tab)
+                        .h_full()
+                        .rounded_none()
+                        .border_b_2()
+                        .border_color(if self.tab == tab {
+                            cx.theme().primary
+                        } else {
+                            transparent_black()
+                        })
+                        .text_color(if self.tab == tab {
+                            cx.theme().foreground
+                        } else {
+                            cx.theme().muted_foreground
+                        })
                         .label(tab.label())
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.tab = tab;
@@ -2031,59 +3501,84 @@ impl Render for Workbench {
                 .min_w_0()
                 .child(tabs)
                 .child(self.request_editor(cx));
-            let panels = if self.project.horizontal {
-                h_flex()
-                    .items_stretch()
-                    .flex_1()
+            let panels = self.split(
+                if self.project.horizontal {
+                    Split::Horizontal
+                } else {
+                    Split::Vertical
+                },
+                request.into_any_element(),
+                self.response_panel(cx),
+                cx,
+            );
+            editor = editor.child(div().flex_1().min_h_0().child(panels));
+            let work = if self.project.show_schema {
+                let schema = v_flex()
+                    .size_full()
                     .min_h_0()
-                    .min_w_0()
-                    .child(request)
-                    .child(self.response_panel(cx))
-                    .into_any_element()
+                    .border_l_1()
+                    .border_color(cx.theme().border)
+                    .child(
+                        div()
+                            .px_5()
+                            .py_3()
+                            .text_xs()
+                            .text_color(cx.theme().muted_foreground)
+                            .child("请求结构"),
+                    )
+                    .child(if r.schema.is_some() || protocol == Protocol::Grpc {
+                        Editor::new(&self.schema)
+                            .h(relative(1.))
+                            .readonly(true)
+                            .appearance(false)
+                            .flex_1()
+                            .min_h_0()
+                            .into_any_element()
+                    } else {
+                        v_flex()
+                            .p_5()
+                            .gap_3()
+                            .child(
+                                Icon::new(IconName::FileText)
+                                    .text_color(cx.theme().muted_foreground),
+                            )
+                            .child(
+                                div()
+                                    .text_sm()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .child("为请求添加结构"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(12.))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("导入 OpenAPI 后，在此查看参数和请求体定义。"),
+                            )
+                            .child(
+                                div()
+                                    .text_size(px(10.))
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child("Swagger 2.0 · OpenAPI 3.0 / 3.1"),
+                            )
+                            .into_any_element()
+                    });
+                self.split(
+                    Split::Schema,
+                    editor.into_any_element(),
+                    schema.into_any_element(),
+                    cx,
+                )
             } else {
-                v_flex()
-                    .flex_1()
-                    .min_h_0()
-                    .min_w_0()
-                    .child(request)
-                    .child(self.response_panel(cx))
-                    .into_any_element()
+                editor.into_any_element()
             };
-            editor = editor.child(panels);
-            let mut work = h_flex().items_stretch().flex_1().min_h_0().child(editor);
-            if self.project.show_schema {
-                work = work.child(
-                    v_flex()
-                        .w(px(258.))
-                        .flex_shrink_0()
-                        .min_h_0()
-                        .border_l_1()
-                        .border_color(cx.theme().border)
-                        .child(
-                            div()
-                                .px_4()
-                                .py_3()
-                                .text_xs()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("REQUEST SCHEMA / PROTO"),
-                        )
-                        .child(
-                            Editor::new(&self.schema)
-                                .h(relative(1.))
-                                .readonly(true)
-                                .appearance(false)
-                                .flex_1()
-                                .min_h_0(),
-                        ),
-                );
-            }
             v_flex()
                 .flex_1()
                 .min_w_0()
                 .min_h_0()
+                .child(self.request_tabs(window, cx))
                 .child(heading)
                 .child(url_row)
-                .child(work)
+                .child(div().flex_1().min_h_0().child(work))
                 .into_any_element()
         };
         let status = if self.save_pending {
@@ -2097,31 +3592,80 @@ impl Render for Workbench {
             .id("workbench")
             .track_focus(&self.focus)
             .key_context("Zeph")
+            .on_mouse_move(cx.listener(|this, e: &MouseMoveEvent, _, cx| {
+                let Some((kind, start, size)) = this.resizing else {
+                    return;
+                };
+                if e.pressed_button != Some(MouseButton::Left) {
+                    this.resizing = None;
+                    return;
+                }
+                let delta = if matches!(kind, Split::Vertical) {
+                    e.position.y - start.y
+                } else {
+                    e.position.x - start.x
+                };
+                this.resize_to(
+                    kind,
+                    size + f32::from(delta)
+                        * if matches!(kind, Split::Schema) {
+                            -1.
+                        } else {
+                            1.
+                        },
+                    cx,
+                );
+                cx.stop_propagation();
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.resizing.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, _, cx| {
+                    if this.resizing.take().is_some() {
+                        cx.notify();
+                    }
+                }),
+            )
             .on_action(cx.listener(|this, _: &SendRequest, window, cx| this.send(window, cx)))
             .on_action(cx.listener(|this, _: &SaveProject, _, cx| this.save(cx)))
+            .on_action(cx.listener(|this, _: &SearchRequests, window, cx| {
+                this.search.read(cx).focus_handle(cx).focus(window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &CloseRequest, window, cx| {
+                this.close_request(this.current().id, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
+                this.new_request(Protocol::Http, window, cx)
+            }))
+            .on_action(cx.listener(|this, _: &UndoDelete, window, cx| this.undo_delete(window, cx)))
             .size_full()
             .bg(cx.theme().background)
             .text_color(cx.theme().foreground)
             .font_family(".AppleSystemUIFont")
-            .text_sm()
+            .text_size(px(13.))
             .child(
                 TitleBar::new()
                     .h(WORKBENCH_TITLEBAR_HEIGHT)
-                    .bg(cx.theme().background)
+                    .bg(cx.theme().sidebar)
                     .border_color(cx.theme().border)
                     .child(top),
             )
+            .child(div().flex_1().min_h_0().child(self.split(
+                Split::Sidebar,
+                self.sidebar(cx),
+                main,
+                cx,
+            )))
             .child(
                 h_flex()
-                    .items_stretch()
-                    .flex_1()
-                    .min_h_0()
-                    .child(self.sidebar(cx))
-                    .child(main),
-            )
-            .child(
-                h_flex()
-                    .h(px(30.))
+                    .h(px(26.))
                     .flex_shrink_0()
                     .px_4()
                     .gap_3()
@@ -2133,7 +3677,7 @@ impl Render for Workbench {
                     .child(div().child(if current_running {
                         "● 正在执行"
                     } else {
-                        "● 本地工作区"
+                        "● 仅本地"
                     }))
                     .child(div().flex_1().truncate().child(self.notice.clone()))
                     .child(
@@ -2147,6 +3691,7 @@ impl Render for Workbench {
                                     .get(&Uuid::nil())
                                     .cloned()
                                     .unwrap_or("暂无导入诊断".into());
+                                this.response_override = true;
                                 this.response
                                     .update(cx, |s, cx| s.set_value(text, window, cx));
                                 cx.notify();
@@ -2159,7 +3704,7 @@ impl Render for Workbench {
 impl Drop for Workbench {
     fn drop(&mut self) {
         self.rx.close();
-        if let Some(job) = &self.job {
+        for job in self.jobs.values() {
             job.cancel.cancel();
         }
         if self.revision != self.saved_revision
@@ -2172,6 +3717,7 @@ impl Drop for Workbench {
 fn method_color(method: &str) -> Hsla {
     rgb(match method {
         "GET" | "HTTP" => 0x1b9b77,
+        "QUERY" => 0x368dde,
         "POST" => 0xcb941d,
         "PUT" => 0x368dde,
         "PATCH" => 0x945ddb,
@@ -2211,20 +3757,157 @@ fn event_text(event: &SessionEvent) -> String {
     }
 }
 
+fn navigation_button(id: &'static str, icon: IconName, label: impl Into<SharedString>) -> Button {
+    let label = label.into();
+    Button::new(id)
+        .small()
+        .ghost()
+        .w_full()
+        .h(px(SIDEBAR_ROW_HEIGHT))
+        .px(px(SIDEBAR_ROW_INSET))
+        .rounded(px(5.))
+        .accessibility_label(label.clone())
+        .child(
+            h_flex()
+                .flex_1()
+                .min_w_0()
+                .gap_2()
+                .items_center()
+                .child(
+                    div()
+                        .size(px(16.))
+                        .flex_shrink_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(Icon::new(icon).size(px(14.))),
+                )
+                .child(div().text_size(px(12.)).truncate().child(label)),
+        )
+}
+
+fn new_request_menu(mut menu: PopupMenu, view: WeakEntity<Workbench>) -> PopupMenu {
+    for (protocol, label) in [
+        (Protocol::Http, "HTTP 请求"),
+        (Protocol::Grpc, "gRPC 请求"),
+        (Protocol::WebSocket, "WebSocket 请求"),
+    ] {
+        let view = view.clone();
+        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+            let _ = view.update(cx, |this, cx| {
+                this.new_request(protocol.clone(), window, cx)
+            });
+        }));
+    }
+    menu
+}
+
+fn empty_state(icon: IconName, title: &str, description: &str, cx: &App) -> AnyElement {
+    v_flex()
+        .flex_1()
+        .min_h_0()
+        .items_center()
+        .justify_center()
+        .gap_3()
+        .p_5()
+        .child(
+            div()
+                .size(px(46.))
+                .rounded(px(14.))
+                .bg(cx.theme().muted)
+                .flex()
+                .items_center()
+                .justify_center()
+                .child(
+                    Icon::new(icon)
+                        .size(px(22.))
+                        .text_color(cx.theme().muted_foreground),
+                ),
+        )
+        .child(
+            div()
+                .text_size(px(13.))
+                .font_weight(FontWeight::MEDIUM)
+                .child(title.to_owned()),
+        )
+        .child(
+            div()
+                .text_size(px(11.))
+                .text_color(cx.theme().muted_foreground)
+                .child(description.to_owned()),
+        )
+        .into_any_element()
+}
+
+pub(crate) fn brandmark(cx: &App) -> AnyElement {
+    h_flex()
+        .gap_2()
+        .items_center()
+        .pr_3()
+        .flex_shrink_0()
+        .child(
+            div()
+                .size(px(23.))
+                .rounded(px(7.))
+                .bg(cx.theme().primary)
+                .text_color(cx.theme().primary_foreground)
+                .flex()
+                .items_center()
+                .justify_center()
+                .text_size(px(14.))
+                .font_weight(FontWeight::BOLD)
+                .child("z"),
+        )
+        .child(
+            div()
+                .text_size(px(15.))
+                .font_weight(FontWeight::BOLD)
+                .child("zeph"),
+        )
+        .into_any_element()
+}
+
 pub fn apply_theme(cx: &mut App) {
     let dark = cx.theme().is_dark();
     Theme::update(cx, |theme| {
-        theme.colors.primary = rgb(0x19846f).into();
-        theme.colors.primary_hover = rgb(0x14745f).into();
-        theme.colors.primary_active = rgb(0x106451).into();
-        theme.colors.primary_foreground = rgb(0xffffff).into();
-        theme.colors.button_primary = rgb(0x19846f).into();
-        theme.colors.button_primary_hover = rgb(0x14745f).into();
-        theme.colors.button_primary_active = rgb(0x106451).into();
-        theme.colors.button_primary_foreground = rgb(0xffffff).into();
-        theme.colors.ring = rgb(0x19846f).into();
-        theme.colors.accent = rgb(if dark { 0x193c35 } else { 0xeaf4f0 }).into();
-        theme.colors.accent_foreground = rgb(if dark { 0xa8d8c9 } else { 0x1d6b56 }).into();
+        let color = |light, dark_color| rgb(if dark { dark_color } else { light }).into();
+        theme.font_size = px(13.);
+        theme.radius = px(6.);
+        theme.radius_lg = px(9.);
+        theme.colors.background = color(0xffffff, 0x171a23);
+        theme.colors.foreground = color(0x262c3b, 0xdce1ec);
+        theme.colors.border = color(0xe7e9ef, 0x2a2f3d);
+        theme.colors.input = color(0xdde1ea, 0x343b4d);
+        theme.colors.muted = color(0xf7f8fb, 0x202532);
+        theme.colors.muted_foreground = color(0x7a8293, 0x929caf);
+        theme.colors.sidebar = color(0xf5f6f9, 0x12151d);
+        theme.colors.sidebar_foreground = theme.colors.foreground;
+        theme.colors.title_bar = theme.colors.sidebar;
+        theme.colors.title_bar_border = theme.colors.border;
+        theme.colors.primary = color(0x6656c9, 0x9b8aed);
+        theme.colors.primary_hover = color(0x5948b7, 0x8978dc);
+        theme.colors.primary_active = color(0x4e3fa4, 0x7c6acb);
+        theme.colors.primary_foreground = color(0xffffff, 0x181326);
+        theme.colors.button_primary = theme.colors.primary;
+        theme.colors.button_primary_hover = theme.colors.primary_hover;
+        theme.colors.button_primary_active = theme.colors.primary_active;
+        theme.colors.button_primary_foreground = theme.colors.primary_foreground;
+        theme.colors.button = theme.colors.background;
+        theme.colors.button_foreground = theme.colors.foreground;
+        theme.colors.button_hover = theme.colors.muted;
+        theme.colors.button_active = color(0xeeecf9, 0x302b49);
+        theme.colors.ring = theme.colors.primary;
+        theme.colors.accent = color(0xeeecf9, 0x302b49);
+        theme.colors.accent_foreground = color(0x5d4caf, 0xc1b7f0);
+        theme.colors.popover = theme.colors.background;
+        theme.colors.popover_foreground = theme.colors.foreground;
+        let editor = &mut Arc::make_mut(&mut theme.highlight_theme).style;
+        editor.editor_background = Some(theme.colors.background);
+        editor.editor_gutter_background = Some(theme.colors.background);
+        editor.editor_foreground = Some(theme.colors.foreground);
+        editor.editor_active_line = Some(theme.colors.muted);
+        editor.editor_line_number = Some(theme.colors.muted_foreground);
+        editor.editor_active_line_number = Some(theme.colors.foreground);
     });
 }
 
@@ -2243,4 +3926,185 @@ fn bound_event(event: &mut SessionEvent) -> bool {
     text.truncate(end);
     text.push_str("\n… [单条消息预览超过 64 KiB，已截断]");
     true
+}
+
+fn headers_text(headers: &[(String, String)]) -> String {
+    headers
+        .iter()
+        .map(|(name, value)| format!("{name}: {value}"))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+fn pretty_payload(text: &str) -> String {
+    serde_json::from_str::<serde_json::Value>(text)
+        .ok()
+        .and_then(|v| serde_json::to_string_pretty(&v).ok())
+        .unwrap_or_else(|| text.to_owned())
+}
+fn record_session_event(record: &mut RunRecord, event: &SessionEvent, elapsed_ms: u128) {
+    if let SessionEvent::Sent(body) | SessionEvent::Received(body) = event {
+        let bytes = record.messages.iter().map(|m| m.body.len()).sum::<usize>();
+        if record.messages.len() < 2048 && bytes + body.len() <= 1024 * 1024 {
+            record.messages.push(SessionMessage {
+                sent: matches!(event, SessionEvent::Sent(_)),
+                elapsed_ms,
+                body: body.clone(),
+            });
+        } else {
+            record.truncated = true;
+        }
+    }
+    let label = match event {
+        SessionEvent::Opened => {
+            record.status = "已连接".into();
+            "连接已建立"
+        }
+        SessionEvent::Metadata(headers) => {
+            record.headers.extend(headers.clone());
+            "收到 Headers / Metadata"
+        }
+        SessionEvent::Finished { code, trailers } => {
+            record.status = code.clone();
+            record.trailers = trailers.clone();
+            record.error = record.method == "gRPC" && code != "0 OK";
+            "调用 / 连接已结束"
+        }
+        SessionEvent::Failed(error) => {
+            record.status = error.clone();
+            record.error = true;
+            "执行失败"
+        }
+        SessionEvent::Sent(_) => "发送消息",
+        SessionEvent::Received(_) => "收到消息",
+    };
+    if record.timeline.len() < 2048 {
+        record.timeline.push(TimingMark {
+            elapsed_ms,
+            label: label.into(),
+        });
+    }
+}
+fn request_menu(menu: PopupMenu, view: WeakEntity<Workbench>, id: Uuid) -> PopupMenu {
+    let open = view.clone();
+    let rename = view.clone();
+    let duplicate = view.clone();
+    let close = view.clone();
+    let move_up = view.clone();
+    let move_down = view.clone();
+    menu.item(
+        PopupMenuItem::new("打开请求").on_click(move |_, window, cx| {
+            let _ = open.update(cx, |this, cx| {
+                if let Some(index) = this.project.requests.iter().position(|r| r.id == id) {
+                    this.switch_request(index, window, cx);
+                }
+            });
+        }),
+    )
+    .item(PopupMenuItem::new("重命名").on_click(move |_, window, cx| {
+        let _ = rename.update(cx, |this, cx| {
+            if let Some(index) = this.project.requests.iter().position(|r| r.id == id) {
+                this.switch_request(index, window, cx);
+                this.name.read(cx).focus_handle(cx).focus(window, cx);
+            }
+        });
+    }))
+    .item(
+        PopupMenuItem::new("复制请求").on_click(move |_, window, cx| {
+            let _ = duplicate.update(cx, |this, cx| this.duplicate_request(id, window, cx));
+        }),
+    )
+    .item(
+        PopupMenuItem::new("关闭标签").on_click(move |_, window, cx| {
+            let _ = close.update(cx, |this, cx| this.close_request(id, window, cx));
+        }),
+    )
+    .separator()
+    .item(PopupMenuItem::new("上移").on_click(move |_, _, cx| {
+        let _ = move_up.update(cx, |this, cx| this.move_request(id, -1, cx));
+    }))
+    .item(PopupMenuItem::new("下移").on_click(move |_, _, cx| {
+        let _ = move_down.update(cx, |this, cx| this.move_request(id, 1, cx));
+    }))
+    .separator()
+    .item(
+        PopupMenuItem::new("删除请求（可撤销）").on_click(move |_, window, cx| {
+            let _ = view.update(cx, |this, cx| this.delete_request(id, window, cx));
+        }),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Protocol, Request, RunRecord, SessionEvent, record_session_event};
+    #[test]
+    fn grpc_metadata_and_trailers_stay_separate_in_records() {
+        let request = Request::new(Protocol::Grpc, "rpc");
+        let mut record = RunRecord::error(&request, "Local".into(), String::new());
+        record.method = "gRPC".into();
+        record_session_event(
+            &mut record,
+            &SessionEvent::Metadata(vec![("x-start".into(), "one".into())]),
+            10,
+        );
+        record_session_event(&mut record, &SessionEvent::Received("response".into()), 20);
+        record_session_event(
+            &mut record,
+            &SessionEvent::Finished {
+                code: "0 OK".into(),
+                trailers: vec![("x-end".into(), "two".into())],
+            },
+            30,
+        );
+        assert_eq!(record.headers, vec![("x-start".into(), "one".into())]);
+        assert_eq!(record.trailers, vec![("x-end".into(), "two".into())]);
+        assert!(!record.error);
+        assert_eq!(record.messages.len(), 1);
+        assert!(!record.messages[0].sent);
+        assert_eq!(record.messages[0].body, "response");
+        assert_eq!(record.messages[0].elapsed_ms, 20);
+        assert_eq!(
+            record
+                .timeline
+                .iter()
+                .map(|m| m.elapsed_ms)
+                .collect::<Vec<_>>(),
+            vec![10, 20, 30]
+        );
+        record_session_event(
+            &mut record,
+            &SessionEvent::Finished {
+                code: "1 CANCELLED".into(),
+                trailers: vec![],
+            },
+            40,
+        );
+        assert!(record.error);
+    }
+    #[test]
+    fn session_payloads_preserve_order_and_are_bounded() {
+        let request = Request::new(Protocol::WebSocket, "echo");
+        let mut record = RunRecord::error(&request, "Local".into(), String::new());
+        record_session_event(&mut record, &SessionEvent::Sent("{\"n\":1}".into()), 5);
+        record_session_event(&mut record, &SessionEvent::Received("{\"n\":1}".into()), 10);
+        assert!(record.messages[0].sent);
+        assert!(!record.messages[1].sent);
+        assert_eq!(
+            record
+                .messages
+                .iter()
+                .map(|m| m.elapsed_ms)
+                .collect::<Vec<_>>(),
+            vec![5, 10]
+        );
+        let saved = serde_json::to_string(&record).unwrap();
+        let restored: RunRecord = serde_json::from_str(&saved).unwrap();
+        assert_eq!(restored.messages[1].body, "{\"n\":1}");
+        record_session_event(
+            &mut record,
+            &SessionEvent::Received("x".repeat(1024 * 1024)),
+            20,
+        );
+        assert!(record.truncated);
+        assert_eq!(record.messages.len(), 2);
+    }
 }

@@ -165,6 +165,13 @@ async fn http_methods_body_encodings_and_connect() {
                 .await
                 .unwrap();
         assert_eq!(record.status, "200 OK");
+        assert_eq!(record.timeline.len(), 3);
+        assert!(
+            record
+                .timeline
+                .windows(2)
+                .all(|marks| marks[0].elapsed_ms <= marks[1].elapsed_ms)
+        );
         if method == "HEAD" {
             assert_eq!(record.body, "");
         }

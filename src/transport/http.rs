@@ -143,6 +143,7 @@ pub async fn execute(
         }
     }
     let response = tokio::select! { _=cancel.cancelled()=>bail!("请求已取消"), response=outbound.send()=>response? };
+    let headers_ms = clock.elapsed().as_millis();
     let status = format!(
         "{} {}",
         response.status().as_u16(),
@@ -192,6 +193,27 @@ pub async fn execute(
         elapsed_ms: clock.elapsed().as_millis(),
         status,
         headers: response_headers,
+        trailers: vec![],
+        messages: vec![],
+        timeline: vec![
+            super::TimingMark {
+                elapsed_ms: 0,
+                label: "开始请求".into(),
+            },
+            super::TimingMark {
+                elapsed_ms: headers_ms,
+                label: "收到响应 Headers（包含连接和服务端等待）".into(),
+            },
+            super::TimingMark {
+                elapsed_ms: clock.elapsed().as_millis(),
+                label: if truncated {
+                    "达到响应预览上限"
+                } else {
+                    "响应读取完成"
+                }
+                .into(),
+            },
+        ],
         body,
         bytes: count,
         truncated,
@@ -319,6 +341,12 @@ async fn connect_probe(
         elapsed_ms: clock.elapsed().as_millis(),
         status,
         headers,
+        trailers: vec![],
+        messages: vec![],
+        timeline: vec![super::TimingMark {
+            elapsed_ms: clock.elapsed().as_millis(),
+            label: "CONNECT 握手探测完成，连接已关闭".into(),
+        }],
         body: if success {
             format!("CONNECT {target}\n代理已建立隧道；探测完成后已关闭连接。")
         } else {

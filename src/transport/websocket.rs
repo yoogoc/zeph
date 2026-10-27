@@ -79,7 +79,16 @@ async fn run_session(
             response
                 .headers()
                 .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("[binary]").to_string()))
+                .map(|(k, v)| {
+                    (
+                        k.to_string(),
+                        if k == "set-cookie" {
+                            "[已隐藏 Cookie]".to_owned()
+                        } else {
+                            v.to_str().unwrap_or("[binary]").to_string()
+                        },
+                    )
+                })
                 .collect(),
         ))
         .await?;

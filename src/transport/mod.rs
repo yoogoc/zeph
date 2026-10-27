@@ -17,6 +17,12 @@ pub struct RunRecord {
     pub elapsed_ms: u128,
     pub status: String,
     pub headers: Vec<(String, String)>,
+    #[serde(default)]
+    pub trailers: Vec<(String, String)>,
+    #[serde(default)]
+    pub timeline: Vec<TimingMark>,
+    #[serde(default)]
+    pub messages: Vec<SessionMessage>,
     pub body: String,
     pub bytes: usize,
     pub truncated: bool,
@@ -34,12 +40,29 @@ impl RunRecord {
             elapsed_ms: 0,
             status: "请求失败".into(),
             headers: vec![],
+            trailers: vec![],
+            timeline: vec![],
+            messages: vec![],
             body: message,
             bytes: 0,
             truncated: false,
             error: true,
         }
     }
+}
+
+/// A bounded payload, independent of connection events and protocol metadata.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionMessage {
+    pub sent: bool,
+    pub elapsed_ms: u128,
+    pub body: String,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct TimingMark {
+    pub elapsed_ms: u128,
+    pub label: String,
 }
 
 #[derive(Clone, Debug)]
