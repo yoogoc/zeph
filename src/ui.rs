@@ -1,4 +1,5 @@
 use crate::{
+    collections::{CollectionRow, DeletedFolder},
     model::*,
     storage::{ContractInfo, ProjectStore},
     transport::{self, RunRecord, SessionCommand, SessionEvent, SessionMessage, TimingMark},
@@ -7,9 +8,10 @@ use crate::{
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::{
     ActiveTheme, Disableable, Icon, IconName, IndexPath, Selectable, Sizable, Theme, ThemeMode,
-    TitleBar,
+    TitleBar, WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
+    dialog::{DialogAction, DialogButtonProps, DialogClose, DialogFooter},
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
     menu::{ContextMenuExt, DropdownMenu, PopupMenu, PopupMenuItem},
@@ -103,6 +105,11 @@ enum Split {
     Horizontal,
 }
 
+enum DeletedItem {
+    Request(usize, Box<Request>),
+    Folder(DeletedFolder),
+}
+
 struct ParamInputs {
     name: Entity<InputState>,
     value: Entity<InputState>,
@@ -176,7 +183,8 @@ pub struct Workbench {
     request_views: HashMap<Uuid, (Tab, ResponseTab)>,
     request_tab_scroll: ScrollHandle,
     revealed_request_tab: Cell<Option<(Uuid, usize, usize)>>,
-    deleted_requests: Vec<(usize, Request)>,
+    deleted_items: Vec<DeletedItem>,
+    selected_folder: Option<Uuid>,
     deleted_environment: Option<(usize, Environment)>,
     environment_drafts: HashMap<String, (String, String)>,
     pools: HashMap<Uuid, DescriptorPool>,
@@ -275,6 +283,10 @@ impl Workbench {
             }
         });
         let history = store.history().unwrap_or_default();
+        let selected_folder = project
+            .requests
+            .get(project.active_request)
+            .and_then(|r| r.folder_id);
         let mut this = Self {
             workspace_strip: None,
             empty_request: Request::new(Protocol::Http, ""),
@@ -326,7 +338,8 @@ impl Workbench {
             request_views: HashMap::new(),
             request_tab_scroll: ScrollHandle::new(),
             revealed_request_tab: Cell::new(None),
-            deleted_requests: vec![],
+            deleted_items: vec![],
+            selected_folder,
             deleted_environment: None,
             environment_drafts: HashMap::new(),
             pools: HashMap::new(),
@@ -864,7 +877,13 @@ impl Workbench {
                     Ok(import) => {
                         let count = import.requests.len();
                         let first = import.requests.first().map(|r| r.id);
-                        self.project.requests.extend(import.requests);
+                        if let Err(error) = self
+                            .project
+                            .merge_collection(import.folders, import.requests)
+                        {
+                            self.notice = format!("导入失败: {error}");
+                            continue;
+                        }
                         if self.project.tabs().is_empty()
                             && let Some(id) = first
                         {
@@ -1198,6 +1217,10 @@ impl Workbench {
         if protocol != Protocol::Http {
             request.body.kind = BodyKind::Json;
         }
+        request.folder_id = self
+            .selected_folder
+            .filter(|id| self.project.folder(*id).is_ok());
+        self.project.expand_folder_ancestors(request.folder_id);
         let id = request.id;
         let first = self.project.requests.is_empty();
         self.project.requests.push(request);
@@ -1416,6 +1439,8 @@ impl Workbench {
         };
         self.remember_view();
         self.project.open_request(id);
+        self.selected_folder = self.project.requests[index].folder_id;
+        self.project.expand_folder_ancestors(self.selected_folder);
         self.stash_environment(cx);
         self.environment_open = false;
         self.history_open = false;
@@ -1444,7 +1469,8 @@ impl Workbench {
             }
             self.session_records.remove(&id);
             self.notice = format!("已删除“{}”，可撤销", removed.1.name);
-            self.deleted_requests.push(removed);
+            self.deleted_items
+                .push(DeletedItem::Request(removed.0, Box::new(removed.1)));
             if !self.project.tabs().is_empty() {
                 self.restore_view();
                 self.load_request(window, cx);
@@ -1453,11 +1479,34 @@ impl Workbench {
         }
     }
     fn undo_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if let Some((index, request)) = self.deleted_requests.pop() {
-            let index = index.min(self.project.requests.len());
-            self.project.requests.insert(index, request);
-            self.switch_request(index, window, cx);
-            self.notice = "请求已恢复".into();
+        match self.deleted_items.pop() {
+            Some(DeletedItem::Request(index, mut request)) => {
+                if request
+                    .folder_id
+                    .is_some_and(|id| self.project.folder(id).is_err())
+                {
+                    request.folder_id = None;
+                }
+                let index = index.min(self.project.requests.len());
+                self.project.requests.insert(index, *request);
+                self.switch_request(index, window, cx);
+                self.notice = "请求已恢复".into();
+            }
+            Some(DeletedItem::Folder(folder)) => {
+                match self.project.restore_folder(folder.clone()) {
+                    Ok(id) => {
+                        self.selected_folder = Some(id);
+                        self.notice = "文件夹已恢复".into();
+                        self.dirty(cx);
+                    }
+                    Err(e) => {
+                        self.deleted_items.push(DeletedItem::Folder(folder));
+                        self.notice = e.to_string();
+                        cx.notify();
+                    }
+                }
+            }
+            None => {}
         }
     }
     fn duplicate_request(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
@@ -1479,9 +1528,19 @@ impl Workbench {
         let Some(index) = self.project.requests.iter().position(|r| r.id == id) else {
             return;
         };
-        let Some(next) = index
+        let siblings = self
+            .project
+            .requests
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.folder_id == self.project.requests[index].folder_id)
+            .map(|(i, _)| i)
+            .collect::<Vec<_>>();
+        let position = siblings.iter().position(|i| *i == index).unwrap();
+        let Some(next) = position
             .checked_add_signed(offset)
-            .filter(|i| *i < self.project.requests.len())
+            .and_then(|i| siblings.get(i))
+            .copied()
         else {
             return;
         };
@@ -2734,26 +2793,375 @@ impl Workbench {
             .child(content)
             .into_any_element()
     }
+    fn toggle_folder(&mut self, id: Uuid, searching: bool, cx: &mut Context<Self>) {
+        self.selected_folder = Some(id);
+        if let Some(folder) = self.project.folders.iter_mut().find(|f| f.id == id) {
+            if !searching {
+                folder.expanded = !folder.expanded;
+            }
+            self.dirty(cx);
+        }
+    }
+    fn edit_folder(
+        &mut self,
+        id: Option<Uuid>,
+        parent: Option<Uuid>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let initial = id
+            .and_then(|id| self.project.folder(id).ok())
+            .map(|f| f.name.clone())
+            .unwrap_or_default();
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder("文件夹名称"));
+        name.update(cx, |s, cx| s.set_value(initial, window, cx));
+        let error = cx.new(|cx| InputState::new(window, cx));
+        let view = cx.entity().downgrade();
+        let focus = name.clone();
+        let location = parent
+            .map(|id| self.project.folder_path(id))
+            .unwrap_or("请求集合".into());
+        window.open_dialog(cx, move |dialog, _, _| {
+            let input = name.clone();
+            let error = error.clone();
+            let view = view.clone();
+            dialog
+                .footer(folder_dialog_footer(if id.is_some() {
+                    "保存"
+                } else {
+                    "创建"
+                }))
+                .title(if id.is_some() {
+                    "重命名文件夹"
+                } else {
+                    "新建文件夹"
+                })
+                .w(px(420.))
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .child(div().text_sm().child(format!("位置：{location}")))
+                        .child(Input::new(&input))
+                        .child(
+                            div()
+                                .text_xs()
+                                .child("文件夹属于当前工作区。重命名保留原始 OpenAPI tag 映射。"),
+                        )
+                        .child(
+                            Input::new(&error)
+                                .appearance(false)
+                                .readonly(true)
+                                .h(px(24.))
+                                .text_color(rgb(0xd85c6b)),
+                        ),
+                )
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text(if id.is_some() { "保存" } else { "创建" })
+                        .cancel_text("取消")
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, window, cx| {
+                    let value = input.read(cx).value().to_string();
+                    view.update(cx, |this, cx| {
+                        let result = if let Some(id) = id {
+                            this.project.rename_folder(id, &value).map(|_| id)
+                        } else {
+                            this.project.add_folder(&value, parent)
+                        };
+                        match result {
+                            Ok(id) => {
+                                this.selected_folder = Some(id);
+                                this.notice = "文件夹已保存".into();
+                                this.dirty(cx);
+                                true
+                            }
+                            Err(e) => {
+                                error.update(cx, |s, cx| s.set_value(e.to_string(), window, cx));
+                                false
+                            }
+                        }
+                    })
+                    .unwrap_or(true)
+                })
+        });
+        focus.update(cx, |s, cx| s.focus(window, cx));
+    }
+    fn move_collection_item(
+        &mut self,
+        id: Uuid,
+        is_folder: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let current = if is_folder {
+            self.project.folder(id).ok().and_then(|f| f.parent_id)
+        } else {
+            self.project
+                .requests
+                .iter()
+                .find(|r| r.id == id)
+                .and_then(|r| r.folder_id)
+        };
+        let mut destinations = vec![None];
+        let mut labels = vec!["请求集合（根目录）".to_owned()];
+        let mut folders = self
+            .project
+            .folders
+            .iter()
+            .filter(|f| !is_folder || !self.project.folder_contains(id, f.id))
+            .map(|f| (self.project.folder_path(f.id), f.id))
+            .collect::<Vec<_>>();
+        folders.sort();
+        for (path, id) in folders {
+            labels.push(path);
+            destinations.push(Some(id));
+        }
+        let selected = destinations.iter().position(|p| *p == current).unwrap_or(0);
+        let select = cx.new(|cx| {
+            SelectState::new(labels, Some(IndexPath::new(selected)), window, cx).searchable(true)
+        });
+        let error = cx.new(|cx| InputState::new(window, cx));
+        let view = cx.entity().downgrade();
+        window.open_dialog(cx, move |dialog, _, _| {
+            let select = select.clone();
+            let error = error.clone();
+            let view = view.clone();
+            let destinations = destinations.clone();
+            dialog
+                .footer(folder_dialog_footer("移动"))
+                .title(if is_folder {
+                    "移动文件夹"
+                } else {
+                    "移动请求"
+                })
+                .w(px(460.))
+                .child(
+                    v_flex()
+                        .gap_3()
+                        .child(Select::new(&select).w_full())
+                        .child(div().text_xs().child(
+                            "移动只改变本地分组，保留请求内容、运行会话和原始 OpenAPI 映射。",
+                        ))
+                        .child(
+                            Input::new(&error)
+                                .appearance(false)
+                                .readonly(true)
+                                .h(px(24.))
+                                .text_color(rgb(0xd85c6b)),
+                        ),
+                )
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("移动")
+                        .cancel_text("取消")
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, window, cx| {
+                    let Some(parent) = select
+                        .read(cx)
+                        .selected_index(cx)
+                        .and_then(|i| destinations.get(i.row))
+                        .copied()
+                    else {
+                        return false;
+                    };
+                    view.update(cx, |this, cx| {
+                        let result = if is_folder {
+                            this.project.move_folder(id, parent)
+                        } else {
+                            this.project.move_request_to_folder(id, parent)
+                        };
+                        match result {
+                            Ok(()) => {
+                                this.selected_folder = if is_folder { Some(id) } else { parent };
+                                this.notice = "已移动到目标文件夹".into();
+                                this.dirty(cx);
+                                true
+                            }
+                            Err(e) => {
+                                error.update(cx, |s, cx| s.set_value(e.to_string(), window, cx));
+                                false
+                            }
+                        }
+                    })
+                    .unwrap_or(true)
+                })
+        });
+    }
+    fn delete_folder(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        let parent = self.project.folder(id).ok().and_then(|f| f.parent_id);
+        match self.project.remove_folder(id) {
+            Ok(removed) => {
+                if self.selected_folder == Some(id) {
+                    self.selected_folder = parent;
+                }
+                self.deleted_items.push(DeletedItem::Folder(removed));
+                self.notice = "文件夹已删除，内容移至上一级；可撤销".into();
+                self.dirty(cx);
+            }
+            Err(e) => {
+                self.notice = e.to_string();
+                cx.notify();
+            }
+        }
+    }
+    fn show_openapi_mapping(
+        &mut self,
+        folder: Option<Uuid>,
+        request: Option<Uuid>,
+        cx: &mut Context<Self>,
+    ) {
+        let binding = if let Some(id) = folder {
+            self.project.folder(id).ok().and_then(|f| f.openapi.as_ref().map(|m| (m.contract_id,serde_json::json!({"folder":self.project.folder_path(id),"originalTag":m.tag,"contractId":m.contract_id}))))
+        } else {
+            request.and_then(|id| self.project.requests.iter().find(|r| r.id == id)).and_then(|r| r.openapi.as_ref().map(|m| (m.contract_id,serde_json::json!({"request":r.name,"folder":r.folder_id.map(|id|self.project.folder_path(id)),"operation":m}))))
+        };
+        let Some((contract, mapping)) = binding else {
+            self.notice = "此项尚未关联 OpenAPI。导入文档后，按 tags 分组并保留接口映射。".into();
+            cx.notify();
+            return;
+        };
+        let path = self
+            .store
+            .directory
+            .join("contracts")
+            .join(contract.to_string())
+            .join("original.json");
+        self.definition_path = Some(path.clone());
+        self.definitions_open = true;
+        self.environment_open = false;
+        self.history_open = false;
+        self.encoding_open = false;
+        let tx = self.tx.clone();
+        self.runtime.spawn_blocking(move || {
+            let result = (|| -> anyhow::Result<String> {
+                let document: serde_json::Value = serde_json::from_slice(&std::fs::read(&path)?)?;
+                let manifest: serde_json::Value = serde_json::from_slice(&std::fs::read(path.with_file_name("sources.json"))?)?;
+                Ok(serde_json::to_string_pretty(&serde_json::json!({"mapping":mapping,"source":manifest.get("source"),"document":document,"localReferences":manifest.get("files")}))?)
+            })().map_err(|e|format!("无法读取映射的本地契约: {e}"));
+            let _ = tx.blocking_send(WorkerEvent::Definition(path,result));
+        });
+        self.refresh_contracts();
+        cx.notify();
+    }
+    fn folder_row(
+        &self,
+        id: Uuid,
+        depth: usize,
+        count: usize,
+        searching: bool,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let Ok(folder) = self.project.folder(id) else {
+            return div().into_any_element();
+        };
+        let expanded = folder.expanded || searching;
+        let view = cx.entity().downgrade();
+        let menu_view = view.clone();
+        h_flex()
+            .id(SharedString::from(format!("folder-{id}")))
+            .role(Role::Button)
+            .aria_label(format!(
+                "{}文件夹 {}，{} 个请求",
+                if expanded { "收起" } else { "展开" },
+                folder.name,
+                count
+            ))
+            .on_a11y_action(AccessibleAction::Click, {
+                let view = view.clone();
+                move |_, _, cx| {
+                    let _ = view.update(cx, |this, cx| this.toggle_folder(id, searching, cx));
+                }
+            })
+            .h(px(32.))
+            .w_full()
+            .flex_shrink_0()
+            .pr(px(7.))
+            .pl(px(SIDEBAR_ROW_INSET + depth.min(8) as f32 * 12.))
+            .gap(px(5.))
+            .rounded(px(5.))
+            .cursor_pointer()
+            .bg(if self.selected_folder == Some(id) {
+                cx.theme().primary.opacity(0.06)
+            } else {
+                transparent_black()
+            })
+            .hover(|s| s.bg(cx.theme().muted))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle_folder(id, searching, cx)))
+            .child(
+                Icon::new(if expanded {
+                    IconName::ChevronDown
+                } else {
+                    IconName::ChevronRight
+                })
+                .size(px(12.))
+                .text_color(cx.theme().muted_foreground),
+            )
+            .child(
+                Icon::new(if expanded {
+                    gpui_kit::assets::IconName::FolderOpen
+                } else {
+                    gpui_kit::assets::IconName::Folder
+                })
+                .size(px(14.))
+                .text_color(if folder.openapi.is_some() {
+                    cx.theme().primary
+                } else {
+                    cx.theme().muted_foreground
+                }),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_size(px(12.))
+                    .font_weight(FontWeight::MEDIUM)
+                    .child(folder.name.clone()),
+            )
+            .when(
+                folder.openapi.as_ref().is_some_and(|m| m.tag.is_none()),
+                |row| {
+                    row.child(
+                        div()
+                            .text_size(px(8.))
+                            .text_color(cx.theme().primary)
+                            .child("API"),
+                    )
+                },
+            )
+            .child(
+                div()
+                    .text_size(px(10.))
+                    .text_color(cx.theme().muted_foreground)
+                    .child(count.to_string()),
+            )
+            .child(
+                Button::new(SharedString::from(format!("folder-menu-{id}")))
+                    .xsmall()
+                    .ghost()
+                    .size(px(24.))
+                    .icon(IconName::Ellipsis)
+                    .accessibility_label(format!("文件夹操作 {}", folder.name))
+                    .on_click(|_, _, cx| cx.stop_propagation())
+                    .dropdown_menu(move |menu, _, _| folder_menu(menu, menu_view.clone(), id)),
+            )
+            .context_menu(move |menu, _, _| folder_menu(menu, view.clone(), id))
+            .into_any_element()
+    }
     fn sidebar(&self, cx: &mut Context<Self>) -> AnyElement {
         let filter = self.search.read(cx).value().to_lowercase();
         let mut list = v_flex().gap(px(2.)).px(px(SIDEBAR_GUTTER)).pb_3();
-        for (i, request) in self
-            .project
-            .requests
-            .iter()
-            .enumerate()
-            .filter(|(_, request)| {
-                filter.is_empty()
-                    || format!(
-                        "{} {} {}",
-                        request.name,
-                        request.method,
-                        request.protocol.label()
-                    )
-                    .to_lowercase()
-                    .contains(&filter)
-            })
-        {
+        for row in self.project.collection_rows(&filter) {
+            let (i, depth) = match row {
+                CollectionRow::Folder { id, depth, count } => {
+                    list = list.child(self.folder_row(id, depth, count, !filter.is_empty(), cx));
+                    continue;
+                }
+                CollectionRow::Request { index, depth } => (index, depth),
+            };
+            let request = &self.project.requests[i];
             let id = request.id;
             let view = cx.entity().downgrade();
             let menu_view = view.clone();
@@ -2791,6 +3199,7 @@ impl Workbench {
                     .flex_shrink_0()
                     // Keep the inner columns on the shared inset despite the 1 px row border.
                     .px(px(SIDEBAR_ROW_INSET - 1.))
+                    .pl(px(SIDEBAR_ROW_INSET - 1. + depth.min(8) as f32 * 12.))
                     .gap_2()
                     .items_center()
                     .rounded(px(5.))
@@ -2901,7 +3310,7 @@ impl Workbench {
                             .flex_shrink_0()
                             .icon(IconName::Plus)
                             .accessibility_label("新建请求")
-                            .tooltip("新建 HTTP、gRPC 或 WebSocket 请求")
+                            .tooltip("新建请求或文件夹")
                             .dropdown_menu(move |menu, _, _| {
                                 new_request_menu(menu, new_request_view.clone())
                             }),
@@ -2968,7 +3377,7 @@ impl Workbench {
                         navigation_button("import-openapi", IconName::FileText, "导入 OpenAPI")
                             .on_click(cx.listener(|this, _, _, cx| this.import_openapi(cx))),
                     )
-                    .when(!self.deleted_requests.is_empty(), |column| {
+                    .when(!self.deleted_items.is_empty(), |column| {
                         column.child(
                             navigation_button("undo-delete", IconName::Undo, "撤销删除").on_click(
                                 cx.listener(|this, _, window, cx| this.undo_delete(window, cx)),
@@ -3799,6 +4208,21 @@ fn new_request_menu(mut menu: PopupMenu, view: WeakEntity<Workbench>) -> PopupMe
             });
         }));
     }
+    let folder = view.clone();
+    menu =
+        menu.separator().item(
+            PopupMenuItem::new("新建文件夹…").on_click(move |_, window, cx| {
+                let _ = folder.update(cx, |this, cx| {
+                    this.edit_folder(None, this.selected_folder, window, cx)
+                });
+            }),
+        );
+    menu = menu.item(
+        PopupMenuItem::new("新建根文件夹…").on_click(move |_, window, cx| {
+            let _ = view.update(cx, |this, cx| this.edit_folder(None, None, window, cx));
+        }),
+    );
+
     menu
 }
 
@@ -3984,6 +4408,80 @@ fn record_session_event(record: &mut RunRecord, event: &SessionEvent, elapsed_ms
         });
     }
 }
+fn folder_dialog_footer(label: &'static str) -> AnyElement {
+    DialogFooter::new()
+        .child(
+            div()
+                .w(px(76.))
+                .h(px(32.))
+                .child(DialogClose::new().trigger(|button| button.label("取消").w_full())),
+        )
+        .child(
+            div().w(px(76.)).h(px(32.)).child(
+                DialogAction::new().child(
+                    Button::new("folder-dialog-confirm")
+                        .primary()
+                        .label(label)
+                        .w_full(),
+                ),
+            ),
+        )
+        .into_any_element()
+}
+
+fn folder_menu(mut menu: PopupMenu, view: WeakEntity<Workbench>, id: Uuid) -> PopupMenu {
+    for (protocol, label) in [
+        (Protocol::Http, "新建 HTTP 请求"),
+        (Protocol::Grpc, "新建 gRPC 请求"),
+        (Protocol::WebSocket, "新建 WebSocket 请求"),
+    ] {
+        let view = view.clone();
+        menu = menu.item(PopupMenuItem::new(label).on_click(move |_, window, cx| {
+            let _ = view.update(cx, |this, cx| {
+                this.selected_folder = Some(id);
+                this.new_request(protocol.clone(), window, cx);
+            });
+        }));
+    }
+    let child = view.clone();
+    let rename = view.clone();
+    let move_to = view.clone();
+    let mapping = view.clone();
+    menu.separator()
+        .item(
+            PopupMenuItem::new("新建子文件夹…").on_click(move |_, window, cx| {
+                let _ = child.update(cx, |this, cx| this.edit_folder(None, Some(id), window, cx));
+            }),
+        )
+        .item(
+            PopupMenuItem::new("重命名文件夹…").on_click(move |_, window, cx| {
+                let _ = rename.update(cx, |this, cx| {
+                    let parent = this.project.folder(id).ok().and_then(|f| f.parent_id);
+                    this.edit_folder(Some(id), parent, window, cx);
+                });
+            }),
+        )
+        .item(
+            PopupMenuItem::new("移动文件夹…").on_click(move |_, window, cx| {
+                let _ = move_to.update(cx, |this, cx| {
+                    this.move_collection_item(id, true, window, cx)
+                });
+            }),
+        )
+        .item(
+            PopupMenuItem::new("查看 OpenAPI 映射").on_click(move |_, _, cx| {
+                let _ =
+                    mapping.update(cx, |this, cx| this.show_openapi_mapping(Some(id), None, cx));
+            }),
+        )
+        .separator()
+        .item(
+            PopupMenuItem::new("删除文件夹，保留内容").on_click(move |_, _, cx| {
+                let _ = view.update(cx, |this, cx| this.delete_folder(id, cx));
+            }),
+        )
+}
+
 fn request_menu(menu: PopupMenu, view: WeakEntity<Workbench>, id: Uuid) -> PopupMenu {
     let open = view.clone();
     let rename = view.clone();
@@ -3991,6 +4489,8 @@ fn request_menu(menu: PopupMenu, view: WeakEntity<Workbench>, id: Uuid) -> Popup
     let close = view.clone();
     let move_up = view.clone();
     let move_down = view.clone();
+    let move_to = view.clone();
+    let mapping = view.clone();
     menu.item(
         PopupMenuItem::new("打开请求").on_click(move |_, window, cx| {
             let _ = open.update(cx, |this, cx| {
@@ -4016,6 +4516,18 @@ fn request_menu(menu: PopupMenu, view: WeakEntity<Workbench>, id: Uuid) -> Popup
     .item(
         PopupMenuItem::new("关闭标签").on_click(move |_, window, cx| {
             let _ = close.update(cx, |this, cx| this.close_request(id, window, cx));
+        }),
+    )
+    .item(
+        PopupMenuItem::new("移动到文件夹…").on_click(move |_, window, cx| {
+            let _ = move_to.update(cx, |this, cx| {
+                this.move_collection_item(id, false, window, cx)
+            });
+        }),
+    )
+    .item(
+        PopupMenuItem::new("查看 OpenAPI 映射").on_click(move |_, _, cx| {
+            let _ = mapping.update(cx, |this, cx| this.show_openapi_mapping(None, Some(id), cx));
         }),
     )
     .separator()

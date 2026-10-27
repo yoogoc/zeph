@@ -4,6 +4,9 @@ info:
   version: 1.0.0
 servers:
   - url: http://localhost:8080
+tags:
+  - name: 客户订单
+  - name: 订单管理
 paths:
   /v1/customers/{customer_id}/orders:
     parameters:
@@ -12,6 +15,8 @@ paths:
         required: true
         schema: {type: string, default: cus_1024}
     get:
+      tags: [客户订单]
+      operationId: listCustomerOrders
       summary: OpenAPI · 查询客户订单
       parameters:
         - name: status
@@ -20,6 +25,8 @@ paths:
       responses:
         '200': {description: Orders}
     post:
+      tags: [客户订单]
+      operationId: createOrder
       summary: OpenAPI · 创建订单
       requestBody:
         required: true
@@ -35,6 +42,8 @@ paths:
         required: true
         schema: {type: string, default: ord_1024}
     patch:
+      tags: [订单管理]
+      operationId: updateOrderNote
       summary: OpenAPI · 修改订单备注
       requestBody:
         content:

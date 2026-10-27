@@ -109,10 +109,40 @@ pub enum Auth {
     },
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenApiOperation {
+    pub contract_id: Uuid,
+    pub path: String,
+    pub method: String,
+    pub operation_id: Option<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct OpenApiFolder {
+    pub contract_id: Uuid,
+    /// None identifies the document root; Some identifies an original OpenAPI tag.
+    pub tag: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Folder {
+    pub id: Uuid,
+    pub name: String,
+    pub parent_id: Option<Uuid>,
+    pub expanded: bool,
+    #[serde(default)]
+    pub openapi: Option<OpenApiFolder>,
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Request {
     pub id: Uuid,
     pub name: String,
+    #[serde(default)]
+    pub folder_id: Option<Uuid>,
+    #[serde(default)]
+    pub openapi: Option<OpenApiOperation>,
     pub protocol: Protocol,
     pub method: String,
     pub url: String,
@@ -136,6 +166,8 @@ impl Request {
         Self {
             id: Uuid::new_v4(),
             name: name.into(),
+            folder_id: None,
+            openapi: None,
             protocol,
             method: "GET".into(),
             url: "{{base_url}}".into(),
@@ -374,6 +406,8 @@ pub struct Project {
     pub version: u32,
     pub name: String,
     pub requests: Vec<Request>,
+    #[serde(default)]
+    pub folders: Vec<Folder>,
     pub environments: Vec<Environment>,
     pub active_environment: usize,
     pub active_request: usize,
@@ -499,6 +533,7 @@ impl Project {
             version: 1,
             name: "商城服务".into(),
             requests,
+            folders: vec![],
             environments: vec![local, staging],
             active_environment: 0,
             active_request: 0,
@@ -566,6 +601,7 @@ impl Project {
         if self.requests.iter().any(|r| !ids.insert(r.id)) {
             bail!("项目含有重复请求 ID，原文件未修改");
         }
+        self.validate_folders()?;
         if self.environments.is_empty() {
             self.environments.push(Environment {
                 name: "Local".into(),

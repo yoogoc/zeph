@@ -1,14 +1,19 @@
 //! Version-aware, offline OpenAPI import. Raw specifications remain authoritative.
 //! This module imports executable HTTP operations; it is not a complete OAS validator.
-use crate::model::{Auth, BodyKind, Parameter, Protocol, Request};
+use crate::model::{
+    Auth, BodyKind, Folder, OpenApiOperation, Parameter, Project, Protocol, Request,
+};
 use anyhow::{Context, Result, bail};
 use serde_json::Value;
 use std::{
     collections::{BTreeMap, HashSet},
     path::{Path, PathBuf},
 };
+use uuid::Uuid;
 
 pub struct ImportedSpec {
+    pub contract_id: Uuid,
+    pub folders: Vec<Folder>,
     pub version: String,
     pub requests: Vec<Request>,
     pub diagnostics: Vec<String>,
@@ -233,6 +238,28 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
         .get("paths")
         .and_then(Value::as_object)
         .context("文档缺少 paths 对象")?;
+    let contract_id = Uuid::new_v4();
+    let title = root
+        .pointer("/info/title")
+        .and_then(Value::as_str)
+        .filter(|s| !s.trim().is_empty())
+        .unwrap_or("OpenAPI 文档");
+    let mut grouping = Project::empty(title);
+    grouping.openapi_folder(contract_id, title, None);
+    for tag in root
+        .get("tags")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+    {
+        if let Some(name) = tag
+            .get("name")
+            .and_then(Value::as_str)
+            .filter(|s| !s.trim().is_empty())
+        {
+            grouping.openapi_folder(contract_id, title, Some(name));
+        }
+    }
     let mut requests = vec![];
     for (route, path_node) in paths {
         let (item, item_file) = match documents.resolved(path_node, &file) {
@@ -257,6 +284,28 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
                     .unwrap_or(route),
             );
             request.method = method.to_uppercase();
+            let mut seen = HashSet::new();
+            let tags = operation
+                .get("tags")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .filter(|s| !s.trim().is_empty() && seen.insert((*s).to_owned()))
+                .map(str::to_owned)
+                .collect::<Vec<_>>();
+            request.folder_id =
+                Some(grouping.openapi_folder(contract_id, title, tags.first().map(String::as_str)));
+            request.openapi = Some(OpenApiOperation {
+                contract_id,
+                path: route.clone(),
+                method: method.into(),
+                operation_id: operation
+                    .get("operationId")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned),
+                tags,
+            });
             request.source = Some(format!("{}#{method}:{route}", file.display()));
             request.description = operation
                 .get("description")
@@ -464,6 +513,8 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
     documents.diagnostics.sort();
     documents.diagnostics.dedup();
     Ok(ImportedSpec {
+        contract_id,
+        folders: grouping.folders,
         version,
         requests,
         diagnostics: documents.diagnostics,

@@ -41,7 +41,122 @@ impl ProjectStore {
         let mut project: Project = serde_json::from_slice(&fs::read(&path)?)
             .with_context(|| format!("项目无法读取，原文件未修改: {}", path.display()))?;
         project.normalize()?;
+        if self.migrate_openapi_groups(&mut project)? {
+            self.save(&project)?;
+        }
         Ok(project)
+    }
+    /// Upgrade legacy imported requests using the saved source manifest, never a live network lookup.
+    fn migrate_openapi_groups(&self, project: &mut Project) -> Result<bool> {
+        let directory = self.directory.join("contracts");
+        if !directory.is_dir()
+            || !project
+                .requests
+                .iter()
+                .any(|r| r.openapi.is_none() && r.source.is_some())
+        {
+            return Ok(false);
+        }
+        let mut changed = false;
+        let mut entries = fs::read_dir(directory)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.path())
+            .collect::<Vec<_>>();
+        entries.sort();
+        let mut source_counts = std::collections::HashMap::new();
+        for directory in &entries {
+            if let Ok(bytes) = fs::read(directory.join("sources.json"))
+                && let Ok(manifest) = serde_json::from_slice::<serde_json::Value>(&bytes)
+                && let Some(source) = manifest.get("source").and_then(|v| v.as_str())
+            {
+                *source_counts.entry(source.to_owned()).or_insert(0usize) += 1;
+            }
+        }
+        for directory in entries {
+            let Some(id) = directory
+                .file_name()
+                .and_then(|s| s.to_str())
+                .and_then(|s| uuid::Uuid::parse_str(s).ok())
+            else {
+                continue;
+            };
+            let read = || -> Result<(serde_json::Value, serde_json::Value)> {
+                Ok((
+                    serde_json::from_slice(&fs::read(directory.join("original.json"))?)?,
+                    serde_json::from_slice(&fs::read(directory.join("sources.json"))?)?,
+                ))
+            };
+            let Ok((document, manifest)) = read() else {
+                continue;
+            };
+            let Some(source) = manifest.get("source").and_then(|v| v.as_str()) else {
+                continue;
+            };
+            // A legacy source string cannot distinguish multiple snapshots of one file.
+            if source_counts.get(source) != Some(&1) {
+                continue;
+            }
+            let title = document
+                .pointer("/info/title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("OpenAPI 文档");
+            for index in 0..project.requests.len() {
+                let request = &project.requests[index];
+                if request.openapi.is_some() {
+                    continue;
+                }
+                let Some(suffix) = request
+                    .source
+                    .as_deref()
+                    .and_then(|s| s.strip_prefix(&format!("{source}#")))
+                else {
+                    continue;
+                };
+                let Some((method, path)) = suffix.split_once(':') else {
+                    continue;
+                };
+                if ![
+                    "get", "post", "put", "patch", "delete", "head", "options", "trace",
+                ]
+                .contains(&method)
+                    || !path.starts_with('/')
+                {
+                    continue;
+                }
+                let node = document
+                    .get("paths")
+                    .and_then(|v| v.get(path))
+                    .and_then(|v| v.get(method));
+                let tags = node
+                    .and_then(|v| v.get("tags"))
+                    .and_then(|v| v.as_array())
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|v| v.as_str())
+                    .filter(|s| !s.trim().is_empty())
+                    .map(str::to_owned)
+                    .collect::<Vec<_>>();
+                let binding = crate::model::OpenApiOperation {
+                    contract_id: id,
+                    path: path.into(),
+                    method: method.into(),
+                    operation_id: node
+                        .and_then(|v| v.get("operationId"))
+                        .and_then(|v| v.as_str())
+                        .map(str::to_owned),
+                    tags,
+                };
+                let folder =
+                    project.openapi_folder(id, title, binding.tags.first().map(String::as_str));
+                let request = &mut project.requests[index];
+                if request.folder_id.is_none() {
+                    request.folder_id = Some(folder);
+                }
+                request.openapi = Some(binding);
+                changed = true;
+            }
+        }
+        Ok(changed)
     }
     pub fn create(&self, name: &str) -> Result<Project> {
         if self.directory.join("zeph.project.json").exists() {
@@ -368,7 +483,7 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> Result<()> {
 /// Retain the root document and every local reference read during import.
 /// The manifest maps original paths to unmodified documents, without fetching remote refs.
 pub fn save_contract(directory: &Path, import: &crate::openapi::ImportedSpec) -> Result<()> {
-    let directory = directory.join(uuid::Uuid::new_v4().to_string());
+    let directory = directory.join(import.contract_id.to_string());
     fs::create_dir_all(&directory)?;
     atomic_write(
         &directory.join("original.json"),
@@ -379,7 +494,7 @@ pub fn save_contract(directory: &Path, import: &crate::openapi::ImportedSpec) ->
         .iter()
         .map(|(path, document)| serde_json::json!({"path":path,"document":document}))
         .collect::<Vec<_>>();
-    let manifest = serde_json::json!({"source":import.source,"version":import.version,"files":files,"diagnostics":import.diagnostics});
+    let manifest = serde_json::json!({"contractId":import.contract_id,"source":import.source,"version":import.version,"files":files,"diagnostics":import.diagnostics});
     atomic_write(
         &directory.join("sources.json"),
         &serde_json::to_vec_pretty(&manifest)?,
