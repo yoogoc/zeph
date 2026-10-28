@@ -18,7 +18,7 @@ cat > "$zeph_bundle_dir/Contents/Info.plist" <<'PLIST'
 <key>CFBundleName</key><string>Zeph</string>
 <key>CFBundleDisplayName</key><string>Zeph</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>0.0.1</string>
+<key>CFBundleVersion</key><string>0.0.2</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST
