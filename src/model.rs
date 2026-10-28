@@ -116,13 +116,17 @@ pub struct OpenApiOperation {
     pub method: String,
     pub operation_id: Option<String>,
     pub tags: Vec<String>,
+    #[serde(default)]
+    pub directory: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct OpenApiFolder {
     pub contract_id: Uuid,
-    /// None identifies the document root; Some identifies an original OpenAPI tag.
+    /// Original tag for tag-based groups. Directory-based groups use `directory`.
     pub tag: Option<String>,
+    #[serde(default)]
+    pub directory: Option<Vec<String>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -408,6 +412,8 @@ pub struct Project {
     pub requests: Vec<Request>,
     #[serde(default)]
     pub folders: Vec<Folder>,
+    #[serde(default)]
+    pub sync_sources: Vec<crate::apifox::SyncSource>,
     pub environments: Vec<Environment>,
     pub active_environment: usize,
     pub active_request: usize,
@@ -534,6 +540,7 @@ impl Project {
             name: "商城服务".into(),
             requests,
             folders: vec![],
+            sync_sources: vec![],
             environments: vec![local, staging],
             active_environment: 0,
             active_request: 0,
@@ -602,6 +609,7 @@ impl Project {
             bail!("项目含有重复请求 ID，原文件未修改");
         }
         self.validate_folders()?;
+        crate::apifox::validate_sources(self)?;
         if self.environments.is_empty() {
             self.environments.push(Environment {
                 name: "Local".into(),

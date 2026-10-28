@@ -1,7 +1,9 @@
+pub mod apifox;
 pub mod collections;
 pub mod model;
 pub mod openapi;
 pub mod storage;
+pub mod structure;
 pub mod transport;
 #[cfg(feature = "desktop")]
 pub mod ui;

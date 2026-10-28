@@ -9,6 +9,22 @@ use zeph::{
     },
     workspace::WorkspaceApp,
 };
+
+gpui_kit::assets::icon_assets!(SyncAssets, [Plug, CloudDownload]);
+struct ZephAssets;
+impl AssetSource for ZephAssets {
+    fn load(&self, path: &str) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        if let Some(asset) = SyncAssets.load(path)? {
+            return Ok(Some(asset));
+        }
+        gpui_kit::assets::Assets.load(path)
+    }
+    fn list(&self, path: &str) -> gpui_kit::Result<Vec<SharedString>> {
+        let mut files = gpui_kit::assets::Assets.list(path)?;
+        files.extend(SyncAssets.list(path)?);
+        Ok(files)
+    }
+}
 fn main() -> anyhow::Result<()> {
     env_logger::init();
     let mut args = std::env::args().skip(1);
@@ -66,7 +82,7 @@ fn main() -> anyhow::Result<()> {
             .build()?,
     );
     gpui_kit::application()
-        .with_assets(gpui_kit::assets::Assets)
+        .with_assets(ZephAssets)
         .run(move |cx| {
             gpui_kit::init(cx);
             zeph::ui::apply_theme(cx);

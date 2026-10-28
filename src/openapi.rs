@@ -24,6 +24,7 @@ pub struct ImportedSpec {
 struct Documents {
     roots: BTreeMap<PathBuf, Value>,
     diagnostics: Vec<String>,
+    allow_files: bool,
 }
 fn read_document(path: &Path) -> Result<Value> {
     let text = std::fs::read_to_string(path)?;
@@ -54,6 +55,9 @@ impl Documents {
         let target = if document.is_empty() {
             file.to_owned()
         } else {
+            if !self.allow_files {
+                bail!("远端快照中的外部引用未读取: {reference}");
+            }
             file.parent()
                 .unwrap_or(Path::new("."))
                 .join(document)
@@ -203,6 +207,15 @@ fn scan_special(node: &Value, diagnostics: &mut Vec<String>) {
 pub fn import(path: &Path) -> Result<ImportedSpec> {
     let file = path.canonicalize()?;
     let root = read_document(&file)?;
+    import_document(root, file, true)
+}
+
+/// Remote documents may resolve in-document pointers, never local files or other URLs.
+pub fn import_value(root: Value) -> Result<ImportedSpec> {
+    import_document(root, PathBuf::from("apifox-snapshot.json"), false)
+}
+
+fn import_document(root: Value, file: PathBuf, allow_files: bool) -> Result<ImportedSpec> {
     let version = root
         .get("swagger")
         .or_else(|| root.get("openapi"))
@@ -216,6 +229,7 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
     let mut documents = Documents {
         roots: BTreeMap::from([(file.clone(), root.clone())]),
         diagnostics: vec![],
+        allow_files,
     };
     scan_special(&root, &mut documents.diagnostics);
     let base = if v2 {
@@ -246,16 +260,21 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
         .unwrap_or("OpenAPI 文档");
     let mut grouping = Project::empty(title);
     grouping.openapi_folder(contract_id, title, None);
+    let has_directories = paths.values().any(|item| {
+        item.as_object()
+            .is_some_and(|item| item.values().any(|op| op.get("x-apifox-folder").is_some()))
+    });
     for tag in root
         .get("tags")
         .and_then(Value::as_array)
         .into_iter()
         .flatten()
     {
-        if let Some(name) = tag
-            .get("name")
-            .and_then(Value::as_str)
-            .filter(|s| !s.trim().is_empty())
+        if !has_directories
+            && let Some(name) = tag
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|s| !s.trim().is_empty())
         {
             grouping.openapi_folder(contract_id, title, Some(name));
         }
@@ -294,8 +313,16 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
                 .filter(|s| !s.trim().is_empty() && seen.insert((*s).to_owned()))
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
-            request.folder_id =
-                Some(grouping.openapi_folder(contract_id, title, tags.first().map(String::as_str)));
+            let directory = operation
+                .get("x-apifox-folder")
+                .and_then(Value::as_str)
+                .map(parse_apifox_directory)
+                .transpose()?;
+            request.folder_id = Some(if let Some(path) = &directory {
+                grouping.openapi_directory(contract_id, title, path)?
+            } else {
+                grouping.openapi_folder(contract_id, title, tags.first().map(String::as_str))
+            });
             request.openapi = Some(OpenApiOperation {
                 contract_id,
                 path: route.clone(),
@@ -305,6 +332,7 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
                     .and_then(Value::as_str)
                     .map(str::to_owned),
                 tags,
+                directory,
             });
             request.source = Some(format!("{}#{method}:{route}", file.display()));
             request.description = operation
@@ -522,6 +550,38 @@ pub fn import(path: &Path) -> Result<ImportedSpec> {
         source: file.to_string_lossy().into_owned(),
         documents: documents.roots,
     })
+}
+
+/// Apifox folder separators are '/' with '\/' and '\\' representing literal characters.
+pub fn parse_apifox_directory(value: &str) -> Result<Vec<String>> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut chars = value.chars();
+    while let Some(ch) = chars.next() {
+        match ch {
+            '\\' => match chars.next() {
+                Some(next @ ('/' | '\\')) => current.push(next),
+                _ => bail!("Apifox 目录转义无效"),
+            },
+            '/' => {
+                if current.trim().is_empty() {
+                    bail!("Apifox 目录包含空层级");
+                }
+                parts.push(current.trim().to_owned());
+                current.clear();
+            }
+            _ => current.push(ch),
+        }
+    }
+    if !current.trim().is_empty() {
+        parts.push(current.trim().to_owned());
+    } else if !value.is_empty() {
+        bail!("Apifox 目录包含空层级");
+    }
+    if parts.len() > 31 {
+        bail!("Apifox 目录嵌套超过 31 层");
+    }
+    Ok(parts)
 }
 fn server_url(node: &Value) -> Option<String> {
     let server = node.get("servers")?.get(0)?;

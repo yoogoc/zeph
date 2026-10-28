@@ -309,11 +309,49 @@ impl Project {
         Ok(id)
     }
     /// A document root and one flat child per OpenAPI tag; tag strings are never split on '/'.
+    pub fn openapi_directory(
+        &mut self,
+        contract_id: Uuid,
+        title: &str,
+        path: &[String],
+    ) -> Result<Uuid> {
+        let mut parent = self.openapi_folder(contract_id, title, None);
+        for depth in 1..=path.len() {
+            let prefix = &path[..depth];
+            if let Some(existing) = self.folders.iter().find(|f| {
+                f.openapi.as_ref().is_some_and(|m| {
+                    m.contract_id == contract_id && m.directory.as_deref() == Some(prefix)
+                })
+            }) {
+                parent = existing.id;
+                continue;
+            }
+            let base = &path[depth - 1];
+            let mut name = base.clone();
+            let mut suffix = 2;
+            while self.check_folder_name(&name, Some(parent), None).is_err() {
+                name = format!("{base} ({suffix})");
+                suffix += 1;
+            }
+            let id = self.add_folder(&name, Some(parent))?;
+            self.folders
+                .iter_mut()
+                .find(|f| f.id == id)
+                .unwrap()
+                .openapi = Some(OpenApiFolder {
+                contract_id,
+                tag: None,
+                directory: Some(prefix.to_vec()),
+            });
+            parent = id;
+        }
+        Ok(parent)
+    }
     pub fn openapi_folder(&mut self, contract_id: Uuid, title: &str, tag: Option<&str>) -> Uuid {
         if let Some(folder) = self.folders.iter().find(|f| {
-            f.openapi
-                .as_ref()
-                .is_some_and(|m| m.contract_id == contract_id && m.tag.as_deref() == tag)
+            f.openapi.as_ref().is_some_and(|m| {
+                m.contract_id == contract_id && m.tag.as_deref() == tag && m.directory.is_none()
+            })
         }) {
             return folder.id;
         }
@@ -340,6 +378,7 @@ impl Project {
             .openapi = Some(OpenApiFolder {
             contract_id,
             tag: tag.map(str::to_owned),
+            directory: None,
         });
         id
     }

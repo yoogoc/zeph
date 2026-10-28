@@ -20,6 +20,22 @@ pub struct ContractInfo {
     pub version: String,
 }
 impl ProjectStore {
+    pub fn request_structure(
+        &self,
+        request: &crate::model::Request,
+    ) -> Result<crate::structure::RequestStructure> {
+        let operation = request
+            .openapi
+            .as_ref()
+            .context("请求尚未关联 OpenAPI 定义")?;
+        let directory = self
+            .directory
+            .join("contracts")
+            .join(operation.contract_id.to_string());
+        let document = serde_json::from_slice(&fs::read(directory.join("original.json"))?)?;
+        let manifest = serde_json::from_slice(&fs::read(directory.join("sources.json"))?)?;
+        crate::structure::RequestStructure::from_saved(request, document, manifest)
+    }
     pub fn new(directory: impl Into<PathBuf>) -> Self {
         Self {
             directory: directory.into(),
@@ -145,6 +161,7 @@ impl ProjectStore {
                         .and_then(|v| v.as_str())
                         .map(str::to_owned),
                     tags,
+                    directory: None,
                 };
                 let folder =
                     project.openapi_folder(id, title, binding.tags.first().map(String::as_str));

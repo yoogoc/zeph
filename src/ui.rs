@@ -34,6 +34,13 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[path = "ui_structure.rs"]
+mod structure_ui;
+#[path = "ui_sync.rs"]
+mod sync_ui;
+#[path = "ui_value.rs"]
+mod value_ui;
+
 gpui_kit::actions!(
     zeph,
     [
@@ -121,6 +128,17 @@ struct Job {
     half_closed: bool,
 }
 enum WorkerEvent {
+    RequestStructure(
+        Uuid,
+        u64,
+        Result<Box<crate::structure::RequestStructure>, String>,
+    ),
+    SyncFetched(
+        Uuid,
+        Result<crate::apifox::Snapshot, crate::apifox::ApiFailure>,
+    ),
+    SyncConfigured(Uuid, Result<Box<sync_ui::ConnectedSource>, String>),
+    SyncVerified(Uuid, Result<usize, String>),
     Record(Uuid, RunRecord),
     Session(Uuid, Uuid, u128, SessionEvent),
     Done(Uuid),
@@ -133,6 +151,9 @@ enum WorkerEvent {
 }
 
 pub struct Workbench {
+    structure_ui: structure_ui::StructureUi,
+    value_ui: value_ui::ValueUi,
+    sync_ui: sync_ui::SyncUi,
     workspace_strip: Option<Entity<WorkspaceStrip>>,
     empty_request: Request,
     project_name: Entity<InputState>,
@@ -288,6 +309,9 @@ impl Workbench {
             .get(project.active_request)
             .and_then(|r| r.folder_id);
         let mut this = Self {
+            structure_ui: structure_ui::StructureUi::default(),
+            value_ui: value_ui::ValueUi::default(),
+            sync_ui: sync_ui::SyncUi::default(),
             workspace_strip: None,
             empty_request: Request::new(Protocol::Http, ""),
             project_name,
@@ -653,6 +677,10 @@ impl Workbench {
         });
     }
     fn update_schema(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.current().protocol == Protocol::Http {
+            self.update_http_structure(window, cx);
+            return;
+        }
         let r = self.current();
         let text = if let Some(pool) = self.pools.get(&r.id) {
             match transport::grpc::method(pool, &r.grpc_method) {
@@ -704,6 +732,7 @@ impl Workbench {
     }
     fn rebuild_params(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
+        self.value_ui = value_ui::ValueUi::default();
         self.param_subscriptions.clear();
         self.params.clear();
         let data = self.param_data().clone();
@@ -722,7 +751,7 @@ impl Workbench {
                 self.param_subscriptions.push(cx.subscribe_in(
                     &entity,
                     window,
-                    move |this, entity, event, _, cx| {
+                    move |this, entity, event, window, cx| {
                         if matches!(event, InputEvent::Change) && !this.loading {
                             let text = entity.read(cx).value().to_string();
                             if let Some(p) = this.param_data_mut().get_mut(i) {
@@ -733,6 +762,9 @@ impl Workbench {
                                 }
                                 this.dirty(cx);
                             }
+                        }
+                        if !is_name && !this.loading {
+                            this.parameter_value_event(i, entity, event, window, cx);
                         }
                     },
                 ));
@@ -765,6 +797,14 @@ impl Workbench {
             };
             changed = true;
             match event {
+                WorkerEvent::RequestStructure(id, generation, result) => {
+                    self.received_structure(id, generation, result, window, cx)
+                }
+                WorkerEvent::SyncFetched(id, result) => self.sync_fetched(id, result, window, cx),
+                WorkerEvent::SyncConfigured(id, result) => {
+                    self.sync_configured(id, result, window, cx)
+                }
+                WorkerEvent::SyncVerified(id, result) => self.sync_verified(id, result, window, cx),
                 WorkerEvent::Saved(rev, result) => {
                     self.save_pending = false;
                     match result {
@@ -909,6 +949,7 @@ impl Workbench {
                 },
             }
         }
+        self.sync_tick(cx);
         if self.revision != self.saved_revision
             && !self.save_pending
             && Instant::now().saturating_duration_since(self.edited_at) > Duration::from_millis(500)
@@ -1446,6 +1487,7 @@ impl Workbench {
         self.history_open = false;
         self.definitions_open = false;
         self.encoding_open = false;
+        self.sync_ui.open = false;
         self.restore_view();
         self.load_request(window, cx);
         self.dirty(cx);
@@ -1481,6 +1523,11 @@ impl Workbench {
     fn undo_delete(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.deleted_items.pop() {
             Some(DeletedItem::Request(index, mut request)) => {
+                if self.project.requests.iter().any(|r| r.id == request.id) {
+                    self.notice = "此请求已恢复，无需重复撤销删除".into();
+                    cx.notify();
+                    return;
+                }
                 if request
                     .folder_id
                     .is_some_and(|id| self.project.folder(id).is_err())
@@ -1514,6 +1561,10 @@ impl Workbench {
             return;
         };
         request.id = Uuid::new_v4();
+        if crate::apifox::binding_for_request(&self.project, id).is_some() {
+            request.openapi = None;
+            request.source = None;
+        }
         request.name.push_str(" 副本");
         if let Some(pool) = self.pools.get(&id).cloned() {
             self.pools.insert(request.id, pool);
@@ -1581,6 +1632,23 @@ impl Workbench {
     }
     fn definitions_panel(&self, cx: &mut Context<Self>) -> AnyElement {
         let mut list = v_flex().gap_2().p_3();
+        for source in self
+            .project
+            .sync_sources
+            .iter()
+            .filter(|s| s.latest.is_some())
+        {
+            let id = source.id;
+            list = list.child(
+                Button::new(SharedString::from(format!("sync-contract-{id}")))
+                    .ghost()
+                    .label(format!("{} · Apifox", source.config.name))
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        this.sync_ui_select(id);
+                        this.sync_show_document(window, cx);
+                    })),
+            );
+        }
         for (i, contract) in self.contracts.iter().enumerate() {
             let path = contract.path.clone();
             list = list.child(Button::new(("contract", i)).ghost().label(format!("{} · {}", contract.label, contract.version))
@@ -1605,7 +1673,7 @@ impl Workbench {
                 h_flex()
                     .p_4()
                     .gap_3()
-                    .child(div().flex_1().child("接口定义 · 本地导入的原文与诊断"))
+                    .child(div().flex_1().child("接口定义 · 文档原文与诊断"))
                     .child(
                         Button::new("definition-import")
                             .small()
@@ -1613,15 +1681,21 @@ impl Workbench {
                             .on_click(cx.listener(|this, _, _, cx| this.import_openapi(cx))),
                     ),
             )
-            .when(self.contracts.is_empty(), |column| {
-                column.child(
-                    div()
-                        .p_4()
-                        .text_sm()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("尚未导入 OpenAPI。gRPC 的本地 Proto 与方法可在对应请求中查看。"),
-                )
-            })
+            .when(
+                self.contracts.is_empty()
+                    && !self.project.sync_sources.iter().any(|s| s.latest.is_some()),
+                |column| {
+                    column.child(
+                        div()
+                            .p_4()
+                            .text_sm()
+                            .text_color(cx.theme().muted_foreground)
+                            .child(
+                                "尚未导入 OpenAPI。gRPC 的本地 Proto 与方法可在对应请求中查看。",
+                            ),
+                    )
+                },
+            )
             .child(
                 h_flex()
                     .flex_1()
@@ -2090,7 +2164,7 @@ impl Workbench {
                                 .appearance(false)
                                 .w(px(140.)),
                         )
-                        .child(Input::new(&inputs.value).small().appearance(false).flex_1());
+                        .child(self.parameter_value_input(i, p, inputs, cx));
                 if is_multipart {
                     row = row
                         .child(
@@ -2990,6 +3064,16 @@ impl Workbench {
         });
     }
     fn delete_folder(&mut self, id: Uuid, cx: &mut Context<Self>) {
+        if self
+            .project
+            .sync_sources
+            .iter()
+            .any(|s| s.root_folder == Some(id))
+        {
+            self.notice = "此文件夹是同步目标，请先在数据源中断开连接，再删除分组".into();
+            cx.notify();
+            return;
+        }
         let parent = self.project.folder(id).ok().and_then(|f| f.parent_id);
         match self.project.remove_folder(id) {
             Ok(removed) => {
@@ -3012,8 +3096,11 @@ impl Workbench {
         request: Option<Uuid>,
         cx: &mut Context<Self>,
     ) {
+        if self.show_sync_mapping(folder, request, cx) {
+            return;
+        }
         let binding = if let Some(id) = folder {
-            self.project.folder(id).ok().and_then(|f| f.openapi.as_ref().map(|m| (m.contract_id,serde_json::json!({"folder":self.project.folder_path(id),"originalTag":m.tag,"contractId":m.contract_id}))))
+            self.project.folder(id).ok().and_then(|f| f.openapi.as_ref().map(|m| (m.contract_id,serde_json::json!({"folder":self.project.folder_path(id),"originalTag":m.tag,"originalDirectory":m.directory,"contractId":m.contract_id}))))
         } else {
             request.and_then(|id| self.project.requests.iter().find(|r| r.id == id)).and_then(|r| r.openapi.as_ref().map(|m| (m.contract_id,serde_json::json!({"request":r.name,"folder":r.folder_id.map(|id|self.project.folder_path(id)),"operation":m}))))
         };
@@ -3030,6 +3117,7 @@ impl Workbench {
             .join("original.json");
         self.definition_path = Some(path.clone());
         self.definitions_open = true;
+        self.sync_ui.open = false;
         self.environment_open = false;
         self.history_open = false;
         self.encoding_open = false;
@@ -3059,6 +3147,11 @@ impl Workbench {
         let expanded = folder.expanded || searching;
         let view = cx.entity().downgrade();
         let menu_view = view.clone();
+        let sync_root = self
+            .project
+            .sync_sources
+            .iter()
+            .any(|s| s.root_folder == Some(id));
         h_flex()
             .id(SharedString::from(format!("folder-{id}")))
             .role(Role::Button)
@@ -3121,7 +3214,10 @@ impl Workbench {
                     .child(folder.name.clone()),
             )
             .when(
-                folder.openapi.as_ref().is_some_and(|m| m.tag.is_none()),
+                folder
+                    .openapi
+                    .as_ref()
+                    .is_some_and(|m| m.tag.is_none() && m.directory.is_none()),
                 |row| {
                     row.child(
                         div()
@@ -3131,6 +3227,14 @@ impl Workbench {
                     )
                 },
             )
+            .when(sync_root, |row| {
+                row.child(
+                    div()
+                        .text_size(px(8.))
+                        .text_color(cx.theme().primary)
+                        .child("Apifox"),
+                )
+            })
             .child(
                 div()
                     .text_size(px(10.))
@@ -3356,6 +3460,7 @@ impl Workbench {
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.stash_environment(cx);
                                 this.history_open = !this.history_open;
+                                this.sync_ui.open = false;
                                 this.environment_open = false;
                                 this.definitions_open = false;
                                 cx.notify();
@@ -3369,9 +3474,27 @@ impl Workbench {
                                 this.environment_open = false;
                                 this.history_open = false;
                                 this.definitions_open = !this.definitions_open;
+                                this.sync_ui.open = false;
                                 this.refresh_contracts();
                                 cx.notify();
                             })),
+                    )
+                    .child(
+                        navigation_button(
+                            "sources-open",
+                            gpui_kit::assets::IconName::Plug,
+                            "数据源",
+                        )
+                        .selected(self.sync_ui.open)
+                        .child(
+                            div()
+                                .w(px(24.))
+                                .text_size(px(10.))
+                                .text_color(cx.theme().muted_foreground)
+                                .text_center()
+                                .child(self.project.sync_sources.len().to_string()),
+                        )
+                        .on_click(cx.listener(|this, _, _, cx| this.open_sync(None, cx))),
                     )
                     .child(
                         navigation_button("import-openapi", IconName::FileText, "导入 OpenAPI")
@@ -3522,6 +3645,7 @@ impl Render for Workbench {
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.stash_environment(cx);
                         this.environment_open = !this.environment_open;
+                        this.sync_ui.open = false;
                         this.history_open = false;
                         this.definitions_open = false;
                         this.load_environment(window, cx);
@@ -3591,7 +3715,9 @@ impl Render for Workbench {
                         }
                     }),
             );
-        let main: AnyElement = if self.environment_open {
+        let main: AnyElement = if self.sync_ui.open {
+            self.sync_page(window, cx)
+        } else if self.environment_open {
             self.environment_panel(cx)
         } else if self.history_open {
             self.history_panel(cx)
@@ -3922,55 +4048,7 @@ impl Render for Workbench {
             );
             editor = editor.child(div().flex_1().min_h_0().child(panels));
             let work = if self.project.show_schema {
-                let schema = v_flex()
-                    .size_full()
-                    .min_h_0()
-                    .border_l_1()
-                    .border_color(cx.theme().border)
-                    .child(
-                        div()
-                            .px_5()
-                            .py_3()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child("请求结构"),
-                    )
-                    .child(if r.schema.is_some() || protocol == Protocol::Grpc {
-                        Editor::new(&self.schema)
-                            .h(relative(1.))
-                            .readonly(true)
-                            .appearance(false)
-                            .flex_1()
-                            .min_h_0()
-                            .into_any_element()
-                    } else {
-                        v_flex()
-                            .p_5()
-                            .gap_3()
-                            .child(
-                                Icon::new(IconName::FileText)
-                                    .text_color(cx.theme().muted_foreground),
-                            )
-                            .child(
-                                div()
-                                    .text_sm()
-                                    .font_weight(FontWeight::MEDIUM)
-                                    .child("为请求添加结构"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(12.))
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("导入 OpenAPI 后，在此查看参数和请求体定义。"),
-                            )
-                            .child(
-                                div()
-                                    .text_size(px(10.))
-                                    .text_color(cx.theme().muted_foreground)
-                                    .child("Swagger 2.0 · OpenAPI 3.0 / 3.1"),
-                            )
-                            .into_any_element()
-                    });
+                let schema = self.structure_panel(&protocol, cx);
                 self.split(
                     Split::Schema,
                     editor.into_any_element(),
@@ -4166,7 +4244,11 @@ fn event_text(event: &SessionEvent) -> String {
     }
 }
 
-fn navigation_button(id: &'static str, icon: IconName, label: impl Into<SharedString>) -> Button {
+fn navigation_button(
+    id: &'static str,
+    icon: impl Into<Icon>,
+    label: impl Into<SharedString>,
+) -> Button {
     let label = label.into();
     Button::new(id)
         .small()
@@ -4417,14 +4499,17 @@ fn folder_dialog_footer(label: &'static str) -> AnyElement {
                 .child(DialogClose::new().trigger(|button| button.label("取消").w_full())),
         )
         .child(
-            div().w(px(76.)).h(px(32.)).child(
-                DialogAction::new().child(
-                    Button::new("folder-dialog-confirm")
-                        .primary()
-                        .label(label)
-                        .w_full(),
+            div()
+                .w(px(if label.chars().count() > 4 { 120. } else { 76. }))
+                .h(px(32.))
+                .child(
+                    DialogAction::new().child(
+                        Button::new("folder-dialog-confirm")
+                            .primary()
+                            .label(label)
+                            .w_full(),
+                    ),
                 ),
-            ),
         )
         .into_any_element()
 }

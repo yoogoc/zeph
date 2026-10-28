@@ -40,6 +40,7 @@ fn folders_preserve_identity_tabs_and_bindings_across_moves_and_saves() {
         method: "get".into(),
         operation_id: Some("getOrder".into()),
         tags: vec!["Orders".into(), "Public".into()],
+        directory: None,
     };
     p.requests[0].openapi = Some(binding.clone());
     let url = p.requests[0].url.clone();
