@@ -7,7 +7,8 @@ if [[ "$(uname -s)" != "Darwin" ]]; then
 fi
 cargo build
 zeph_bundle_dir="target/debug/Zeph.app"
-mkdir -p "$zeph_bundle_dir/Contents/MacOS"
+mkdir -p "$zeph_bundle_dir/Contents/MacOS" "$zeph_bundle_dir/Contents/Resources"
+cp assets/app-icon/zeph.icns "$zeph_bundle_dir/Contents/Resources/zeph.icns"
 cp target/debug/zeph "$zeph_bundle_dir/Contents/MacOS/zeph"
 cat > "$zeph_bundle_dir/Contents/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -17,8 +18,9 @@ cat > "$zeph_bundle_dir/Contents/Info.plist" <<'PLIST'
 <key>CFBundleIdentifier</key><string>dev.zeph.workbench</string>
 <key>CFBundleName</key><string>Zeph</string>
 <key>CFBundleDisplayName</key><string>Zeph</string>
+<key>CFBundleIconFile</key><string>zeph.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>0.0.2</string>
+<key>CFBundleVersion</key><string>0.0.3</string>
 <key>NSHighResolutionCapable</key><true/>
 </dict></plist>
 PLIST

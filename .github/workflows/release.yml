@@ -1,11 +1,11 @@
-name: Signed macOS release
+name: Signed multi-platform release
 on:
   push:
     tags: ['v*']
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Existing release tag (must match Cargo.toml, e.g. v0.0.1)'
+        description: 'Existing release tag (must match Cargo.toml, e.g. v0.0.3)'
         required: true
 permissions:
   contents: read
@@ -19,10 +19,29 @@ jobs:
       matrix:
         include:
           - runner: macos-15
-            arch: aarch64
+            platform: macos-aarch64
+            executable: zeph
           - runner: macos-15-intel
-            arch: x86_64
+            platform: macos-x86_64
+            executable: zeph
+          - runner: ubuntu-24.04
+            platform: linux-x86_64
+            executable: zeph
+          - runner: ubuntu-24.04-arm
+            platform: linux-aarch64
+            executable: zeph
+          - runner: windows-2022
+            platform: windows-x86_64
+            executable: zeph.exe
+          - runner: windows-11-arm
+            platform: windows-aarch64
+            executable: zeph.exe
     runs-on: ${{ matrix.runner }}
+    defaults:
+      run:
+        shell: bash
+    env:
+      APPIMAGE_EXTRACT_AND_RUN: 1
     steps:
       - uses: actions/checkout@v4
         with:
@@ -34,6 +53,13 @@ jobs:
         with:
           python-version: '3.12'
       - uses: Swatinem/rust-cache@v2
+        with:
+          key: distribution-${{ matrix.platform }}
+      - uses: ./.github/actions/linux-deps
+        if: runner.os == 'Linux'
+      - name: Install native packager
+        if: runner.os != 'macOS'
+        run: cargo install cargo-packager --version 0.11.8 --locked
       - run: cargo fmt --all -- --check
       - run: cargo test --locked --all-targets
       - run: cargo clippy --locked --all-targets -- -D warnings
@@ -41,11 +67,11 @@ jobs:
       - name: Package application
         env:
           RELEASE_TAG: ${{ github.event.inputs.tag || github.ref_name }}
-        run: python3 scripts/release.py package --version "${RELEASE_TAG#v}" --arch '${{ matrix.arch }}' --output dist
+        run: python scripts/release.py native --version "${RELEASE_TAG#v}" --platform '${{ matrix.platform }}' --binary 'target/release/${{ matrix.executable }}' --output dist
       - uses: actions/upload-artifact@v4
         with:
-          name: zeph-macos-${{ matrix.arch }}
-          path: dist/*.app.tar.gz
+          name: zeph-package-${{ matrix.platform }}
+          path: dist/*
           if-no-files-found: error
   publish:
     needs: build
@@ -58,9 +84,12 @@ jobs:
           ref: ${{ github.event.inputs.tag || github.ref }}
       - uses: actions/download-artifact@v4
         with:
-          pattern: zeph-macos-*
+          pattern: zeph-package-*
           path: artifacts
           merge-multiple: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - run: brew install minisign
       - name: Sign packages and manifest
         env:
@@ -75,9 +104,6 @@ jobs:
           printf '%s\n' "$UPDATE_KEY" > "$keyfile"
           python3 scripts/release.py sign --directory artifacts --version "${RELEASE_TAG#v}" --key "$keyfile"
       - uses: dtolnay/rust-toolchain@stable
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
       - uses: Swatinem/rust-cache@v2
       - name: Verify with the client verifier
         run: ZEPH_UPDATE_PUBLIC_KEY="$(cat assets/packaging/update-public-key)" cargo run --locked --no-default-features --bin verify-update -- artifacts
@@ -91,7 +117,8 @@ jobs:
           if gh release view "$RELEASE_TAG" --json isDraft --jq .isDraft > "$RUNNER_TEMP/zeph-draft" 2>/dev/null; then
             test "$(cat "$RUNNER_TEMP/zeph-draft")" = true
           else
-            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Zeph ${RELEASE_TAG#v}" --generate-notes
+            python3 scripts/release.py notes --version "${RELEASE_TAG#v}" --output "$RUNNER_TEMP/zeph-release-notes.md"
+            gh release create "$RELEASE_TAG" --verify-tag --draft --title "Zeph ${RELEASE_TAG#v}" --notes-file "$RUNNER_TEMP/zeph-release-notes.md"
           fi
           gh release upload "$RELEASE_TAG" artifacts/* --clobber
           if [[ "$RELEASE_TAG" == *-dev.* ]]; then

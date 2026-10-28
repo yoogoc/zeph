@@ -1,7 +1,7 @@
 [package]
 name = "zeph"
 default-run = "zeph"
-version = "0.0.2"
+version = "0.0.3"
 edition = "2024"
 description = "A local, native API workbench for HTTP, gRPC and WebSocket"
 
@@ -51,6 +51,7 @@ tar = "0.4"
 tempfile = "3"
 
 [build-dependencies]
+embed-resource = "3.0.12"
 protox = "0.10"
 tonic-prost-build = "0.14"
 
@@ -65,3 +66,16 @@ split-debuginfo = "unpacked"
 
 [profile.dev.package.gpui-pre]
 opt-level = 2
+
+[package.metadata.packager]
+product-name = "Zeph"
+identifier = "dev.zeph.workbench"
+description = "A local API workbench for HTTP, gRPC and WebSocket"
+homepage = "https://github.com/yoogoc/zeph"
+authors = ["yoogoc"]
+category = "DeveloperTool"
+binaries = [{ path = "zeph", main = true }]
+icons = ["assets/app-icon/zeph.ico", "assets/app-icon/icon-32.png", "assets/app-icon/icon-128.png", "assets/app-icon/icon-256.png", "assets/app-icon/icon-512.png"]
+
+[package.metadata.packager.deb]
+depends = ["libasound2t64 | libasound2", "libfontconfig1", "libfreetype6", "libvulkan1", "libwayland-client0", "libx11-6", "libx11-xcb1", "libxcb1", "libxcb-render0", "libxcb-shape0", "libxcb-xfixes0", "libxkbcommon0", "libxkbcommon-x11-0", "libdbus-1-3", "libssl3t64 | libssl3"]

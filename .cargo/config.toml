@@ -1,0 +1,5 @@
+# Include the VC++ runtime in installers rather than requiring a separate download.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]
+[target.aarch64-pc-windows-msvc]
+rustflags = ["-C", "target-feature=+crt-static"]

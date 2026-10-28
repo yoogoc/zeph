@@ -40,7 +40,7 @@ open target/debug/Zeph.app
 
 更新从公开的 [yoogoc/zeph Releases](https://github.com/yoogoc/zeph/releases) 获取，无需 Token。默认启动时检查一次，此后每小时检查；自动下载默认关闭。稳定版与开发版通道分别选择，不会降级。元数据和下载均有大小 / 超时限制，清单和安装包均通过 Minisign 验签；取消或下载失败会清理临时文件。自动检查失败不会打断调试。
 
-macOS `.app` 可下载、验证并在确认后重启安装；安装前保存所有工作区，更新助手等待旧进程退出、再次验签，再替换应用，替换失败时恢复原应用。源码或包管理器安装使用 Releases 下载入口；目前发布工作流提供 Apple Silicon 与 Intel 两种 macOS 包，未发布 Windows / Linux 安装包。签名密钥与公钥配置见 [发布说明](docs/RELEASING.md)。未发布首个签名 Release 前，只能检查并得到暂无版本的提示。
+macOS `.app` 可下载、验证并在确认后重启安装；安装前保存所有工作区，更新助手等待旧进程退出、再次验签，再替换应用，替换失败时恢复原应用。发布流水线提供 macOS DMG、Windows NSIS 安装器，以及 Linux DEB / AppImage，各自区分 x64 与 ARM64；源码或包管理器安装使用 Releases 下载入口。签名密钥与公钥配置见 [发布说明](docs/RELEASING.md)。Windows 安装版与 Linux AppImage 支持签名更新；DEB 安装通过下载新版软件包更新。
 
 ## 第一版已实现
 
