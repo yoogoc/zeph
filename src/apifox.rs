@@ -1275,13 +1275,14 @@ pub fn undo(project: &mut Project, source_id: Uuid, run_id: Uuid) -> Result<()> 
             }
             folder.name = before.name.clone();
             folder.parent_id = before.parent_id;
-        } else if next
-            .folder(patch.after.id)
-            .is_ok_and(|f| f.name == patch.after.name && f.parent_id == patch.after.parent_id)
-            && !next
-                .requests
-                .iter()
-                .any(|r| r.folder_id == Some(patch.after.id))
+        } else if next.folder(patch.after.id).is_ok_and(|f| {
+            f.name == patch.after.name
+                && f.parent_id == patch.after.parent_id
+                && f.auth == patch.after.auth
+        }) && !next
+            .requests
+            .iter()
+            .any(|r| r.folder_id == Some(patch.after.id))
             && !next
                 .folders
                 .iter()

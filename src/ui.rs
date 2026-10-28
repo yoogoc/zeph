@@ -34,6 +34,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[path = "ui_scope_settings.rs"]
+mod scope_settings;
 #[path = "ui_structure.rs"]
 mod structure_ui;
 #[path = "ui_sync.rs"]
@@ -114,7 +116,7 @@ enum Split {
 
 enum DeletedItem {
     Request(usize, Box<Request>),
-    Folder(DeletedFolder),
+    Folder(Box<DeletedFolder>),
 }
 
 struct ParamInputs {
@@ -126,6 +128,11 @@ struct Job {
     cancel: CancellationToken,
     commands: Option<tokio::sync::mpsc::Sender<SessionCommand>>,
     half_closed: bool,
+}
+#[derive(Clone, Copy)]
+enum WorkbenchTab {
+    Request(usize),
+    Settings(scope_settings::Scope),
 }
 enum WorkerEvent {
     RequestStructure(
@@ -153,6 +160,8 @@ enum WorkerEvent {
 pub struct Workbench {
     structure_ui: structure_ui::StructureUi,
     value_ui: value_ui::ValueUi,
+    active_scope: Option<scope_settings::Scope>,
+    scope_editors: Vec<scope_settings::ScopeEditor>,
     sync_ui: sync_ui::SyncUi,
     workspace_strip: Option<Entity<WorkspaceStrip>>,
     empty_request: Request,
@@ -239,7 +248,11 @@ impl Workbench {
         let environment_name = input(window, cx, "环境名称");
         let url = input(window, cx, "https://api.example.com");
         let search = input(window, cx, "搜索请求…");
-        let token = input(window, cx, "Token 或 {{token}}");
+        let token = cx.new(|cx| {
+            InputState::new(window, cx)
+                .masked(true)
+                .placeholder("Token 或 {{token}}")
+        });
         let user = input(window, cx, "Username");
         let password = cx.new(|cx| {
             InputState::new(window, cx)
@@ -283,7 +296,12 @@ impl Workbench {
         });
         let auth_kind = cx.new(|cx| {
             SelectState::new(
-                vec!["None".into(), "Bearer".into(), "Basic".into()],
+                vec![
+                    "继承上级".into(),
+                    "无认证".into(),
+                    "Bearer".into(),
+                    "Basic".into(),
+                ],
                 Some(IndexPath::new(0)),
                 window,
                 cx,
@@ -311,6 +329,8 @@ impl Workbench {
         let mut this = Self {
             structure_ui: structure_ui::StructureUi::default(),
             value_ui: value_ui::ValueUi::default(),
+            active_scope: None,
+            scope_editors: Vec::new(),
             sync_ui: sync_ui::SyncUi::default(),
             workspace_strip: None,
             empty_request: Request::new(Protocol::Http, ""),
@@ -493,14 +513,17 @@ impl Workbench {
                     return;
                 };
                 if !this.loading {
-                    this.current_mut().auth = match value.as_str() {
-                        "Bearer" => Auth::Bearer(this.token.read(cx).value().to_string()),
-                        "Basic" => Auth::Basic {
-                            username: this.user.read(cx).value().to_string(),
-                            password: this.password.read(cx).value().to_string(),
-                        },
-                        _ => Auth::None,
-                    };
+                    this.current_mut().auth_inherit = Some(value == "继承上级");
+                    if value != "继承上级" {
+                        this.current_mut().auth = match value.as_str() {
+                            "Bearer" => Auth::Bearer(this.token.read(cx).value().to_string()),
+                            "Basic" => Auth::Basic {
+                                username: this.user.read(cx).value().to_string(),
+                                password: this.password.read(cx).value().to_string(),
+                            },
+                            _ => Auth::None,
+                        };
+                    }
                     this.dirty(cx);
                 }
             },
@@ -588,6 +611,7 @@ impl Workbench {
     fn load_request(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.loading = true;
         let r = self.current().clone();
+        let inherited = r.inherits_auth();
         for (entity, value) in [
             (self.name.clone(), r.name),
             (self.url.clone(), r.url),
@@ -605,12 +629,20 @@ impl Workbench {
             state.set_selected_value(&r.body.kind.label().to_string(), window, cx)
         });
         let (kind, token, user, password) = match r.auth {
-            Auth::None => ("None", String::new(), String::new(), String::new()),
+            Auth::None => ("无认证", String::new(), String::new(), String::new()),
             Auth::Bearer(token) => ("Bearer", token, String::new(), String::new()),
             Auth::Basic { username, password } => ("Basic", String::new(), username, password),
         };
         self.auth_kind.update(cx, |state, cx| {
-            state.set_selected_value(&kind.to_string(), window, cx)
+            state.set_selected_value(
+                &if inherited {
+                    "继承上级".into()
+                } else {
+                    kind.to_string()
+                },
+                window,
+                cx,
+            )
         });
         for (entity, value) in [
             (self.token.clone(), token),
@@ -1006,7 +1038,14 @@ impl Workbench {
         if self.project.tabs().is_empty() || self.project.requests.is_empty() {
             return;
         }
-        let mut request = self.current().clone();
+        let mut request = match self.project.prepare_request(self.current()) {
+            Ok(request) => request,
+            Err(error) => {
+                self.notice = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
         // Programmatic Editor updates deliberately do not emit InputEvent::Change.
         request.body.text = self.body.read(cx).value().to_string();
         let vars = self.project.variables();
@@ -1218,7 +1257,14 @@ impl Workbench {
         }
     }
     fn reflect(&mut self, cx: &mut Context<Self>) {
-        let request = self.current().clone();
+        let request = match self.project.prepare_request(self.current()) {
+            Ok(request) => request,
+            Err(error) => {
+                self.notice = error.to_string();
+                cx.notify();
+                return;
+            }
+        };
         let vars = self.project.variables();
         let tx = self.tx.clone();
         let directory = self.store.directory.join(".zeph/descriptors");
@@ -1248,6 +1294,7 @@ impl Workbench {
         cx.notify();
     }
     fn new_request(&mut self, protocol: Protocol, window: &mut Window, cx: &mut Context<Self>) {
+        self.active_scope = None;
         let mut request = Request::new(protocol.clone(), format!("新 {} 请求", protocol.label()));
         if let Some(settings) = crate::ui_settings::maybe_store(cx) {
             settings
@@ -1481,6 +1528,7 @@ impl Workbench {
             .unwrap_or((default, ResponseTab::Body));
     }
     fn switch_request(&mut self, index: usize, window: &mut Window, cx: &mut Context<Self>) {
+        self.active_scope = None;
         let Some(id) = self.project.requests.get(index).map(|r| r.id) else {
             return;
         };
@@ -1546,7 +1594,7 @@ impl Workbench {
                 self.notice = "请求已恢复".into();
             }
             Some(DeletedItem::Folder(folder)) => {
-                match self.project.restore_folder(folder.clone()) {
+                match self.project.restore_folder((*folder).clone()) {
                     Ok(id) => {
                         self.selected_folder = Some(id);
                         self.notice = "文件夹已恢复".into();
@@ -1758,7 +1806,7 @@ impl Workbench {
         .rounded_none()
         .px_2()
         .gap(px(4.));
-        let mut request_indices = Vec::new();
+        let mut targets = Vec::new();
         for id in self.project.tabs() {
             let Some((index, request)) = self
                 .project
@@ -1770,9 +1818,9 @@ impl Workbench {
                 continue;
             };
             let id = *id;
-            let active = index == self.project.active_request;
+            let active = self.active_scope.is_none() && index == self.project.active_request;
             if active {
-                let position = request_indices.len();
+                let position = targets.len();
                 bar = bar.selected_index(position);
                 let reveal = (id, position, self.project.tabs().len());
                 if self.revealed_request_tab.get() != Some(reveal) {
@@ -1785,7 +1833,7 @@ impl Workbench {
                     self.revealed_request_tab.set(Some(reveal));
                 }
             }
-            request_indices.push(index);
+            targets.push(WorkbenchTab::Request(index));
             let tag = if request.protocol == Protocol::Http {
                 request.method.as_str()
             } else {
@@ -1859,6 +1907,78 @@ impl Workbench {
                     ),
             );
         }
+        for (index, editor) in self.scope_editors.iter().enumerate() {
+            let scope = editor.scope;
+            let (title, icon) = match scope {
+                scope_settings::Scope::Workspace => ("工作区设置".to_owned(), IconName::Settings2),
+                scope_settings::Scope::Folder(id) => {
+                    let Ok(folder) = self.project.folder(id) else {
+                        continue;
+                    };
+                    (format!("{} · 设置", folder.name), IconName::Folder)
+                }
+            };
+            let active = self.active_scope == Some(scope);
+            let position = targets.len();
+            targets.push(WorkbenchTab::Settings(scope));
+            if active {
+                bar = bar.selected_index(position);
+                let id = match scope {
+                    scope_settings::Scope::Workspace => Uuid::nil(),
+                    scope_settings::Scope::Folder(id) => id,
+                };
+                let reveal = (
+                    id,
+                    position,
+                    self.project.tabs().len() + self.scope_editors.len(),
+                );
+                if self.revealed_request_tab.get() != Some(reveal) {
+                    let scroll = self.request_tab_scroll.clone();
+                    window.on_next_frame(move |window, _| {
+                        scroll.scroll_to_item(position);
+                        window.refresh();
+                    });
+                    self.revealed_request_tab.set(Some(reveal));
+                }
+            }
+            let group = SharedString::from(format!("settings-tab-{index}"));
+            bar = bar.child(
+                RequestTab::new()
+                    .group(group.clone())
+                    .aria_label(title.clone())
+                    .label(title.clone())
+                    .prefix(
+                        div().ml(px(10.)).child(
+                            Icon::new(icon)
+                                .size_4()
+                                .text_color(cx.theme().muted_foreground),
+                        ),
+                    )
+                    .suffix(
+                        div()
+                            .mr(px(6.))
+                            .w(px(20.))
+                            .h(px(20.))
+                            .when(!active, |item| {
+                                item.invisible().group_hover(group, |s| s.visible())
+                            })
+                            .child(
+                                Button::new(("settings-tab-close", index))
+                                    .xsmall()
+                                    .ghost()
+                                    .size(px(20.))
+                                    .icon(IconName::Close)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .accessibility_label(format!("关闭设置标签 {title}"))
+                                    .tooltip("关闭设置标签")
+                                    .on_click(cx.listener(move |this, _, window, cx| {
+                                        cx.stop_propagation();
+                                        this.close_scope_settings(scope, window, cx);
+                                    })),
+                            ),
+                    ),
+            )
+        }
         div()
             .h(px(40.))
             .flex_shrink_0()
@@ -1870,8 +1990,14 @@ impl Workbench {
             .child(
                 bar.w_full()
                     .on_click(cx.listener(move |this, selected: &usize, window, cx| {
-                        if let Some(index) = request_indices.get(*selected) {
-                            this.switch_request(*index, window, cx);
+                        match targets.get(*selected) {
+                            Some(WorkbenchTab::Request(index)) => {
+                                this.switch_request(*index, window, cx)
+                            }
+                            Some(WorkbenchTab::Settings(scope)) => {
+                                this.open_scope_settings(*scope, window, cx)
+                            }
+                            None => {}
                         }
                     })),
             )
@@ -2431,32 +2557,33 @@ impl Workbench {
             Tab::Auth => {
                 content = content.child(
                     div()
-                        .w(px(190.))
+                        .w(px(210.))
                         .h(px(34.))
                         .child(Select::new(&self.auth_kind).w_full()),
                 );
-                match r.auth {
-                    Auth::None => {
-                        content = content.child(
-                            div()
-                                .text_sm()
-                                .text_color(cx.theme().muted_foreground)
-                                .child("不附加 Authorization。可在 Headers 中单独配置。"),
-                        )
+                if r.inherits_auth() {
+                    content = content.child(self.inherited_auth_summary(cx));
+                } else {
+                    match &r.auth {
+                        Auth::None => {
+                            content = content.child(
+                                div()
+                                    .text_sm()
+                                    .child("此请求不生成 Authorization，也不继承上级认证。"),
+                            )
+                        }
+                        Auth::Bearer(_) => {
+                            content = content.child(Input::new(&self.token).w_full())
+                        }
+                        Auth::Basic { .. } => {
+                            content = content
+                                .child(Input::new(&self.user))
+                                .child(Input::new(&self.password))
+                        }
                     }
-                    Auth::Bearer(_) => content = content.child(Input::new(&self.token).w_full()),
-                    Auth::Basic { .. } => {
-                        content = content
-                            .child(Input::new(&self.user))
-                            .child(Input::new(&self.password))
-                    }
-                };
-                content = content.child(
-                    div()
-                        .text_xs()
-                        .text_color(cx.theme().muted_foreground)
-                        .child("凭据和环境变量保存在当前本地项目文件中。"),
-                );
+                }
+                content=content.child(div().text_xs().text_color(cx.theme().muted_foreground)
+                    .child("支持 {{variable}}，发送时使用当前环境。认证更改在下次发送或重新连接时生效。"));
             }
             Tab::Settings => {
                 content = content
@@ -3073,7 +3200,7 @@ impl Workbench {
                 })
         });
     }
-    fn delete_folder(&mut self, id: Uuid, cx: &mut Context<Self>) {
+    fn delete_folder(&mut self, id: Uuid, window: &mut Window, cx: &mut Context<Self>) {
         if self
             .project
             .sync_sources
@@ -3087,10 +3214,12 @@ impl Workbench {
         let parent = self.project.folder(id).ok().and_then(|f| f.parent_id);
         match self.project.remove_folder(id) {
             Ok(removed) => {
+                self.close_scope_settings(scope_settings::Scope::Folder(id), window, cx);
                 if self.selected_folder == Some(id) {
                     self.selected_folder = parent;
                 }
-                self.deleted_items.push(DeletedItem::Folder(removed));
+                self.deleted_items
+                    .push(DeletedItem::Folder(Box::new(removed)));
                 self.notice = "文件夹已删除，内容移至上一级；可撤销".into();
                 self.dirty(cx);
             }
@@ -3284,7 +3413,9 @@ impl Workbench {
             } else {
                 request.protocol.label()
             };
-            let selected = i == self.project.active_request && self.project.tabs().contains(&id);
+            let selected = self.active_scope.is_none()
+                && i == self.project.active_request
+                && self.project.tabs().contains(&id);
             let mut method_color = method_color(tag);
             // Keep the small method labels legible on both sidebar surfaces.
             method_color.l = if cx.theme().is_dark() {
@@ -3469,11 +3600,18 @@ impl Workbench {
                             )
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.stash_environment(cx);
+                                this.active_scope = None;
                                 this.history_open = !this.history_open;
                                 this.sync_ui.open = false;
                                 this.environment_open = false;
                                 this.definitions_open = false;
                                 cx.notify();
+                            })),
+                    )
+                    .child(
+                        navigation_button("workspace-settings", IconName::Settings2, "工作区设置")
+                            .on_click(cx.listener(|s, _, window, cx| {
+                                s.open_scope_settings(scope_settings::Scope::Workspace, window, cx)
                             })),
                     )
                     .child(
@@ -3483,6 +3621,7 @@ impl Workbench {
                                 this.stash_environment(cx);
                                 this.environment_open = false;
                                 this.history_open = false;
+                                this.active_scope = None;
                                 this.definitions_open = !this.definitions_open;
                                 this.sync_ui.open = false;
                                 this.refresh_contracts();
@@ -3654,6 +3793,7 @@ impl Render for Workbench {
                     .tooltip("工作区名称与环境变量")
                     .on_click(cx.listener(|this, _, window, cx| {
                         this.stash_environment(cx);
+                        this.active_scope = None;
                         this.environment_open = !this.environment_open;
                         this.sync_ui.open = false;
                         this.history_open = false;
@@ -3678,6 +3818,18 @@ impl Render for Workbench {
                                 PopupMenuItem::new("应用设置 · ⌘ ,")
                                     .on_click(|_, _, cx| crate::ui_settings::open(None, cx)),
                             )
+                            .item(PopupMenuItem::new("工作区设置…").on_click({
+                                let view = view.clone();
+                                move |_, window, cx| {
+                                    let _ = view.update(cx, |s, cx| {
+                                        s.open_scope_settings(
+                                            scope_settings::Scope::Workspace,
+                                            window,
+                                            cx,
+                                        )
+                                    });
+                                }
+                            }))
                             .item(
                                 PopupMenuItem::new("检查更新…")
                                     .on_click(|_, _, cx| crate::ui_settings::open_updates(cx)),
@@ -3691,9 +3843,13 @@ impl Render for Workbench {
                             .item(PopupMenuItem::new("请求编码预览").on_click(
                                 move |_, window, cx| {
                                     let _ = encoding.update(cx, |this, cx| {
+                                        this.active_scope = None;
                                         let text = this
-                                            .current()
-                                            .encoding_preview(&this.project.variables())
+                                            .project
+                                            .prepare_request(this.current())
+                                            .and_then(|r| {
+                                                r.encoding_preview(&this.project.variables())
+                                            })
                                             .unwrap_or_else(|e| format!("预览失败: {e}"));
                                         this.encoding
                                             .update(cx, |s, cx| s.set_value(text, window, cx));
@@ -3722,7 +3878,9 @@ impl Render for Workbench {
                         }
                     }),
             );
-        let main: AnyElement = if self.sync_ui.open {
+        let main: AnyElement = if self.active_scope.is_some() {
+            self.scope_settings_panel(cx)
+        } else if self.sync_ui.open {
             self.sync_page(window, cx)
         } else if self.environment_open {
             self.environment_panel(cx)
@@ -3942,7 +4100,11 @@ impl Render for Workbench {
                         "连接"
                     })
                     .disabled(self.jobs.contains_key(&self.current().id))
-                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        if this.active_scope.is_none() {
+                            this.send(window, cx);
+                        }
+                    })),
             );
             if self.jobs.contains_key(&self.current().id) {
                 url_row = url_row.child(
@@ -4069,12 +4231,18 @@ impl Render for Workbench {
                 .flex_1()
                 .min_w_0()
                 .min_h_0()
-                .child(self.request_tabs(window, cx))
                 .child(heading)
                 .child(url_row)
                 .child(div().flex_1().min_h_0().child(work))
                 .into_any_element()
         };
+        let main = v_flex()
+            .flex_1()
+            .min_w_0()
+            .min_h_0()
+            .child(self.request_tabs(window, cx))
+            .child(div().flex_1().min_h_0().child(main))
+            .into_any_element();
         let status = if self.save_pending {
             "保存中…"
         } else if self.revision == self.saved_revision {
@@ -4127,13 +4295,27 @@ impl Render for Workbench {
                     }
                 }),
             )
-            .on_action(cx.listener(|this, _: &SendRequest, window, cx| this.send(window, cx)))
-            .on_action(cx.listener(|this, _: &SaveProject, _, cx| this.save(cx)))
+            .on_action(cx.listener(|this, _: &SendRequest, window, cx| {
+                if this.active_scope.is_none() {
+                    this.send(window, cx);
+                }
+            }))
+            .on_action(cx.listener(|this, _: &SaveProject, window, cx| {
+                if this.active_scope.is_some() {
+                    this.save_scope_settings(window, cx);
+                } else {
+                    this.save(cx);
+                }
+            }))
             .on_action(cx.listener(|this, _: &SearchRequests, window, cx| {
                 this.search.read(cx).focus_handle(cx).focus(window, cx)
             }))
             .on_action(cx.listener(|this, _: &CloseRequest, window, cx| {
-                this.close_request(this.current().id, window, cx)
+                if let Some(scope) = this.active_scope {
+                    this.close_scope_settings(scope, window, cx);
+                } else {
+                    this.close_request(this.current().id, window, cx);
+                }
             }))
             .on_action(cx.listener(|this, _: &NewRequest, window, cx| {
                 this.new_request(Protocol::Http, window, cx)
@@ -4535,11 +4717,19 @@ fn folder_menu(mut menu: PopupMenu, view: WeakEntity<Workbench>, id: Uuid) -> Po
             });
         }));
     }
+    let settings = view.clone();
     let child = view.clone();
     let rename = view.clone();
     let move_to = view.clone();
     let mapping = view.clone();
     menu.separator()
+        .item(
+            PopupMenuItem::new("文件夹设置…").on_click(move |_, window, cx| {
+                let _ = settings.update(cx, |s, cx| {
+                    s.open_scope_settings(scope_settings::Scope::Folder(id), window, cx)
+                });
+            }),
+        )
         .item(
             PopupMenuItem::new("新建子文件夹…").on_click(move |_, window, cx| {
                 let _ = child.update(cx, |this, cx| this.edit_folder(None, Some(id), window, cx));
@@ -4568,8 +4758,8 @@ fn folder_menu(mut menu: PopupMenu, view: WeakEntity<Workbench>, id: Uuid) -> Po
         )
         .separator()
         .item(
-            PopupMenuItem::new("删除文件夹，保留内容").on_click(move |_, _, cx| {
-                let _ = view.update(cx, |this, cx| this.delete_folder(id, cx));
+            PopupMenuItem::new("删除文件夹，保留内容").on_click(move |_, window, cx| {
+                let _ = view.update(cx, |this, cx| this.delete_folder(id, window, cx));
             }),
         )
 }

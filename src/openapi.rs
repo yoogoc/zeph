@@ -530,10 +530,13 @@ fn import_document(root: Value, file: PathBuf, allow_files: bool) -> Result<Impo
             let security = operation.get("security").or_else(|| root.get("security"));
             if security.is_some_and(|s| s.as_array().is_some_and(|a| !a.is_empty())) {
                 documents.diagnostics.push(format!(
-                    "{} {route}: 安全方案已保留，请在认证页配置凭据",
+                    "{} {route}: 安全方案已保留，可在工作区、文件夹或请求认证页配置凭据",
                     request.method
                 ));
                 request.auth = Auth::None;
+            }
+            if security.is_some_and(|s| s.as_array().is_some_and(|a| a.is_empty())) {
+                request.auth_inherit = Some(false);
             }
             requests.push(request);
         }

@@ -53,7 +53,7 @@ macOS `.app` 可下载、验证并在确认后重启安装；安装前保存所�
 - HTTP：GET、POST、PUT、PATCH、DELETE、HEAD、OPTIONS、TRACE、QUERY，也可直接输入自定义 Method；CONNECT 为真实代理隧道握手探测，成功后关闭隧道。
 - Query、Path、Headers：逐项编辑、启用、删除；保留重复 Query / Header / 表单键。Path 值作为单个路径段编码。
 - Body：None、JSON、multipart/form-data（文本和文件）、x-www-form-urlencoded、Text、XML、Binary。Body 不与 method 硬绑定。
-- 认证 / 设置：None、Bearer、Basic；HTTP 超时、取消、代理、重定向、TLS 校验。TRACE 拒绝携带 Body、Authorization 或 Cookie。
+- 认证 / 设置：继承上级、无认证、Bearer、Basic；HTTP 超时、取消、代理、重定向、TLS 校验。TRACE 拒绝携带 Body、Authorization 或 Cookie。
 - gRPC：导入 `.proto` / descriptor set；Reflection v1 / v1alpha；搜索并选择 `package.Service/Method`；根据方法生成 ProtoJSON 模板；Unary、服务端流、客户端流、双向流；发送、Half-close、取消、Metadata / Trailers。
 - WS：ws / wss 连接、Headers / Auth、Text / Binary 文件发送、消息和 Ping / Pong 记录、关闭、取消。
 - OpenAPI：Swagger 2.0、OpenAPI 3.0.x、3.1.x 的 JSON / YAML 导入；每份文档建立独立根文件夹，按第一个 operation tag 分组，其余 tags 保留在映射中；无 tag 的接口放在文档根目录；生成 HTTP 请求、参数与 Body 示例；本地 JSON Pointer / 文件引用；保留原文、读取的依赖文档和导入诊断。
@@ -63,6 +63,18 @@ macOS `.app` 可下载、验证并在确认后重启安装；安装前保存所�
 左侧顶部“＋”菜单统一新建 HTTP、gRPC 和 WebSocket 请求。标题栏保留环境选择与“变量”；主题、保存、编码预览和复制实际 URL 收进“更多”。布局切换位于响应区工具栏。
 
 地址栏平时直接显示实际发送地址：环境变量紫色、Path 值青色、Query 值金色；点击地址栏编辑原始模板，Enter 或失焦后回到实际地址，保留变量绑定。Query 参数仍在参数表中独立编辑，避免展开后的地址被再次保存并重复追加参数。
+
+## 工作区与文件夹认证
+
+侧栏“工作区设置”或标题栏“更多 → 工作区设置”编辑工作区名称与 Auth。文件夹的 `⋯` / 右键菜单中选择“文件夹设置”，可配置该目录的名称与 Auth；这些设置属于逻辑工作区，不是磁盘目录设置，也不属于应用级设置。工作区和各文件夹的设置会作为独立标签与请求并列打开，重复打开会定位已有标签；切换标签保留未保存的编辑内容。设置标签中 `⌘ S` 保存当前设置，`⌘ W` 关闭当前标签。
+
+请求的 Auth 默认“继承上级”：从所在文件夹逐层向上查找最近的配置，最后使用工作区 Auth。文件夹也可继承上级；任一级选择“无认证”即停止查找，请求仍可使用自己的 Bearer / Basic 覆盖。Auth 页显示实际来源，并提供“编辑来源设置”入口，不展示继承的明文凭据。
+
+HTTP、gRPC 调用与 Reflection、WebSocket 握手共用相同的解析规则，支持 `{{variable}}` 并使用发送时的当前环境。认证只在临时执行快照中展开，不写回接口；移动或删除文件夹、更改上级设置后，下次发送自动重新解析，已运行的连接不变。编码预览隐藏认证值。
+
+旧项目中已有 Bearer / Basic 保持独立配置，未配置认证的请求可直接继承。明确选择“无认证”会持久保存这一覆盖策略。OpenAPI 声明 `security: []` 的公开操作导入后默认不继承；用户仍可在 Auth 页主动更改。Apifox 定义同步不会覆盖本地工作区、文件夹或请求的认证设置。
+
+凭据仍按工作区本地数据保存，建议通过环境变量引用；继承不会在子接口中重复保存凭据。
 
 gRPC / WS 响应以收发消息列表与正文查看器展示，显示方向、顺序、相对时间与载荷大小，JSON 自动格式化；Metadata、Trailers、连接事件和错误分别保留在对应标签与时间线。
 

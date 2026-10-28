@@ -152,6 +152,7 @@ impl Project {
             name: name.trim().into(),
             parent_id: parent,
             expanded: true,
+            auth: None,
             openapi: None,
         };
         let id = folder.id;

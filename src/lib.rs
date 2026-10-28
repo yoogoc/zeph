@@ -1,4 +1,5 @@
 pub mod apifox;
+pub mod auth;
 pub mod collections;
 pub mod model;
 pub mod openapi;

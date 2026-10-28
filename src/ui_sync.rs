@@ -125,6 +125,7 @@ async fn pull_with_credential(
 
 impl Workbench {
     pub(super) fn open_sync(&mut self, id: Option<Uuid>, cx: &mut Context<Self>) {
+        self.active_scope = None;
         self.stash_environment(cx);
         self.environment_open = false;
         self.history_open = false;

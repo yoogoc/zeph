@@ -400,3 +400,52 @@ fn malformed_path_items_never_become_a_partial_snapshot() {
     doc["paths"]["/orders"]["post"]["parameters"] = json!([{"$ref":"#/components/parameters/A"}]);
     assert!(Snapshot::parse(doc).is_err());
 }
+
+#[test]
+fn definition_sync_and_undo_preserve_scope_auth_and_request_overrides() {
+    let (mut p, id) = project();
+    apply_safe(&mut p, id);
+    p.auth = Auth::Bearer("workspace-local".into());
+    let folder = p.requests[0].folder_id.unwrap();
+    p.folders.iter_mut().find(|f| f.id == folder).unwrap().auth =
+        Some(Auth::Bearer("folder-local".into()));
+    p.requests[0].auth = Auth::Basic {
+        username: "local-user".into(),
+        password: "local-password".into(),
+    };
+    p.requests[0].auth_inherit = Some(false);
+    let mut updated = spec();
+    updated["paths"]["/orders"]["post"]["summary"] = json!("新名称");
+    receive(&mut p, updated);
+    apply_safe(&mut p, id);
+    assert_eq!(p.auth, Auth::Bearer("workspace-local".into()));
+    assert_eq!(
+        p.folder(folder).unwrap().auth,
+        Some(Auth::Bearer("folder-local".into()))
+    );
+    assert!(!p.requests[0].inherits_auth());
+    let own = p.requests[0].auth.clone();
+    let run = p.sync_sources[0].runs[0].id;
+    apifox::undo(&mut p, id, run).unwrap();
+    assert_eq!(p.requests[0].auth, own);
+    assert!(!p.requests[0].inherits_auth());
+    assert_eq!(
+        p.folder(folder).unwrap().auth,
+        Some(Auth::Bearer("folder-local".into()))
+    );
+}
+
+#[test]
+fn undo_keeps_a_new_folder_when_it_has_local_auth_settings() {
+    let (mut p, id) = project();
+    apply_safe(&mut p, id);
+    let run = p.sync_sources[0].runs[0].id;
+    let folder = p.requests[0].folder_id.unwrap();
+    p.folders.iter_mut().find(|f| f.id == folder).unwrap().auth =
+        Some(Auth::Bearer("keep-this-local".into()));
+    apifox::undo(&mut p, id, run).unwrap();
+    assert_eq!(
+        p.folder(folder).unwrap().auth,
+        Some(Auth::Bearer("keep-this-local".into()))
+    );
+}

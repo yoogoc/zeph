@@ -98,7 +98,7 @@ pub struct RequestBody {
     pub file_path: String,
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Auth {
     #[default]
     None,
@@ -135,6 +135,9 @@ pub struct Folder {
     pub name: String,
     pub parent_id: Option<Uuid>,
     pub expanded: bool,
+    /// None inherits; Some(Auth::None) explicitly disables generated authentication.
+    #[serde(default)]
+    pub auth: Option<Auth>,
     #[serde(default)]
     pub openapi: Option<OpenApiFolder>,
 }
@@ -155,6 +158,9 @@ pub struct Request {
     pub headers: Vec<Parameter>,
     pub body: RequestBody,
     pub auth: Auth,
+    /// Legacy requests without a policy inherit only when they have no own credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auth_inherit: Option<bool>,
     pub timeout_secs: u64,
     pub follow_redirects: bool,
     pub proxy: String,
@@ -180,6 +186,7 @@ impl Request {
             headers: vec![],
             body: RequestBody::default(),
             auth: Auth::None,
+            auth_inherit: Some(true),
             timeout_secs: 30,
             follow_redirects: false,
             proxy: String::new(),
@@ -409,6 +416,8 @@ impl Default for PaneLayout {
 pub struct Project {
     pub version: u32,
     pub name: String,
+    #[serde(default)]
+    pub auth: Auth,
     pub requests: Vec<Request>,
     #[serde(default)]
     pub folders: Vec<Folder>,
@@ -538,6 +547,7 @@ impl Project {
         Self {
             version: 1,
             name: "商城服务".into(),
+            auth: Auth::None,
             requests,
             folders: vec![],
             sync_sources: vec![],
