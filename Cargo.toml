@@ -1,5 +1,6 @@
 [package]
 name = "zeph"
+default-run = "zeph"
 version = "0.1.0"
 edition = "2024"
 description = "A local, native API workbench for HTTP, gRPC and WebSocket"
