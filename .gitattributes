@@ -1,0 +1,6 @@
+# Keep source and scripts consistent on all development and CI platforms.
+* text=auto eol=lf
+
+# Signatures cover exact bytes; never normalize these fixtures or trust roots.
+/tests/update-fixtures/** -text
+/assets/packaging/update-public-key -text
