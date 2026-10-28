@@ -26,6 +26,9 @@ impl AssetSource for ZephAssets {
     }
 }
 fn main() -> anyhow::Result<()> {
+    if let Some(result) = zeph::updater::helper_main() {
+        return result;
+    }
     env_logger::init();
     let mut args = std::env::args().skip(1);
     // --project is a compatibility/development entry, never a workspace identity.
@@ -49,6 +52,11 @@ fn main() -> anyhow::Result<()> {
             Ok(std::fs::canonicalize(&store.directory)?)
         })
         .transpose()?;
+    let settings_path = external
+        .as_ref()
+        .map(|path| path.join(".zeph/application/settings.json"))
+        .unwrap_or_else(|| zeph::settings::Preferences::directory().join("settings.json"));
+    let application_preferences = zeph::settings::Preferences::load(&settings_path)?;
     let catalog_path = external
         .as_ref()
         .map(|path| path.join(".zeph/workspaces.json"))
@@ -87,6 +95,8 @@ fn main() -> anyhow::Result<()> {
             gpui_kit::init(cx);
             zeph::ui::apply_theme(cx);
             cx.bind_keys([
+                KeyBinding::new("cmd-,", zeph::ui_settings::OpenSettings, None),
+                KeyBinding::new("ctrl-,", zeph::ui_settings::OpenSettings, None),
                 KeyBinding::new("cmd-enter", SendRequest, Some("Zeph")),
                 KeyBinding::new("cmd-s", SaveProject, Some("Zeph")),
                 KeyBinding::new("cmd-q", Quit, None),
@@ -96,7 +106,11 @@ fn main() -> anyhow::Result<()> {
                 KeyBinding::new("cmd-shift-z", UndoDelete, Some("Zeph")),
             ]);
             cx.on_action(|_: &Quit, cx| cx.quit());
-            cx.set_menus([Menu::new("Zeph").items([MenuItem::action("Quit Zeph", Quit)])]);
+            cx.set_menus([Menu::new("Zeph").items([
+                MenuItem::action("Settings…", zeph::ui_settings::OpenSettings),
+                MenuItem::action("Check for updates…", zeph::ui_settings::CheckUpdates),
+                MenuItem::action("Quit Zeph", Quit),
+            ])]);
             cx.on_window_closed(|cx, _| {
                 if cx.windows().is_empty() {
                     cx.quit();
@@ -117,6 +131,13 @@ fn main() -> anyhow::Result<()> {
                 ..TitleBar::window_options()
             };
             gpui_kit::open_window(options, cx, move |window, cx| {
+                zeph::ui_settings::ApplicationSettings::init(
+                    settings_path,
+                    application_preferences,
+                    runtime.clone(),
+                    window,
+                    cx,
+                );
                 cx.new(|cx| {
                     WorkspaceApp::new(
                         catalog,

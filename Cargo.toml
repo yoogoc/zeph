@@ -20,14 +20,14 @@ anyhow = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = ["preserve_order"] }
 serde_yaml_ng = "0.10"
-url = "2"
+url = { version = "2", features = ["serde"] }
 percent-encoding = "2"
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
 futures = "0.3"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "http2", "multipart", "stream", "json", "gzip", "brotli", "deflate"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls-native-roots", "http2", "multipart", "stream", "json", "gzip", "brotli", "deflate", "system-proxy"] }
 tokio-tungstenite = { version = "0.29", features = ["rustls-tls-native-roots"] }
 tonic = { version = "0.14", features = ["tls-native-roots"] }
 tonic-reflection = "0.14"
@@ -42,6 +42,12 @@ log = "0.4"
 sha2 = "0.10"
 zeroize = "1"
 keyring = { version = "3.6", optional = true, features = ["apple-native", "windows-native", "sync-secret-service", "crypto-rust"] }
+semver = { version = "1", features = ["serde"] }
+minisign-verify = "0.2.5"
+fs2 = "0.4"
+flate2 = "1"
+tar = "0.4"
+tempfile = "3"
 
 [build-dependencies]
 protox = "0.10"

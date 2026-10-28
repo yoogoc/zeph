@@ -7,8 +7,8 @@ use crate::{
 };
 use gpui_kit::base::ElementExt;
 use gpui_kit::component::{
-    ActiveTheme, Disableable, Icon, IconName, IndexPath, Selectable, Sizable, Theme, ThemeMode,
-    TitleBar, WindowExt,
+    ActiveTheme, Disableable, Icon, IconName, IndexPath, Selectable, Sizable, Theme, TitleBar,
+    WindowExt,
     button::{Button, ButtonVariants},
     checkbox::Checkbox,
     dialog::{DialogAction, DialogButtonProps, DialogClose, DialogFooter},
@@ -1249,6 +1249,12 @@ impl Workbench {
     }
     fn new_request(&mut self, protocol: Protocol, window: &mut Window, cx: &mut Context<Self>) {
         let mut request = Request::new(protocol.clone(), format!("新 {} 请求", protocol.label()));
+        if let Some(settings) = crate::ui_settings::maybe_store(cx) {
+            settings
+                .read(cx)
+                .preferences
+                .apply_request_defaults(&mut request);
+        }
         request.url = match protocol {
             Protocol::Http => "{{base_url}}",
             Protocol::Grpc => "{{grpc_host}}",
@@ -1727,6 +1733,10 @@ impl Workbench {
     pub fn activate(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.focus.focus(window, cx);
         cx.notify();
+    }
+    pub fn prepare_restart(&mut self, cx: &mut Context<Self>) -> anyhow::Result<()> {
+        self.stash_environment(cx);
+        self.flush()
     }
     pub fn flush(&mut self) -> anyhow::Result<()> {
         if self.revision != self.saved_revision {
@@ -3664,17 +3674,14 @@ impl Render for Workbench {
                         move |menu, _, _| {
                             let save = view.clone();
                             let encoding = view.clone();
-                            menu.item(PopupMenuItem::new("切换深浅主题").on_click(
-                                |_, window, cx| {
-                                    let mode = if cx.theme().is_dark() {
-                                        ThemeMode::Light
-                                    } else {
-                                        ThemeMode::Dark
-                                    };
-                                    Theme::change(mode, Some(window), cx);
-                                    apply_theme(cx);
-                                },
-                            ))
+                            menu.item(
+                                PopupMenuItem::new("应用设置 · ⌘ ,")
+                                    .on_click(|_, _, cx| crate::ui_settings::open(None, cx)),
+                            )
+                            .item(
+                                PopupMenuItem::new("检查更新…")
+                                    .on_click(|_, _, cx| crate::ui_settings::open_updates(cx)),
+                            )
                             .item(PopupMenuItem::new("保存工作区 · ⌘ S").on_click(
                                 move |_, _, cx| {
                                     let _ = save.update(cx, |this, cx| this.save(cx));

@@ -127,6 +127,14 @@ impl Render for WorkspaceStrip {
                     .overflow_x_scroll()
                     .child(tabs),
             )
+            .child(
+                Button::new("application-settings")
+                    .small()
+                    .ghost()
+                    .label("设置")
+                    .tooltip("应用设置 · ⌘ ,")
+                    .on_click(|_, _, cx| crate::ui_settings::open(None, cx)),
+            )
     }
 }
 
@@ -291,6 +299,9 @@ pub struct WorkspaceApp {
     saved_revision: Arc<Mutex<u64>>,
     _subscription: Subscription,
     _strip_observer: Subscription,
+    settings: Entity<crate::ui_settings::ApplicationSettings>,
+    _settings_observer: Subscription,
+    _settings_subscription: Subscription,
 }
 impl WorkspaceApp {
     pub fn new(
@@ -324,6 +335,43 @@ impl WorkspaceApp {
             window.on_next_frame(|window, _| window.refresh());
             cx.notify();
         });
+        let settings = crate::ui_settings::store(cx);
+        let settings_observer = cx.observe_in(&settings, window, |_, _, window, cx| {
+            window.refresh();
+            cx.notify();
+        });
+        let settings_subscription = cx.subscribe_in(
+            &settings,
+            window,
+            |this, _, _: &crate::ui_settings::RestartRequested, _, cx| {
+                let result = (|| -> anyhow::Result<()> {
+                    anyhow::ensure!(
+                        !this.strip.read(cx).busy,
+                        "工作区正在创建或打开，请完成后再重启"
+                    );
+                    for (_, view) in &this.workbenches {
+                        view.update(cx, |w, cx| w.prepare_restart(cx))?;
+                    }
+                    {
+                        let mut last = this
+                            .saved_revision
+                            .lock()
+                            .map_err(|_| anyhow::anyhow!("工作区列表保存锁不可用"))?;
+                        this.catalog.save(&this.catalog_path)?;
+                        *last = this.revision + 1;
+                    }
+                    this.settings
+                        .update(cx, |settings, _| settings.launch_install())?;
+                    Ok(())
+                })();
+                match result {
+                    Ok(()) => cx.quit(),
+                    Err(e) => this.settings.update(cx, |s, cx| {
+                        s.installation_error(format!("无法重启，工作区保持打开：{e}"), cx);
+                    }),
+                }
+            },
+        );
         let active = catalog.active;
         let mut this = Self {
             workbenches: vec![],
@@ -337,6 +385,9 @@ impl WorkspaceApp {
             saved_revision: Arc::new(Mutex::new(0)),
             _subscription: subscription,
             _strip_observer: strip_observer,
+            settings,
+            _settings_observer: settings_observer,
+            _settings_subscription: settings_subscription,
         };
         for (entry, project) in workspaces {
             this.attach(entry, project, window, cx);
@@ -602,7 +653,9 @@ impl Render for WorkspaceApp {
                 cx.notify();
             }
         });
-        if !self.strip.read(cx).manager_open
+        let settings_open = self.settings.read(cx).open;
+        let content = if !settings_open
+            && !self.strip.read(cx).manager_open
             && let Some((_, workbench)) = self
                 .workbenches
                 .iter()
@@ -633,9 +686,22 @@ impl Render for WorkspaceApp {
                                 .child(self.strip.clone()),
                         ),
                 )
-                .child(WorkspacePanel(self.strip.clone()))
+                .child(if settings_open {
+                    self.settings.clone().into_any_element()
+                } else {
+                    WorkspacePanel(self.strip.clone()).into_any_element()
+                })
                 .into_any_element()
-        }
+        };
+        div()
+            .size_full()
+            .on_action(|_: &crate::ui_settings::OpenSettings, _, cx| {
+                crate::ui_settings::open(None, cx)
+            })
+            .on_action(|_: &crate::ui_settings::CheckUpdates, _, cx| {
+                crate::ui_settings::open_updates(cx)
+            })
+            .child(content)
     }
 }
 impl Drop for WorkspaceApp {

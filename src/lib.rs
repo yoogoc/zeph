@@ -2,10 +2,14 @@ pub mod apifox;
 pub mod collections;
 pub mod model;
 pub mod openapi;
+pub mod settings;
 pub mod storage;
 pub mod structure;
 pub mod transport;
 #[cfg(feature = "desktop")]
 pub mod ui;
+#[cfg(feature = "desktop")]
+pub mod ui_settings;
+pub mod updater;
 #[cfg(feature = "desktop")]
 pub mod workspace;
