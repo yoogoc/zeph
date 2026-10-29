@@ -34,6 +34,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
+#[path = "ui_method.rs"]
+mod method_ui;
 #[path = "ui_scope_settings.rs"]
 mod scope_settings;
 #[path = "ui_structure.rs"]
@@ -160,6 +162,7 @@ enum WorkerEvent {
 pub struct Workbench {
     structure_ui: structure_ui::StructureUi,
     value_ui: value_ui::ValueUi,
+    method_ui: method_ui::MethodUi,
     active_scope: Option<scope_settings::Scope>,
     scope_editors: Vec<scope_settings::ScopeEditor>,
     sync_ui: sync_ui::SyncUi,
@@ -329,6 +332,7 @@ impl Workbench {
         let mut this = Self {
             structure_ui: structure_ui::StructureUi::default(),
             value_ui: value_ui::ValueUi::default(),
+            method_ui: method_ui::MethodUi::default(),
             active_scope: None,
             scope_editors: Vec::new(),
             sync_ui: sync_ui::SyncUi::default(),
@@ -436,6 +440,11 @@ impl Workbench {
                 },
             ));
         }
+        this.subscriptions.push(cx.subscribe_in(
+            &this.method,
+            window,
+            |this, _, event, window, cx| this.method_input_event(event, window, cx),
+        ));
         this.subscriptions.push(cx.subscribe_in(
             &this.url,
             window,
@@ -4039,53 +4048,7 @@ impl Render for Workbench {
                 .gap_2()
                 .items_center();
             if protocol == Protocol::Http {
-                url_row = url_row.child(
-                    h_flex()
-                        .w(px(142.))
-                        .h(px(42.))
-                        .items_center()
-                        .gap_0()
-                        .border_r_1()
-                        .border_color(cx.theme().border)
-                        .child(
-                            Input::new(&self.method)
-                                .appearance(false)
-                                .h(px(42.))
-                                .flex_1()
-                                .text_center()
-                                .text_size(px(15.))
-                                .font_weight(FontWeight::SEMIBOLD)
-                                .text_color(method_color(&self.current().method)),
-                        )
-                        .child(
-                            Button::new("method-presets")
-                                .ghost()
-                                .small()
-                                .icon(IconName::ChevronDown)
-                                .tooltip("选择 Method，或在左侧直接输入")
-                                .accessibility_label("HTTP method 预设")
-                                .dropdown_menu({
-                                    let view = cx.entity().downgrade();
-                                    move |mut menu, _, _| {
-                                        for method in HTTP_METHODS {
-                                            let view = view.clone();
-                                            menu = menu.item(PopupMenuItem::new(method).on_click(
-                                                move |_, window, cx| {
-                                                    let _ = view.update(cx, |this, cx| {
-                                                        this.current_mut().method = method.into();
-                                                        this.method.update(cx, |s, cx| {
-                                                            s.set_value(method, window, cx)
-                                                        });
-                                                        this.dirty(cx);
-                                                    });
-                                                },
-                                            ));
-                                        }
-                                        menu
-                                    }
-                                }),
-                        ),
-                );
+                url_row = url_row.child(self.method_input(cx));
             }
             url_row = url_row.child(self.address(cx)).child(
                 Button::new("send-request")

@@ -38,10 +38,10 @@ Windows 静态链接 VC++ 运行时，应用图标嵌入 exe；Linux DEB 声明�
 
 ```sh
 # macOS
-python3 scripts/release.py native --version 0.0.5 --platform macos-aarch64 --binary target/release/zeph --output dist
+python3 scripts/release.py native --version 0.0.6 --platform macos-aarch64 --binary target/release/zeph --output dist
 # Linux / Windows 先安装打包工具
 cargo install cargo-packager --version 0.11.8 --locked
-python3 scripts/release.py native --version 0.0.5 --platform linux-x86_64 --binary target/release/zeph --output dist
+python3 scripts/release.py native --version 0.0.6 --platform linux-x86_64 --binary target/release/zeph --output dist
 ```
 
 Linux / Windows 使用 [cargo-packager](https://docs.crabnebula.dev/packager/)，配置在 `Cargo.toml` 的 `package.metadata.packager`；macOS 使用系统 `codesign` / `hdiutil` 打包。图标源文件为 `assets/app-icon/zeph.svg`，对应 PNG、ICO、ICNS 与源码一同提交。各平台构建的成功状态以发布工作流为准，不能用本机 macOS 的验证代替 Windows / Linux 原生检查。
