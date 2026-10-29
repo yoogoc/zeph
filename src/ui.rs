@@ -4215,7 +4215,7 @@ impl Render for Workbench {
                 self.response_panel(cx),
                 cx,
             );
-            editor = editor.child(div().flex_1().min_h_0().child(panels));
+            editor = editor.child(v_flex().flex_1().min_w_0().min_h_0().child(panels));
             let work = if self.project.show_schema {
                 let schema = self.structure_panel(&protocol, cx);
                 self.split(
@@ -4233,15 +4233,17 @@ impl Render for Workbench {
                 .min_h_0()
                 .child(heading)
                 .child(url_row)
-                .child(div().flex_1().min_h_0().child(work))
+                .child(v_flex().flex_1().min_w_0().min_h_0().child(work))
                 .into_any_element()
         };
+        // Every content slot must be a flex container: its child uses flex_1
+        // to pass the remaining height down to the editor and response splits.
         let main = v_flex()
             .flex_1()
             .min_w_0()
             .min_h_0()
             .child(self.request_tabs(window, cx))
-            .child(div().flex_1().min_h_0().child(main))
+            .child(v_flex().flex_1().min_w_0().min_h_0().child(main))
             .into_any_element();
         let status = if self.save_pending {
             "保存中…"
@@ -4333,7 +4335,7 @@ impl Render for Workbench {
                     .border_color(cx.theme().border)
                     .child(top),
             )
-            .child(div().flex_1().min_h_0().child(self.split(
+            .child(v_flex().flex_1().min_w_0().min_h_0().child(self.split(
                 Split::Sidebar,
                 self.sidebar(cx),
                 main,
