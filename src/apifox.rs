@@ -1279,6 +1279,7 @@ pub fn undo(project: &mut Project, source_id: Uuid, run_id: Uuid) -> Result<()> 
             f.name == patch.after.name
                 && f.parent_id == patch.after.parent_id
                 && f.auth == patch.after.auth
+                && f.operations == patch.after.operations
         }) && !next
             .requests
             .iter()

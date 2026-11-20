@@ -72,6 +72,12 @@ impl Project {
         let mut result = request.clone();
         result.auth = self.effective_auth(request)?.auth.clone();
         result.auth_inherit = Some(false);
+        if !result.operations_resolved {
+            let plan = self.operation_plan(request)?;
+            result.pre_operations = plan.pre;
+            result.post_operations = plan.post;
+            result.operations_resolved = true;
+        }
         Ok(result)
     }
 }

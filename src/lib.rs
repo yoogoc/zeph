@@ -3,6 +3,8 @@ pub mod auth;
 pub mod collections;
 pub mod model;
 pub mod openapi;
+pub mod operations;
+pub mod scripting;
 pub mod settings;
 pub mod storage;
 pub mod structure;

@@ -152,6 +152,30 @@ fn search_reveals_collapsed_ancestors_and_can_match_a_folder() {
     assert!(p.collection_rows("missing").is_empty());
 }
 
+#[test]
+fn folder_counts_include_requests_hidden_by_collapse_or_search() {
+    let mut p = Project::empty("Test");
+    let root = p.add_folder("API", None).unwrap();
+    let notes = p.add_folder("Notes", Some(root)).unwrap();
+    let admin = p.add_folder("Admin", Some(root)).unwrap();
+    for (name, folder) in [("Create", notes), ("Delete", admin), ("List", notes)] {
+        let mut request = Request::new(Protocol::Http, name);
+        request.folder_id = Some(folder);
+        p.requests.push(request);
+    }
+    p.folders.iter_mut().for_each(|f| f.expanded = false);
+    assert!(matches!(p.collection_rows("").as_slice(),
+        [CollectionRow::Folder { id, depth: 0, count: 3 }] if *id == root));
+    assert!(matches!(p.collection_rows("create").as_slice(),
+        [CollectionRow::Folder { id: a, count: 3, .. },
+         CollectionRow::Folder { id: b, count: 2, .. },
+         CollectionRow::Request { index: 0, depth: 2 }] if *a == root && *b == notes));
+    assert!(matches!(p.collection_rows("NOTES").as_slice(),
+        [_, CollectionRow::Folder { id, count: 2, .. },
+         CollectionRow::Request { index: 0, .. },
+         CollectionRow::Request { index: 2, .. }] if *id == notes));
+}
+
 fn spec(version: &str) -> serde_json::Value {
     let mut doc = serde_json::json!({"info":{"title":"Shop","version":"1"},"tags":[{"name":"Orders"},{"name":"Customers"},{"name":"Empty"}],"paths":{"/orders/{id}":{"get":{"operationId":"getOrder","tags":["Orders","Public","Orders"],"responses":{"200":{"description":"ok"}}}},"/customers":{"post":{"tags":["Customers"],"responses":{"200":{"description":"ok"}}}},"/untagged":{"get":{"responses":{"200":{"description":"ok"}}}},"/nested":{"get":{"tags":["Orders/Returns"],"responses":{"200":{"description":"ok"}}}}}});
     doc[if version == "2.0" {

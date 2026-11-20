@@ -5,6 +5,9 @@ use crate::apifox::{
 use std::collections::HashSet;
 use zeroize::Zeroizing;
 
+// Keep saved sources and snapshots intact while this feature is hidden.
+pub(super) const ENABLED: bool = false;
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum SyncTab {
     Changes,
@@ -125,11 +128,10 @@ async fn pull_with_credential(
 
 impl Workbench {
     pub(super) fn open_sync(&mut self, id: Option<Uuid>, cx: &mut Context<Self>) {
-        self.active_scope = None;
-        self.stash_environment(cx);
-        self.environment_open = false;
-        self.history_open = false;
-        self.definitions_open = false;
+        if !ENABLED {
+            return;
+        }
+        self.active_page = None;
         self.encoding_open = false;
         self.sync_ui.open = true;
         self.sync_ui.selected = id
@@ -145,6 +147,9 @@ impl Workbench {
         request: Option<Uuid>,
         cx: &mut Context<Self>,
     ) -> bool {
+        if !ENABLED {
+            return false;
+        }
         let source = request
             .and_then(|id| apifox::binding_for_request(&self.project, id).map(|(s, _)| s.id))
             .or_else(|| {
@@ -195,7 +200,7 @@ impl Workbench {
         }
     }
     pub(super) fn sync_tick(&mut self, cx: &mut Context<Self>) {
-        if self.sync_ui.last_tick.elapsed() < Duration::from_secs(1) {
+        if !ENABLED || self.sync_ui.last_tick.elapsed() < Duration::from_secs(1) {
             return;
         }
         self.sync_ui.last_tick = Instant::now();
@@ -440,7 +445,7 @@ impl Workbench {
                     "连接 Apifox"
                 })
                 .w(px(540.))
-                .footer(folder_dialog_footer("保存并预览"))
+                .footer(form_dialog_footer("保存并预览", false))
                 .child(
                     v_flex()
                         .gap_3()
@@ -627,9 +632,7 @@ impl Workbench {
         self.definition
             .update(cx, |s, cx| s.set_value(text, window, cx));
         self.definition_path = None;
-        self.definitions_open = true;
-        self.sync_ui.open = false;
-        cx.notify();
+        self.open_page_tab(PageTab::Definitions, window, cx);
     }
     fn sync_diagnostics(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(source) = self

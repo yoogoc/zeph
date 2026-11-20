@@ -242,6 +242,7 @@ impl Workbench {
         let input = Input::new(&inputs.value)
             .small()
             .appearance(false)
+            .px_0()
             .w_full()
             .aria_label(format!("参数 {} 的值", parameter.name));
         let choices = self.parameter_choices(row);

@@ -315,11 +315,21 @@ impl WorkspaceEntry {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WorkspaceLayout {
+    List,
+    #[default]
+    Tiles,
+}
+
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WorkspaceCatalog {
     pub workspaces: Vec<WorkspaceEntry>,
     pub opened: Vec<uuid::Uuid>,
     pub active: Option<uuid::Uuid>,
+    #[serde(default)]
+    pub layout: WorkspaceLayout,
 }
 impl WorkspaceCatalog {
     pub fn default_path() -> PathBuf {

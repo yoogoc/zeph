@@ -139,6 +139,8 @@ pub struct Folder {
     #[serde(default)]
     pub auth: Option<Auth>,
     #[serde(default)]
+    pub operations: crate::operations::OperationSet,
+    #[serde(default)]
     pub openapi: Option<OpenApiFolder>,
 }
 
@@ -161,6 +163,16 @@ pub struct Request {
     /// Legacy requests without a policy inherit only when they have no own credentials.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub auth_inherit: Option<bool>,
+    #[serde(default)]
+    pub pre_operations: Vec<crate::operations::Operation>,
+    #[serde(default)]
+    pub post_operations: Vec<crate::operations::Operation>,
+    #[serde(default = "crate::operations::inherit_by_default")]
+    pub inherit_pre_operations: bool,
+    #[serde(default = "crate::operations::inherit_by_default")]
+    pub inherit_post_operations: bool,
+    #[serde(skip)]
+    pub operations_resolved: bool,
     pub timeout_secs: u64,
     pub follow_redirects: bool,
     pub proxy: String,
@@ -187,6 +199,11 @@ impl Request {
             body: RequestBody::default(),
             auth: Auth::None,
             auth_inherit: Some(true),
+            pre_operations: vec![],
+            post_operations: vec![],
+            inherit_pre_operations: true,
+            inherit_post_operations: true,
+            operations_resolved: false,
             timeout_secs: 30,
             follow_redirects: false,
             proxy: String::new(),

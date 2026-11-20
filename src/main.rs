@@ -10,22 +10,28 @@ use zeph::{
     workspace::WorkspaceApp,
 };
 
-gpui_kit::assets::icon_assets!(SyncAssets, [Plug, CloudDownload]);
+gpui_kit::assets::icon_assets!(
+    ExtraAssets,
+    [Plug, CloudDownload, Layers2, Trash, LayoutGrid, List]
+);
 struct ZephAssets;
 impl AssetSource for ZephAssets {
     fn load(&self, path: &str) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]>>> {
-        if let Some(asset) = SyncAssets.load(path)? {
+        if let Some(asset) = ExtraAssets.load(path)? {
             return Ok(Some(asset));
         }
         gpui_kit::assets::Assets.load(path)
     }
     fn list(&self, path: &str) -> gpui_kit::Result<Vec<SharedString>> {
         let mut files = gpui_kit::assets::Assets.list(path)?;
-        files.extend(SyncAssets.list(path)?);
+        files.extend(ExtraAssets.list(path)?);
         Ok(files)
     }
 }
 fn main() -> anyhow::Result<()> {
+    if let Some(result) = zeph::scripting::worker_main() {
+        return result;
+    }
     if let Some(result) = zeph::updater::helper_main() {
         return result;
     }
@@ -98,10 +104,10 @@ fn main() -> anyhow::Result<()> {
                 KeyBinding::new("cmd-,", zeph::ui_settings::OpenSettings, None),
                 KeyBinding::new("ctrl-,", zeph::ui_settings::OpenSettings, None),
                 KeyBinding::new("cmd-enter", SendRequest, Some("Zeph")),
-                KeyBinding::new("cmd-s", SaveProject, Some("Zeph")),
+                KeyBinding::new("secondary-s", SaveProject, Some("Zeph")),
                 KeyBinding::new("cmd-q", Quit, None),
                 KeyBinding::new("cmd-k", SearchRequests, Some("Zeph")),
-                KeyBinding::new("cmd-w", CloseRequest, Some("Zeph")),
+                KeyBinding::new("secondary-w", CloseRequest, Some("Zeph")),
                 KeyBinding::new("cmd-n", NewRequest, Some("Zeph")),
                 KeyBinding::new("cmd-shift-z", UndoDelete, Some("Zeph")),
             ]);
@@ -111,12 +117,6 @@ fn main() -> anyhow::Result<()> {
                 MenuItem::action("Check for updates…", zeph::ui_settings::CheckUpdates),
                 MenuItem::action("Quit Zeph", Quit),
             ])]);
-            cx.on_window_closed(|cx, _| {
-                if cx.windows().is_empty() {
-                    cx.quit();
-                }
-            })
-            .detach();
             let options = WindowOptions {
                 titlebar: Some(TitlebarOptions {
                     title: Some("Zeph — Local API Workbench".into()),
@@ -130,7 +130,7 @@ fn main() -> anyhow::Result<()> {
                 window_min_size: Some(size(px(1100.), px(720.))),
                 ..TitleBar::window_options()
             };
-            gpui_kit::open_window(options, cx, move |window, cx| {
+            let (main_window, _) = gpui_kit::open_window(options, cx, move |window, cx| {
                 zeph::ui_settings::ApplicationSettings::init(
                     settings_path,
                     application_preferences,
@@ -151,6 +151,12 @@ fn main() -> anyhow::Result<()> {
                 })
             })
             .expect("无法打开 Zeph 窗口");
+            cx.on_window_closed(move |cx, closed| {
+                if closed == main_window.window_id() || cx.windows().is_empty() {
+                    cx.quit();
+                }
+            })
+            .detach();
             cx.activate(true);
         });
     Ok(())

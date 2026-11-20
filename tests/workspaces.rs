@@ -298,6 +298,26 @@ fn legacy_directory_sessions_migrate_without_rewriting_data() {
 }
 
 #[test]
+fn catalog_layout_has_a_legacy_default_and_round_trips_without_opening_tabs() {
+    use zeph::storage::{WorkspaceCatalog, WorkspaceLayout};
+    let root = tempfile::tempdir().unwrap();
+    let path = root.path().join("workspaces.json");
+    std::fs::write(&path, r#"{"workspaces":[],"opened":[],"active":null}"#).unwrap();
+    let mut catalog = WorkspaceCatalog::load(&path).unwrap();
+    assert_eq!(catalog.layout, WorkspaceLayout::Tiles);
+    let (first, _) = catalog.create(&path, "A").unwrap();
+    let (second, _) = catalog.create(&path, "B").unwrap();
+    catalog.close(second.id);
+    catalog.layout = WorkspaceLayout::List;
+    catalog.save(&path).unwrap();
+    let restored = WorkspaceCatalog::load(&path).unwrap();
+    assert_eq!(restored.layout, WorkspaceLayout::List);
+    assert_eq!(restored.opened, vec![first.id]);
+    assert_eq!(restored.active, Some(first.id));
+    assert!(restored.entry(second.id).is_ok());
+}
+
+#[test]
 fn workspace_catalog_prunes_invalid_tabs_and_preserves_invalid_files() {
     use zeph::storage::WorkspaceCatalog;
     let root = tempfile::tempdir().unwrap();

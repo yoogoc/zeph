@@ -25,6 +25,8 @@ pub struct RunRecord {
     pub messages: Vec<SessionMessage>,
     pub body: String,
     pub bytes: usize,
+    #[serde(default)]
+    pub operations: Vec<crate::operations::OperationReport>,
     pub truncated: bool,
     pub error: bool,
 }
@@ -45,6 +47,7 @@ impl RunRecord {
             messages: vec![],
             body: message,
             bytes: 0,
+            operations: vec![],
             truncated: false,
             error: true,
         }

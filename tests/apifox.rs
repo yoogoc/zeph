@@ -83,6 +83,17 @@ fn upstream_schema_changes_preserve_runtime_values_auth_files_tabs_and_environme
     p.requests[0].body.text = r#"{"note":"local"}"#.into();
     p.requests[0].body.file_path = "/tmp/private.bin".into();
     p.requests[0].auth = Auth::Bearer("local-secret".into());
+    p.requests[0].pre_operations = vec![zeph::operations::Operation::new(
+        zeph::operations::Kind::Uuid,
+    )];
+    p.requests[0].post_operations = vec![zeph::operations::Operation::new(
+        zeph::operations::Kind::AssertStatus,
+    )];
+    let hooks = serde_json::to_value((
+        &p.requests[0].pre_operations,
+        &p.requests[0].post_operations,
+    ))
+    .unwrap();
     p.environments[0]
         .variables
         .insert("token".into(), "local".into());
@@ -101,6 +112,24 @@ fn upstream_schema_changes_preserve_runtime_values_auth_files_tabs_and_environme
     assert_eq!(p.tabs(), &[request]);
     assert_eq!(p.environments[0].variables["token"], "local");
     assert!(!p.sync_sources[0].bindings[0].compatibility.is_empty());
+    assert_eq!(
+        serde_json::to_value((
+            &p.requests[0].pre_operations,
+            &p.requests[0].post_operations,
+        ))
+        .unwrap(),
+        hooks
+    );
+    let run = p.sync_sources[0].runs[0].id;
+    apifox::undo(&mut p, id, run).unwrap();
+    assert_eq!(
+        serde_json::to_value((
+            &p.requests[0].pre_operations,
+            &p.requests[0].post_operations,
+        ))
+        .unwrap(),
+        hooks
+    );
 }
 #[test]
 fn conflict_resolution_advances_baseline_and_skipped_resources_remain_pending() {
@@ -448,4 +477,56 @@ fn undo_keeps_a_new_folder_when_it_has_local_auth_settings() {
         p.folder(folder).unwrap().auth,
         Some(Auth::Bearer("keep-this-local".into()))
     );
+}
+
+#[test]
+fn sync_and_undo_preserve_folder_operations_and_inheritance_preferences() {
+    let (mut p, id) = project();
+    apply_safe(&mut p, id);
+    let folder = p.requests[0].folder_id.unwrap();
+    let config = &mut p
+        .folders
+        .iter_mut()
+        .find(|f| f.id == folder)
+        .unwrap()
+        .operations;
+    config.pre.push(zeph::operations::Operation::new(
+        zeph::operations::Kind::JavaScript,
+    ));
+    config.inherit_post = false;
+    let expected = config.clone();
+    let mut remote = spec();
+    remote["paths"]["/orders"]["post"]["summary"] = json!("Updated");
+    receive(&mut p, remote);
+    apply_safe(&mut p, id);
+    assert_eq!(p.folder(folder).unwrap().operations, expected);
+    let run = p.sync_sources[0].runs[0].id;
+    apifox::undo(&mut p, id, run).unwrap();
+    assert_eq!(p.folder(folder).unwrap().operations, expected);
+}
+
+#[test]
+fn undo_keeps_new_empty_folder_with_local_operations_or_disabled_inheritance() {
+    for with_script in [false, true] {
+        let (mut p, id) = project();
+        apply_safe(&mut p, id);
+        let run = p.sync_sources[0].runs[0].id;
+        let folder = p.requests[0].folder_id.unwrap();
+        let config = &mut p
+            .folders
+            .iter_mut()
+            .find(|f| f.id == folder)
+            .unwrap()
+            .operations;
+        if with_script {
+            config.post.push(zeph::operations::Operation::new(
+                zeph::operations::Kind::AssertStatus,
+            ));
+        } else {
+            config.inherit_pre = false;
+        }
+        let expected = config.clone();
+        apifox::undo(&mut p, id, run).unwrap();
+        assert_eq!(p.folder(folder).unwrap().operations, expected);
+    }
 }

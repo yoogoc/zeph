@@ -112,8 +112,8 @@ impl Workbench {
         let trigger = h_flex()
             .id("http-method-input")
             .relative()
-            .w(px(142.))
-            .h(px(42.))
+            .w(px(112.))
+            .h(px(38.))
             .items_center()
             .border_r_1()
             .border_color(cx.theme().border)
@@ -130,12 +130,12 @@ impl Workbench {
                 Input::new(&self.method)
                     .appearance(false)
                     .w_full()
-                    .h(px(42.))
-                    .px_6()
+                    .h(px(38.))
+                    .px(px(19.))
                     .text_center()
                     .text_size(px(16.))
                     .font_weight(FontWeight::SEMIBOLD)
-                    .text_color(method_color(&self.current().method))
+                    .text_color(method_ink(&self.current().method, cx))
                     .aria_label("HTTP Method，可选择或手动输入"),
             )
             .child(
@@ -208,7 +208,7 @@ impl Workbench {
             }
             popup = popup.content(
                 v_flex()
-                    .w(px(142.))
+                    .w(px(112.))
                     .rounded(px(8.))
                     .bg(cx.theme().popover)
                     .border_1()

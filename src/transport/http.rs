@@ -195,6 +195,7 @@ pub async fn execute(
         headers: response_headers,
         trailers: vec![],
         messages: vec![],
+        operations: vec![],
         timeline: vec![
             super::TimingMark {
                 elapsed_ms: 0,
@@ -343,6 +344,7 @@ async fn connect_probe(
         headers,
         trailers: vec![],
         messages: vec![],
+        operations: vec![],
         timeline: vec![super::TimingMark {
             elapsed_ms: clock.elapsed().as_millis(),
             label: "CONNECT 握手探测完成，连接已关闭".into(),

@@ -1,7 +1,7 @@
 //! Logical collection folders. IDs and OpenAPI bindings survive display-name changes.
 use crate::model::{Folder, OpenApiFolder, Project};
 use anyhow::{Result, bail};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
 
 #[derive(Clone, Debug)]
@@ -153,6 +153,7 @@ impl Project {
             parent_id: parent,
             expanded: true,
             auth: None,
+            operations: Default::default(),
             openapi: None,
         };
         let id = folder.id;
@@ -384,68 +385,117 @@ impl Project {
         id
     }
     pub fn collection_rows(&self, query: &str) -> Vec<CollectionRow> {
-        fn visit(
-            project: &Project,
-            parent: Option<Uuid>,
-            depth: usize,
-            query: &str,
-            inherited: bool,
-        ) -> Vec<CollectionRow> {
-            if depth > 32 {
-                return vec![];
+        let mut children: HashMap<Option<Uuid>, CollectionChildren> = HashMap::new();
+        for (index, folder) in self.folders.iter().enumerate() {
+            children
+                .entry(folder.parent_id)
+                .or_default()
+                .folders
+                .push(index);
+        }
+        for (index, request) in self.requests.iter().enumerate() {
+            children
+                .entry(request.folder_id)
+                .or_default()
+                .requests
+                .push(index);
+        }
+
+        let tree = CollectionTree {
+            project: self,
+            children,
+            query: query.to_lowercase(),
+        };
+        let mut rows = Vec::new();
+        tree.visit(None, 0, tree.query.is_empty(), true, &mut rows);
+        rows
+    }
+}
+
+#[derive(Default)]
+struct CollectionChildren {
+    folders: Vec<usize>,
+    requests: Vec<usize>,
+}
+
+struct CollectionTree<'a> {
+    project: &'a Project,
+    children: HashMap<Option<Uuid>, CollectionChildren>,
+    query: String,
+}
+
+impl CollectionTree<'_> {
+    /// Return the full descendant count, including requests hidden by a collapse or search.
+    fn visit(
+        &self,
+        parent: Option<Uuid>,
+        depth: usize,
+        match_all: bool,
+        visible: bool,
+        rows: &mut Vec<CollectionRow>,
+    ) -> usize {
+        let Some(group) = self.children.get(&parent) else {
+            return 0;
+        };
+        if depth > 32 {
+            return 0;
+        }
+        let mut total = group.requests.len();
+        for &index in &group.folders {
+            let folder = &self.project.folders[index];
+            let matched = match_all || folder.name.to_lowercase().contains(&self.query);
+            let position = rows.len();
+            if visible {
+                rows.push(CollectionRow::Folder {
+                    id: folder.id,
+                    depth,
+                    count: 0,
+                });
             }
-            let mut rows = Vec::new();
-            for folder in project.folders.iter().filter(|f| f.parent_id == parent) {
-                let matches =
-                    inherited || (!query.is_empty() && folder.name.to_lowercase().contains(query));
-                let children = visit(project, Some(folder.id), depth + 1, query, matches);
-                if query.is_empty() || matches || !children.is_empty() {
-                    let count = project
-                        .requests
-                        .iter()
-                        .filter(|r| {
-                            r.folder_id
-                                .is_some_and(|id| project.folder_contains(folder.id, id))
-                        })
-                        .count();
-                    rows.push(CollectionRow::Folder {
-                        id: folder.id,
-                        depth,
-                        count,
-                    });
-                    if folder.expanded || !query.is_empty() {
-                        rows.extend(children);
-                    }
+            let count = self.visit(
+                Some(folder.id),
+                depth + 1,
+                matched,
+                visible && (folder.expanded || !self.query.is_empty()),
+                rows,
+            );
+            total += count;
+            if visible {
+                if !matched && rows.len() == position + 1 {
+                    rows.pop();
+                } else if let CollectionRow::Folder {
+                    count: displayed, ..
+                } = &mut rows[position]
+                {
+                    *displayed = count;
                 }
             }
-            for (index, request) in project
-                .requests
-                .iter()
-                .enumerate()
-                .filter(|(_, r)| r.folder_id == parent)
-            {
-                let tags = request
-                    .openapi
-                    .as_ref()
-                    .map(|m| m.tags.join(" "))
-                    .unwrap_or_default();
-                if query.is_empty()
-                    || inherited
-                    || format!(
-                        "{} {} {} {} {tags}",
-                        request.name,
-                        request.method,
-                        request.protocol.label(),
-                        request.url
-                    )
-                    .to_lowercase()
-                    .contains(query)
-                {
+        }
+        if visible {
+            for &index in &group.requests {
+                if match_all || self.request_matches(index) {
                     rows.push(CollectionRow::Request { index, depth });
                 }
             }
-            rows
         }
-        visit(self, None, 0, &query.to_lowercase(), false)
+        total
+    }
+
+    fn request_matches(&self, index: usize) -> bool {
+        let request = &self.project.requests[index];
+        let tags = request
+            .openapi
+            .as_ref()
+            .map(|op| op.tags.join(" "))
+            .unwrap_or_default();
+        format!(
+            "{} {} {} {} {tags}",
+            request.name,
+            request.method,
+            request.protocol.label(),
+            request.url
+        )
+        .to_lowercase()
+        .contains(&self.query)
     }
 }

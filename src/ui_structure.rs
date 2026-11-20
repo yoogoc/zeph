@@ -86,15 +86,25 @@ impl Workbench {
             .size_full()
             .min_h_0()
             .min_w_0()
-            .border_l_1()
-            .border_color(cx.theme().border)
+            .bg(cx.theme().muted)
             .child(
-                div()
-                    .px_3()
-                    .py_3()
-                    .text_xs()
-                    .text_color(cx.theme().muted_foreground)
-                    .child("请求结构"),
+                h_flex()
+                    .px_4()
+                    .h(px(44.))
+                    .flex_shrink_0()
+                    .gap_2()
+                    .items_center()
+                    .child(
+                        Icon::new(IconName::BookOpen)
+                            .size(px(15.))
+                            .text_color(cx.theme().muted_foreground),
+                    )
+                    .child(
+                        div()
+                            .text_size(px(13.))
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child("请求结构"),
+                    ),
             );
         if *protocol != Protocol::Http {
             return panel
@@ -108,52 +118,50 @@ impl Workbench {
                 .into_any_element();
         }
         let ui = &self.structure_ui;
-        panel = panel.child(
-            div()
-                .px_3()
-                .pb_2()
-                .text_size(px(11.))
-                .text_color(cx.theme().muted_foreground)
-                .truncate()
-                .child(if ui.loading {
-                    "正在读取保存的接口定义…".into()
-                } else {
-                    ui.data.source.clone()
-                }),
-        );
+        if ui.loading || !ui.data.source.is_empty() {
+            panel = panel.child(
+                div()
+                    .px_4()
+                    .pb_2()
+                    .text_size(px(11.))
+                    .text_color(cx.theme().muted_foreground)
+                    .truncate()
+                    .child(if ui.loading {
+                        "正在读取保存的接口定义…".into()
+                    } else {
+                        ui.data.source.clone()
+                    }),
+            );
+        }
         let mut tabs = h_flex()
-            .px_2()
-            .gap(px(1.))
+            .id("structure-sections")
+            .overflow_x_scroll()
+            .h(px(36.))
+            .flex_shrink_0()
+            .items_center()
+            .px_3()
+            .gap(px(2.))
             .border_b_1()
             .border_color(cx.theme().border);
         for section in Section::ALL {
             tabs = tabs.child(
-                div()
-                    .border_b_2()
-                    .border_color(if ui.section == section {
-                        cx.theme().primary
-                    } else {
-                        transparent_black()
-                    })
-                    .child(
-                        Button::new(SharedString::from(format!("structure-{}", section.label())))
-                            .small()
-                            .ghost()
-                            .h(px(34.))
-                            .px(px(6.))
-                            .label(section.label())
-                            .accessibility_label(format!(
-                                "结构 · {}，{} 项",
-                                section.label(),
-                                ui.data.count(section)
-                            ))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.structure_ui.section = section;
-                                this.structure_ui.manual_section = true;
-                                this.refresh_structure_section();
-                                cx.notify();
-                            })),
-                    ),
+                section_tab(
+                    SharedString::from(format!("structure-{}", section.label())),
+                    section.label(),
+                    ui.section == section,
+                    cx,
+                )
+                .accessibility_label(format!(
+                    "结构 · {}，{} 项",
+                    section.label(),
+                    ui.data.count(section)
+                ))
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.structure_ui.section = section;
+                    this.structure_ui.manual_section = true;
+                    this.refresh_structure_section();
+                    cx.notify();
+                })),
             );
         }
         panel = panel.child(tabs);
@@ -168,7 +176,7 @@ impl Workbench {
             );
         }
         if ui.data.count(ui.section) > 0 {
-            let mut docs = v_flex().gap_3();
+            let mut docs = v_flex();
             for (i, node) in ui.nodes.iter().enumerate() {
                 let key = format!("{}:{i}", ui.section.label());
                 docs = docs.child(self.structure_node(node, &key, 0, cx));
@@ -179,7 +187,7 @@ impl Workbench {
                     .flex_1()
                     .min_h_0()
                     .overflow_y_scroll()
-                    .p_3()
+                    .px_4()
                     .child(docs),
             );
         } else {
@@ -193,15 +201,21 @@ impl Workbench {
                         div()
                             .text_xs()
                             .text_color(cx.theme().muted_foreground)
-                            .child("可打开数据源文件夹内已同步的请求，或导入 OpenAPI 文档。"),
+                            .child(if sync_ui::ENABLED {
+                                "可打开数据源文件夹内已同步的请求，或导入 OpenAPI 文档。"
+                            } else {
+                                "导入 OpenAPI 文档后，可在这里查看参数、请求体与响应定义。"
+                            }),
                     )
-                    .child(
-                        Button::new("structure-sources")
-                            .small()
-                            .ghost()
-                            .label("打开数据源")
-                            .on_click(cx.listener(|this, _, _, cx| this.open_sync(None, cx))),
-                    )
+                    .when(sync_ui::ENABLED, |empty| {
+                        empty.child(
+                            Button::new("structure-sources")
+                                .small()
+                                .ghost()
+                                .label("打开数据源")
+                                .on_click(cx.listener(|this, _, _, cx| this.open_sync(None, cx))),
+                        )
+                    })
                     .child(
                         Button::new("structure-import")
                             .small()
@@ -285,7 +299,7 @@ impl Workbench {
                     .px_2()
                     .py(px(2.))
                     .rounded(px(4.))
-                    .bg(cx.theme().muted)
+                    .bg(cx.theme().border.opacity(0.55))
                     .child(location.clone()),
             );
         }
@@ -307,9 +321,10 @@ impl Workbench {
                         .px_2()
                         .py(px(3.))
                         .rounded(px(4.))
-                        .bg(cx.theme().primary.opacity(0.08))
-                        .text_size(px(11.))
-                        .text_color(cx.theme().primary)
+                        .bg(cx.theme().border.opacity(0.55))
+                        .text_size(px(10.))
+                        .font_family("Menlo")
+                        .text_color(cx.theme().foreground)
                         .child(if value.is_empty() {
                             "空字符串".into()
                         } else {
@@ -383,11 +398,9 @@ impl Workbench {
         }
         if depth == 0 {
             div()
-                .p_3()
-                .rounded(px(8.))
-                .border_1()
+                .py_3()
+                .border_b_1()
                 .border_color(cx.theme().border)
-                .bg(cx.theme().background)
                 .child(content)
                 .into_any_element()
         } else {

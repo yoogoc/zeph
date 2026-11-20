@@ -1,13 +1,22 @@
 use super::*;
 use crate::auth::AuthOrigin;
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Scope {
     Workspace,
     Folder(Uuid),
 }
+#[derive(Clone, Copy, PartialEq, Eq, Default)]
+pub(super) enum ScopeSection {
+    #[default]
+    General,
+    PreOperations,
+    PostOperations,
+}
 pub(super) struct ScopeEditor {
     pub(super) scope: Scope,
+    pub(super) section: ScopeSection,
+    pub(super) operations: crate::operations::OperationSet,
     name: Entity<InputState>,
     kind: Entity<SelectState<Vec<String>>>,
     token: Entity<InputState>,
@@ -16,39 +25,25 @@ pub(super) struct ScopeEditor {
     _subscription: Subscription,
 }
 impl Workbench {
-    pub(super) fn open_scope_settings(
+    pub(super) fn ensure_scope_editor(
         &mut self,
         scope: Scope,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) {
-        self.stash_environment(cx);
-        self.focus.focus(window, cx);
-        self.environment_open = false;
-        self.history_open = false;
-        self.definitions_open = false;
-        self.encoding_open = false;
-        self.sync_ui.open = false;
-        self.active_scope = Some(scope);
+    ) -> anyhow::Result<()> {
         if self
             .scope_editors
             .iter()
             .any(|editor| editor.scope == scope)
         {
-            cx.notify();
-            return;
+            return Ok(());
         }
         let (name, auth) = match scope {
             Scope::Workspace => (self.project.name.clone(), Some(self.project.auth.clone())),
-            Scope::Folder(id) => match self.project.folder(id) {
-                Ok(f) => (f.name.clone(), f.auth.clone()),
-                Err(e) => {
-                    self.active_scope = None;
-                    self.notice = e.to_string();
-                    cx.notify();
-                    return;
-                }
-            },
+            Scope::Folder(id) => {
+                let folder = self.project.folder(id)?;
+                (folder.name.clone(), folder.auth.clone())
+            }
         };
         let modes: Vec<String> = if scope == Scope::Workspace {
             vec!["无认证", "Bearer Token", "Basic Auth"]
@@ -91,6 +86,15 @@ impl Workbench {
         );
         self.scope_editors.push(ScopeEditor {
             scope,
+            section: ScopeSection::General,
+            operations: match scope {
+                Scope::Folder(id) => self
+                    .project
+                    .folder(id)
+                    .map(|f| f.operations.clone())
+                    .unwrap_or_default(),
+                Scope::Workspace => Default::default(),
+            },
             name,
             kind,
             token,
@@ -98,39 +102,17 @@ impl Workbench {
             password,
             _subscription: subscription,
         });
-        self.sync_ui.open = false;
-        self.environment_open = false;
-        self.history_open = false;
-        self.definitions_open = false;
-        self.encoding_open = false;
-        cx.notify();
+        Ok(())
     }
-    pub(super) fn close_scope_settings(
-        &mut self,
-        scope: Scope,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) {
-        let Some(index) = self
-            .scope_editors
-            .iter()
-            .position(|editor| editor.scope == scope)
-        else {
-            return;
-        };
-        self.scope_editors.remove(index);
-        if self.active_scope == Some(scope) {
-            self.focus.focus(window, cx);
-            self.active_scope = index
-                .checked_sub(1)
-                .and_then(|i| self.scope_editors.get(i))
-                .or_else(|| self.scope_editors.get(index))
-                .map(|editor| editor.scope);
+
+    pub(super) fn active_scope(&self) -> Option<Scope> {
+        match self.active_page {
+            Some(PageTab::Settings(scope)) => Some(scope),
+            _ => None,
         }
-        cx.notify();
     }
-    fn active_scope_editor(&self) -> Option<&ScopeEditor> {
-        let scope = self.active_scope?;
+    pub(super) fn active_scope_editor(&self) -> Option<&ScopeEditor> {
+        let scope = self.active_scope()?;
         self.scope_editors
             .iter()
             .find(|editor| editor.scope == scope)
@@ -140,6 +122,12 @@ impl Workbench {
             return;
         };
         let scope = editor.scope;
+        let operations = editor.operations.clone();
+        if operations.pre.len() > 64 || operations.post.len() > 64 {
+            self.notice = "每层每阶段最多 64 项操作".into();
+            cx.notify();
+            return;
+        }
         let name = editor.name.read(cx).value().trim().to_owned();
         if name.is_empty() {
             self.notice = "名称不能为空".into();
@@ -171,12 +159,14 @@ impl Workbench {
                 }
                 Scope::Folder(id) => {
                     self.project.rename_folder(id, &name)?;
-                    self.project
+                    let folder = self
+                        .project
                         .folders
                         .iter_mut()
                         .find(|f| f.id == id)
-                        .unwrap()
-                        .auth = auth;
+                        .unwrap();
+                    folder.auth = auth;
+                    folder.operations = operations;
                 }
             }
             Ok(())
@@ -205,7 +195,7 @@ impl Workbench {
                     .child(div().text_sm().child(self.project.auth_origin_label(effective.origin)))
                     .child(div().text_xs().text_color(cx.theme().muted_foreground).child("凭据不会复制到此请求。移动文件夹或更改上级配置后，下次发送自动使用新配置。"))
                     .child(Button::new("edit-inherited-auth").small().ghost().label("编辑来源设置").w(px(140.))
-                        .on_click(cx.listener(move|s,_,window,cx|s.open_scope_settings(scope,window,cx))))
+                        .on_click(cx.listener(move|s,_,window,cx|s.open_page_tab(PageTab::Settings(scope),window,cx))))
                     .into_any_element()
             }
             Err(e) => div().text_sm().child(e.to_string()).into_any_element(),
@@ -274,6 +264,58 @@ impl Workbench {
                 .child("支持 {{variable}}，发送时解析当前环境。凭据保存在当前工作区的本地数据中，建议使用环境变量引用。已运行的连接保持原配置。"))
             .child(Button::new("save-scope-settings").primary().label("保存设置").w(px(130.))
                 .on_click(cx.listener(|s,_,window,cx|s.save_scope_settings(window,cx))));
+        let scope = editor.scope;
+        let section = editor.section;
+        let mut tabs = h_flex()
+            .gap_2()
+            .px_6()
+            .py_2()
+            .border_b_1()
+            .border_color(cx.theme().border);
+        if matches!(scope, Scope::Folder(_)) {
+            for (index, label, next) in [
+                (0, "基本信息与认证", ScopeSection::General),
+                (1, "前置操作", ScopeSection::PreOperations),
+                (2, "后置操作", ScopeSection::PostOperations),
+            ] {
+                tabs = tabs.child(
+                    Button::new(("folder-settings-section", index as usize))
+                        .small()
+                        .ghost()
+                        .label(label)
+                        .text_color(if section == next {
+                            cx.theme().primary
+                        } else {
+                            cx.theme().muted_foreground
+                        })
+                        .on_click(cx.listener(move |this, _, window, cx| {
+                            if let Some(editor) =
+                                this.scope_editors.iter_mut().find(|e| e.scope == scope)
+                            {
+                                editor.section = next;
+                            }
+                            this.reload_operation_inputs(window, cx);
+                            cx.notify();
+                        })),
+                );
+            }
+        }
+        let content = match section {
+            ScopeSection::General => div()
+                .id("scope-settings-scroll")
+                .overflow_y_scroll()
+                .flex_1()
+                .min_h_0()
+                .p_6()
+                .child(form)
+                .into_any_element(),
+            ScopeSection::PreOperations => {
+                self.operations_editor(crate::operations::Stage::Pre, cx)
+            }
+            ScopeSection::PostOperations => {
+                self.operations_editor(crate::operations::Stage::Post, cx)
+            }
+        };
         v_flex()
             .flex_1()
             .min_h_0()
@@ -301,17 +343,18 @@ impl Workbench {
                                     .text_color(cx.theme().muted_foreground)
                                     .child(path),
                             ),
+                    )
+                    .child(
+                        Button::new("save-scope-settings-header")
+                            .primary()
+                            .label("保存设置")
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.save_scope_settings(window, cx)
+                            })),
                     ),
             )
-            .child(
-                div()
-                    .id("scope-settings-scroll")
-                    .overflow_y_scroll()
-                    .flex_1()
-                    .min_h_0()
-                    .p_6()
-                    .child(form),
-            )
+            .when(matches!(scope, Scope::Folder(_)), |panel| panel.child(tabs))
+            .child(content)
             .into_any_element()
     }
 }

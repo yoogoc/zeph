@@ -1,11 +1,11 @@
-//! Shared application settings and updater state; workspace requests stay alive behind this page.
+//! Shared application preferences and updater state, displayed in a dedicated window.
 use crate::{
     settings::{self, Appearance, Preferences},
     updater::{self, Downloaded, Installation, PreparedInstall, Release},
 };
 use gpui_kit::{
     component::{
-        ActiveTheme, Disableable, Selectable, Theme, ThemeMode, WindowExt,
+        ActiveTheme, Disableable, Selectable, Theme, ThemeMode, TitleBar, WindowExt,
         button::{Button, ButtonVariants},
         checkbox::Checkbox,
         dialog::DialogButtonProps,
@@ -64,11 +64,61 @@ pub fn store(cx: &App) -> Entity<ApplicationSettings> {
 }
 pub fn open(page: Option<Page>, cx: &mut App) {
     store(cx).update(cx, |s, cx| {
-        s.open = true;
         if let Some(page) = page {
             s.page = page;
         }
         cx.notify();
+    });
+    // Defer so reopening from within the settings window never updates a borrowed window.
+    cx.defer(|cx| {
+        let settings = store(cx);
+        let existing = settings.read(cx).window;
+        if let Some(handle) = existing.filter(|handle| {
+            cx.windows()
+                .iter()
+                .any(|open| open.window_id() == handle.window_id())
+        }) && handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+        {
+            return;
+        }
+        let options = WindowOptions {
+            titlebar: Some(TitlebarOptions {
+                title: Some("Zeph — 应用设置".into()),
+                ..TitleBar::title_bar_options()
+            }),
+            window_bounds: Some(WindowBounds::centered(size(px(960.), px(720.)), cx)),
+            window_min_size: Some(size(px(760.), px(560.))),
+            ..TitleBar::window_options()
+        };
+        match gpui_kit::open_window(options, cx, |window, cx| {
+            settings.update(cx, |s, cx| {
+                let timeout = s.timeout.read(cx).value().to_string();
+                let proxy = s.proxy.read(cx).value().to_string();
+                s.timeout = cx.new(|cx| InputState::new(window, cx).default_value(timeout));
+                s.proxy = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .placeholder("留空以使用系统代理")
+                        .default_value(proxy)
+                });
+                s.token = cx.new(|cx| {
+                    InputState::new(window, cx)
+                        .masked(true)
+                        .placeholder("GitHub Token，仅保存到系统钥匙串")
+                });
+            });
+            cx.new(|_| SettingsWindow {
+                settings: settings.clone(),
+            })
+        }) {
+            Ok((handle, _)) => settings.update(cx, |s, _| s.window = Some(handle)),
+            Err(error) => settings.update(cx, |s, cx| {
+                s.notice = format!("无法打开设置窗口：{error}");
+                log::error!("{}", s.notice);
+                cx.notify();
+            }),
+        }
     });
 }
 pub fn open_updates(cx: &mut App) {
@@ -85,7 +135,7 @@ enum Event {
     Credential(bool, Result<(), String>),
 }
 pub struct ApplicationSettings {
-    pub open: bool,
+    window: Option<AnyWindowHandle>,
     pub preferences: Preferences,
     pub notice: String,
     page: Page,
@@ -103,13 +153,12 @@ pub struct ApplicationSettings {
     generation: u64,
     worker: Option<tokio::task::JoinHandle<()>>,
     tx: mpsc::Sender<Event>,
-    rx: mpsc::Receiver<Event>,
     timeout: Entity<InputState>,
     proxy: Entity<InputState>,
     token: Entity<InputState>,
     credential_busy: bool,
     _appearance: Subscription,
-    _poll: Task<()>,
+    _events: Task<()>,
 }
 impl EventEmitter<RestartRequested> for ApplicationSettings {}
 impl ApplicationSettings {
@@ -131,7 +180,7 @@ impl ApplicationSettings {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let (tx, rx) = mpsc::channel(64);
+        let (tx, mut rx) = mpsc::channel(64);
         let receipt_tx = tx.clone();
         let cache = path.parent().unwrap().join("updates");
         runtime.spawn_blocking(move || {
@@ -152,13 +201,31 @@ impl ApplicationSettings {
         });
         let observer =
             cx.observe_window_appearance(window, |s, window, cx| s.apply_appearance(window, cx));
-        let poll = cx.spawn_in(window, async move |this, cx| {
+        let events = cx.spawn(async move |this, cx| {
             loop {
-                cx.background_executor()
-                    .timer(Duration::from_millis(120))
+                let event = {
+                    let wake = futures::future::select(
+                        Box::pin(rx.recv()),
+                        Box::pin(cx.background_executor().timer(Duration::from_secs(3600))),
+                    )
                     .await;
+                    match wake {
+                        futures::future::Either::Left((Some(event), _)) => Some(event),
+                        futures::future::Either::Left((None, _)) => break,
+                        futures::future::Either::Right(_) => None,
+                    }
+                };
+                let mut pending: Vec<_> = event.into_iter().collect();
+                while let Ok(event) = rx.try_recv() {
+                    pending.push(event);
+                }
                 if this
-                    .update_in(cx, |s, window, cx| s.poll(window, cx))
+                    .update(cx, |s, cx| {
+                        for event in pending {
+                            s.handle_event(event, cx);
+                        }
+                        s.check_automatic(cx);
+                    })
                     .is_err()
                 {
                     break;
@@ -166,7 +233,7 @@ impl ApplicationSettings {
             }
         });
         Self {
-            open: false,
+            window: None,
             preferences,
             page: Page::Appearance,
             path,
@@ -184,13 +251,12 @@ impl ApplicationSettings {
             generation: 0,
             worker: None,
             tx,
-            rx,
             timeout,
             proxy,
             token,
             credential_busy: false,
             _appearance: observer,
-            _poll: poll,
+            _events: events,
         }
     }
     fn apply_appearance(&self, window: &mut Window, cx: &mut App) {
@@ -383,80 +449,92 @@ impl ApplicationSettings {
         });
         cx.notify();
     }
-    fn poll(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        while let Ok(event) = self.rx.try_recv() {
-            match event {
-                Event::Receipt(Some(message)) => self.notice = message,
-                Event::Receipt(None) => {}
-                Event::Credential(configured, result) => {
-                    self.credential_busy = false;
-                    match result {
-                        Ok(()) => {
-                            let prev = self.preferences.clone();
-                            self.preferences.github_token_configured = configured;
-                            self.persist(prev, cx);
-                            self.token.update(cx, |s, cx| s.set_value("", window, cx));
-                            self.cancel(cx);
+    fn handle_event(&mut self, event: Event, cx: &mut Context<Self>) {
+        match event {
+            Event::Receipt(Some(message)) => self.notice = message,
+            Event::Receipt(None) => return,
+            Event::Credential(configured, result) => {
+                self.credential_busy = false;
+                match result {
+                    Ok(()) => {
+                        let prev = self.preferences.clone();
+                        self.preferences.github_token_configured = configured;
+                        self.persist(prev, cx);
+                        let token = self.token.clone();
+                        if let Some(handle) = self.window {
+                            cx.defer(move |cx| {
+                                if cx
+                                    .windows()
+                                    .iter()
+                                    .any(|w| w.window_id() == handle.window_id())
+                                {
+                                    let _ = handle.update(cx, |_, window, cx| {
+                                        token.update(cx, |s, cx| s.set_value("", window, cx))
+                                    });
+                                }
+                            });
                         }
-                        Err(e) => self.notice = e,
+                        self.cancel(cx);
                     }
+                    Err(e) => self.notice = e,
                 }
-                Event::Checked(g, manual, result) if g == self.generation => {
-                    self.worker = None;
-                    self.last_checked = Some(SystemTime::now());
-                    match *result {
-                        Ok(Some(r)) => {
-                            self.available = Some(r);
-                            self.status = Status::Available;
-                            if self.preferences.updates.auto_download
-                                && self.installation.can_install()
-                            {
-                                self.download(cx);
-                            }
-                        }
-                        Ok(None) => self.status = Status::Current,
-                        Err(e) => {
-                            if manual {
-                                self.status = Status::Failed;
-                                self.error = e;
-                            } else {
-                                log::info!("自动更新检查未完成：{e}");
-                                self.status = Status::Idle;
-                            }
-                        }
-                    }
-                }
-                Event::Progress(g, n, total) if g == self.generation => self.progress = (n, total),
-                Event::Downloaded(g, result) if g == self.generation => {
-                    self.worker = None;
-                    match result {
-                        Ok(d) => {
-                            self.ready = Some(d);
-                            self.status = Status::Ready;
-                        }
-                        Err(e) => {
-                            self.error = e;
-                            self.status = Status::Failed;
-                        }
-                    }
-                }
-                Event::Prepared(g, result) if g == self.generation => {
-                    self.worker = None;
-                    match result {
-                        Ok(p) => {
-                            self.prepared = Some(p);
-                            cx.emit(RestartRequested);
-                        }
-                        Err(e) => {
-                            self.error = e;
-                            self.status = Status::Failed;
-                        }
-                    }
-                }
-                _ => {}
             }
-            cx.notify();
+            Event::Checked(g, manual, result) if g == self.generation => {
+                self.worker = None;
+                self.last_checked = Some(SystemTime::now());
+                match *result {
+                    Ok(Some(r)) => {
+                        self.available = Some(r);
+                        self.status = Status::Available;
+                        if self.preferences.updates.auto_download && self.installation.can_install()
+                        {
+                            self.download(cx);
+                        }
+                    }
+                    Ok(None) => self.status = Status::Current,
+                    Err(e) => {
+                        if manual {
+                            self.status = Status::Failed;
+                            self.error = e;
+                        } else {
+                            log::info!("自动更新检查未完成：{e}");
+                            self.status = Status::Idle;
+                        }
+                    }
+                }
+            }
+            Event::Progress(g, n, total) if g == self.generation => self.progress = (n, total),
+            Event::Downloaded(g, result) if g == self.generation => {
+                self.worker = None;
+                match result {
+                    Ok(d) => {
+                        self.ready = Some(d);
+                        self.status = Status::Ready;
+                    }
+                    Err(e) => {
+                        self.error = e;
+                        self.status = Status::Failed;
+                    }
+                }
+            }
+            Event::Prepared(g, result) if g == self.generation => {
+                self.worker = None;
+                match result {
+                    Ok(p) => {
+                        self.prepared = Some(p);
+                        cx.emit(RestartRequested);
+                    }
+                    Err(e) => {
+                        self.error = e;
+                        self.status = Status::Failed;
+                    }
+                }
+            }
+            _ => return,
         }
+        cx.notify();
+    }
+    fn check_automatic(&mut self, cx: &mut Context<Self>) {
         if self.preferences.updates.auto_check
             && self
                 .last_attempt
@@ -675,7 +753,9 @@ impl ApplicationSettings {
                                 .on_click(cx.listener(|s, v, _, cx| {
                                     let p = s.preferences.clone();
                                     s.preferences.updates.auto_check = *v;
-                                    s.persist(p, cx);
+                                    if s.persist(p, cx) {
+                                        s.check_automatic(cx);
+                                    }
                                 })),
                             cx,
                         ))
@@ -712,7 +792,7 @@ impl ApplicationSettings {
                                 .font_weight(FontWeight::BOLD)
                                 .child(format!("Zeph {}", env!("CARGO_PKG_VERSION"))),
                         )
-                        .child(hint("HTTP · gRPC · WebSocket · OpenAPI · Apifox", cx))
+                        .child(hint("HTTP · gRPC · WebSocket · OpenAPI", cx))
                         .child(hint(
                             "请求与工作区保存在本地。更新检查仅访问 GitHub，不上传请求数据。",
                             cx,
@@ -735,6 +815,24 @@ impl Drop for ApplicationSettings {
         if let Some(worker) = self.worker.take() {
             worker.abort();
         }
+    }
+}
+struct SettingsWindow {
+    settings: Entity<ApplicationSettings>,
+}
+impl Render for SettingsWindow {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .size_full()
+            .min_h_0()
+            .key_context("Zeph")
+            .bg(cx.theme().background)
+            .text_color(cx.theme().foreground)
+            .on_action(|_: &crate::ui::CloseRequest, window, _| window.remove_window())
+            .on_action(|_: &OpenSettings, _, cx| open(None, cx))
+            .on_action(|_: &CheckUpdates, _, cx| open_updates(cx))
+            .child(TitleBar::new().child(div().flex_1().child("应用设置")))
+            .child(v_flex().flex_1().min_h_0().child(self.settings.clone()))
     }
 }
 impl Render for ApplicationSettings {
@@ -792,10 +890,9 @@ impl Render for ApplicationSettings {
                         .child(
                             Button::new("close-application-settings")
                                 .ghost()
-                                .label("返回工作台")
-                                .on_click(cx.listener(|s, _, _, cx| {
-                                    s.open = false;
-                                    cx.notify();
+                                .label("关闭设置")
+                                .on_click(cx.listener(|_, _, window, _| {
+                                    window.remove_window();
                                 })),
                         ),
                 )

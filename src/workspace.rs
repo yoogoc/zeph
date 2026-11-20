@@ -1,14 +1,20 @@
 //! Logical workspaces own independent workbenches; switching never rebinds jobs.
 use crate::{
     model::Project,
-    storage::{WorkspaceCatalog, WorkspaceEntry},
-    ui::{WORKBENCH_TITLEBAR_HEIGHT, Workbench, brandmark},
+    storage::{WorkspaceCatalog, WorkspaceEntry, WorkspaceLayout},
+    ui::{
+        TITLEBAR_CONTROL_HEIGHT, TITLEBAR_CONTROL_RADIUS, TITLEBAR_LABEL_SIZE,
+        WORKBENCH_TITLEBAR_HEIGHT, Workbench, brandmark, form_dialog_footer,
+    },
 };
 use gpui_kit::prelude::FluentBuilder;
 use gpui_kit::{
+    assets::IconName as AssetIcon,
+    base::{Tab, Tabs},
     component::{
-        ActiveTheme, Disableable, IconName, Selectable, Sizable, TitleBar,
+        ActiveTheme, Disableable, Icon, IconName, Selectable, Sizable, TitleBar, WindowExt,
         button::{Button, ButtonVariants},
+        dialog::DialogButtonProps,
         h_flex,
         input::{Input, InputState},
         v_flex,
@@ -16,6 +22,7 @@ use gpui_kit::{
     *,
 };
 use std::{
+    collections::HashSet,
     path::PathBuf,
     sync::{Arc, Mutex},
 };
@@ -27,6 +34,7 @@ enum WorkspaceEvent {
     Close(Uuid),
     Create(String),
     Open(Uuid),
+    LayoutChanged,
 }
 #[derive(Clone, PartialEq, Eq)]
 struct WorkspaceLabel {
@@ -42,74 +50,89 @@ pub struct WorkspaceStrip {
     notice: String,
     busy: bool,
     manager_open: bool,
-    new_name: Entity<InputState>,
+    layout: WorkspaceLayout,
 }
 impl EventEmitter<WorkspaceEvent> for WorkspaceStrip {}
+
+fn titlebar_tab(
+    id: impl Into<ElementId>,
+    label: impl Into<SharedString>,
+    selected: bool,
+    cx: &App,
+) -> Tab {
+    Tab::new(id)
+        .accessibility_label(label)
+        .selected(selected)
+        .h(TITLEBAR_CONTROL_HEIGHT)
+        .flex_shrink_0()
+        .max_w(px(220.))
+        .px_2()
+        .gap_1()
+        .rounded(TITLEBAR_CONTROL_RADIUS)
+        .border_1()
+        .border_color(cx.theme().transparent)
+        .text_size(TITLEBAR_LABEL_SIZE)
+        .text_color(cx.theme().foreground)
+        .when(selected, |tab| {
+            tab.bg(cx.theme().background).border_color(cx.theme().input)
+        })
+        .hover(|style| {
+            if selected {
+                style
+            } else {
+                style.bg(cx.theme().foreground.opacity(0.08))
+            }
+        })
+}
+
 impl Render for WorkspaceStrip {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let mut tabs = h_flex().h_full().gap_1().items_center().child(
-            Button::new("workspace-manager-tab")
-                .small()
-                .ghost()
-                .h(px(30.))
-                .icon(IconName::GalleryVerticalEnd)
-                .label("工作区")
-                .selected(self.manager_open)
-                .on_click(cx.listener(|this, _, _, cx| {
-                    this.manager_open = true;
-                    cx.notify();
-                })),
-        );
+        let mut tabs = Tabs::new("workspace-tabs")
+            .flex()
+            .flex_1()
+            .min_w_0()
+            .h_full()
+            .px_1()
+            .gap_1()
+            .items_center()
+            .overflow_x_scroll()
+            .restrict_scroll_to_axis()
+            .child(
+                titlebar_tab("workspace-manager", "工作区", self.manager_open, cx)
+                    .child(Icon::new(IconName::GalleryVerticalEnd).size_4())
+                    .child("工作区")
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        this.manager_open = true;
+                        cx.notify();
+                    })),
+            );
         for label in &self.labels {
             let id = label.id;
+            let active = Some(id) == self.active && !self.manager_open;
+            let title = SharedString::from(if label.running > 0 {
+                format!("{} · {} 运行中", label.name, label.running)
+            } else {
+                label.name.clone()
+            });
+            let close = Button::new(SharedString::from(format!("workspace-close-{id}")))
+                .xsmall()
+                .ghost()
+                .size(px(20.))
+                .icon(IconName::Close)
+                .text_color(cx.theme().muted_foreground)
+                .accessibility_label(format!("关闭工作区 {}", label.name))
+                .tooltip("关闭标签，工作区仍保留在列表中")
+                .on_click(cx.listener(move |_, _, _, cx| {
+                    cx.stop_propagation();
+                    cx.emit(WorkspaceEvent::Close(id));
+                }));
             tabs = tabs.child(
-                h_flex()
-                    .flex_shrink_0()
-                    .h(px(30.))
-                    .rounded(px(7.))
-                    .border_1()
-                    .border_color(if Some(id) == self.active && !self.manager_open {
-                        cx.theme().border
-                    } else {
-                        transparent_black()
-                    })
-                    .bg(if Some(id) == self.active && !self.manager_open {
-                        cx.theme().background
-                    } else {
-                        transparent_black()
-                    })
-                    .gap_1()
-                    .items_center()
-                    .child(
-                        Button::new(SharedString::from(format!("workspace-tab-{id}")))
-                            .small()
-                            .ghost()
-                            .max_w(px(180.))
-                            .tooltip(label.name.clone())
-                            .label(format!(
-                                "{}{}",
-                                label.name,
-                                if label.running > 0 {
-                                    format!(" · {} 运行中", label.running)
-                                } else {
-                                    String::new()
-                                }
-                            ))
-                            .on_click(
-                                cx.listener(move |_, _, _, cx| cx.emit(WorkspaceEvent::Select(id))),
-                            ),
-                    )
-                    .child(
-                        Button::new(SharedString::from(format!("workspace-close-{id}")))
-                            .xsmall()
-                            .ghost()
-                            .icon(IconName::Close)
-                            .accessibility_label(format!("关闭工作区 {}", label.name))
-                            .tooltip("关闭标签，工作区仍保留在列表中")
-                            .on_click(
-                                cx.listener(move |_, _, _, cx| cx.emit(WorkspaceEvent::Close(id))),
-                            ),
-                    ),
+                titlebar_tab(format!("workspace-tab-{id}"), title.clone(), active, cx)
+                    .pl_3()
+                    .pr_1()
+                    .child(div().min_w_0().truncate().child(title))
+                    .child(div().flex_shrink_0().child(close))
+                    .on_click(cx.listener(move |_, _, _, cx| cx.emit(WorkspaceEvent::Select(id)))),
             );
         }
         h_flex()
@@ -118,22 +141,20 @@ impl Render for WorkspaceStrip {
             .min_w_0()
             .gap_2()
             .items_center()
-            .child(
-                div()
-                    .id("workspace-tabs-scroll")
-                    .flex_1()
-                    .min_w_0()
-                    .h_full()
-                    .overflow_x_scroll()
-                    .child(tabs),
-            )
-            .child(
-                Button::new("application-settings")
-                    .small()
-                    .ghost()
-                    .label("设置")
-                    .tooltip("应用设置 · ⌘ ,")
-                    .on_click(|_, _, cx| crate::ui_settings::open(None, cx)),
+            .child(tabs)
+            .when(
+                cfg!(any(target_os = "windows", target_os = "linux")),
+                |bar| {
+                    bar.child(
+                        Button::new("application-settings")
+                            .small()
+                            .ghost()
+                            .h(TITLEBAR_CONTROL_HEIGHT)
+                            .label("设置")
+                            .tooltip("应用设置 · ⌘ ,")
+                            .on_click(|_, _, cx| crate::ui_settings::open(None, cx)),
+                    )
+                },
             )
     }
 }
@@ -148,121 +169,242 @@ impl RenderOnce for WorkspacePanel {
     }
 }
 impl WorkspaceStrip {
-    fn render_panel(&mut self, _: &mut Window, cx: &mut Context<Self>) -> AnyElement {
-        let mut content = v_flex()
+    fn create_dialog(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let input = cx.new(|cx| InputState::new(window, cx));
+        let focus = input.clone();
+        let view = cx.weak_entity();
+        window.open_dialog(cx, move |dialog, _, cx| {
+            let input = input.clone();
+            let view = view.clone();
+            dialog
+                .title("新建工作区")
+                .w(px(360.))
+                .child(
+                    v_flex()
+                        .gap_1()
+                        .child(div().text_xs().child("工作区名称"))
+                        .child(Input::new(&input).aria_label("工作区名称")),
+                )
+                .footer(form_dialog_footer(
+                    "创建并打开",
+                    input.read(cx).value().trim().is_empty(),
+                ))
+                .button_props(
+                    DialogButtonProps::default()
+                        .ok_text("创建并打开")
+                        .cancel_text("取消")
+                        .show_cancel(true),
+                )
+                .on_ok(move |_, _, cx| {
+                    let name = input.read(cx).value();
+                    let name = name.trim();
+                    if name.is_empty() {
+                        return false;
+                    }
+                    let _ =
+                        view.update(cx, |_, cx| cx.emit(WorkspaceEvent::Create(name.to_owned())));
+                    true
+                })
+        });
+        focus.update(cx, |input, cx| input.focus(window, cx));
+    }
+
+    fn layout_switcher(&self, cx: &Context<Self>) -> Div {
+        let mut switcher = h_flex()
+            .gap_0p5()
+            .p_0p5()
+            .rounded_md()
+            .border_1()
+            .border_color(cx.theme().border)
+            .bg(cx.theme().muted);
+        for (layout, label, icon) in [
+            (WorkspaceLayout::List, "清单", AssetIcon::List),
+            (WorkspaceLayout::Tiles, "平铺", AssetIcon::LayoutGrid),
+        ] {
+            switcher = switcher.child(
+                Button::new(label)
+                    .small()
+                    .ghost()
+                    .icon(icon)
+                    .label(label)
+                    .selected(self.layout == layout)
+                    .when(self.layout == layout, |b| {
+                        b.bg(cx.theme().background).text_color(cx.theme().primary)
+                    })
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        if this.layout != layout {
+                            this.layout = layout;
+                            cx.emit(WorkspaceEvent::LayoutChanged);
+                            cx.notify();
+                        }
+                    })),
+            );
+        }
+        switcher
+    }
+
+    fn workspace_item(&self, label: &WorkspaceLabel, opened: bool, cx: &Context<Self>) -> Button {
+        let id = label.id;
+        let theme = cx.theme();
+        let colors = [
+            theme.primary,
+            theme.chart_2,
+            theme.chart_3,
+            theme.chart_4,
+            theme.muted_foreground,
+        ];
+        let ink = colors[id.as_bytes()[0] as usize % colors.len()];
+        let name = div()
+            .min_w_0()
+            .truncate()
+            .text_sm()
+            .font_weight(FontWeight::MEDIUM)
+            .child(label.name.clone());
+        let button = Button::new(format!("workspace-open-{id}"))
+            .ghost()
+            .w_full()
+            .min_w_0()
+            .disabled(self.busy)
+            .accessibility_label(format!(
+                "{}工作区 {}",
+                if opened { "切换" } else { "打开" },
+                label.name
+            ))
+            .on_click(cx.listener(move |_, _, _, cx| cx.emit(WorkspaceEvent::Open(id))));
+        match self.layout {
+            WorkspaceLayout::List => button.h(px(48.)).px_2().child(
+                h_flex()
+                    .w_full()
+                    .min_w_0()
+                    .gap_3()
+                    .items_center()
+                    .child(div().size(px(6.)).flex_shrink_0().rounded_full().bg(ink))
+                    .child(name),
+            ),
+            WorkspaceLayout::Tiles => button
+                .h(px(96.))
+                .p_0()
+                .rounded(px(12.))
+                .border_1()
+                .border_color(theme.border)
+                .child(
+                    v_flex()
+                        .size_full()
+                        .min_w_0()
+                        .items_start()
+                        .justify_between()
+                        .p_3()
+                        .child(
+                            h_flex()
+                                .size(px(32.))
+                                .justify_center()
+                                .items_center()
+                                .rounded_md()
+                                .bg(ink.opacity(0.10))
+                                .child(Icon::new(AssetIcon::Layers2).size_4().text_color(ink)),
+                        )
+                        .child(name.max_w_full()),
+                ),
+        }
+    }
+
+    fn render_panel(&self, window: &mut Window, cx: &mut Context<Self>) -> AnyElement {
+        let opened: HashSet<_> = self.labels.iter().map(|label| label.id).collect();
+        let (in_tabs, closed): (Vec<_>, Vec<_>) = self
+            .available
+            .iter()
+            .partition(|label| opened.contains(&label.id));
+        let width = window.viewport_size().width;
+        let columns = if width < px(440.) {
+            1
+        } else if width < px(680.) {
+            2
+        } else {
+            3
+        };
+        let mut groups = v_flex().gap_5().pb_4();
+        for (title, members, is_open) in [("已打开", in_tabs, true), ("未打开", closed, false)]
+        {
+            if members.is_empty() {
+                continue;
+            }
+            let mut entries = match self.layout {
+                WorkspaceLayout::List => v_flex(),
+                WorkspaceLayout::Tiles => div().grid().grid_cols(columns).gap_3(),
+            };
+            for (index, label) in members.into_iter().enumerate() {
+                if self.layout == WorkspaceLayout::List && index > 0 {
+                    entries = entries.child(div().h(px(1.)).bg(cx.theme().border.opacity(0.6)));
+                }
+                entries = entries.child(self.workspace_item(label, is_open, cx));
+            }
+            groups = groups.child(
+                v_flex()
+                    .gap_2()
+                    .flex_shrink_0()
+                    .child(
+                        h_flex()
+                            .items_center()
+                            .gap_3()
+                            .child(
+                                div()
+                                    .text_xs()
+                                    .font_weight(FontWeight::MEDIUM)
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(title),
+                            )
+                            .child(div().flex_1().h(px(1.)).bg(cx.theme().border)),
+                    )
+                    .child(entries),
+            );
+        }
+        let header = h_flex()
+            .items_center()
+            .gap_3()
+            .flex_shrink_0()
+            .child(
+                div()
+                    .flex_1()
+                    .text_size(px(26.))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("工作区"),
+            )
+            .child(self.layout_switcher(cx))
+            .child(
+                Button::new("workspace-create")
+                    .small()
+                    .primary()
+                    .icon(IconName::Plus)
+                    .label("新建")
+                    .accessibility_label("新建工作区")
+                    .disabled(self.busy)
+                    .on_click(cx.listener(|this, _, window, cx| this.create_dialog(window, cx))),
+            );
+        let content = v_flex()
             .w_full()
             .flex_1()
             .min_h_0()
-            .p(px(36.))
-            .gap_4()
-            .bg(cx.theme().background);
-        if self.manager_open {
-            let mut list = v_flex().gap_3();
-            for label in &self.available {
-                let id = label.id;
-                let opened = self.labels.iter().any(|l| l.id == id);
-                list = list.child(
-                    h_flex()
-                        .h(px(64.))
-                        .px_4()
-                        .gap_3()
-                        .rounded_lg()
-                        .border_1()
-                        .border_color(cx.theme().border)
-                        .items_center()
-                        .child(
-                            gpui_kit::component::Icon::new(IconName::GalleryVerticalEnd)
-                                .text_color(cx.theme().primary),
-                        )
-                        .child(
-                            v_flex()
-                                .flex_1()
-                                .gap_1()
-                                .child(
-                                    div()
-                                        .font_weight(FontWeight::MEDIUM)
-                                        .child(label.name.clone()),
-                                )
-                                .child(
-                                    div()
-                                        .text_xs()
-                                        .text_color(cx.theme().muted_foreground)
-                                        .child(if opened {
-                                            "已在标签页中打开"
-                                        } else {
-                                            "本地工作区"
-                                        }),
-                                ),
-                        )
-                        .child(
-                            Button::new(SharedString::from(format!("workspace-list-open-{id}")))
-                                .small()
-                                .ghost()
-                                .disabled(self.busy)
-                                .label(if opened { "切换" } else { "打开" })
-                                .on_click(cx.listener(move |_, _, _, cx| {
-                                    cx.emit(WorkspaceEvent::Open(id))
-                                })),
-                        ),
-                );
-            }
-            content = content.child(
+            .items_center()
+            .pt(px(34.))
+            .px_5()
+            .bg(cx.theme().background)
+            .child(
                 v_flex()
-                    .px_4()
-                    .py_3()
-                    .gap_4()
+                    .w_full()
+                    .max_w(px(780.))
                     .flex_1()
                     .min_h_0()
-                    .max_w(px(880.))
-                    .child(
-                        h_flex().gap_2().items_center().child(
-                            div()
-                                .flex_1()
-                                .text_size(px(26.))
-                                .font_weight(FontWeight::BOLD)
-                                .child("工作区"),
-                        ),
-                    )
-                    .child(
-                        div()
-                            .text_xs()
-                            .text_color(cx.theme().muted_foreground)
-                            .child(
-                                "每个工作区独立管理请求、环境与历史。关闭标签后，可在此重新打开。",
-                            ),
-                    )
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .items_center()
-                            .child(Input::new(&self.new_name).small().flex_1())
-                            .child(
-                                Button::new("workspace-create")
-                                    .small()
-                                    .primary()
-                                    .label(if self.busy {
-                                        "处理中…"
-                                    } else {
-                                        "创建工作区"
-                                    })
-                                    .disabled(self.busy)
-                                    .on_click(cx.listener(|this, _, _, cx| {
-                                        cx.emit(WorkspaceEvent::Create(
-                                            this.new_name.read(cx).value().to_string(),
-                                        ));
-                                    })),
-                            ),
-                    )
+                    .gap_5()
+                    .child(header)
                     .child(
                         div()
                             .id("workspace-catalog-scroll")
                             .flex_1()
                             .min_h_0()
                             .overflow_y_scroll()
-                            .child(list),
+                            .child(groups),
                     ),
             );
-        }
         content
             .when(!self.notice.is_empty(), |row| {
                 row.child(
@@ -300,7 +442,6 @@ pub struct WorkspaceApp {
     _subscription: Subscription,
     _strip_observer: Subscription,
     settings: Entity<crate::ui_settings::ApplicationSettings>,
-    _settings_observer: Subscription,
     _settings_subscription: Subscription,
 }
 impl WorkspaceApp {
@@ -313,15 +454,14 @@ impl WorkspaceApp {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Self {
-        let strip = cx.new(|cx| WorkspaceStrip {
+        let strip = cx.new(|_| WorkspaceStrip {
             labels: vec![],
             available: vec![],
             active: None,
             notice,
             busy: false,
             manager_open: false,
-            new_name: cx
-                .new(|cx| InputState::new(window, cx).placeholder("工作区名称，例如：商城服务")),
+            layout: catalog.layout,
         });
         let subscription =
             cx.subscribe_in(&strip, window, |this, _, event, window, cx| match event {
@@ -329,6 +469,7 @@ impl WorkspaceApp {
                 WorkspaceEvent::Close(id) => this.close(*id, window, cx),
                 WorkspaceEvent::Create(name) => this.create_workspace(name.clone(), window, cx),
                 WorkspaceEvent::Open(id) => this.open_workspace(*id, window, cx),
+                WorkspaceEvent::LayoutChanged => this.save_catalog(window, cx),
             });
         let strip_observer = cx.observe_in(&strip, window, |_, _, window, cx| {
             window.refresh();
@@ -336,10 +477,6 @@ impl WorkspaceApp {
             cx.notify();
         });
         let settings = crate::ui_settings::store(cx);
-        let settings_observer = cx.observe_in(&settings, window, |_, _, window, cx| {
-            window.refresh();
-            cx.notify();
-        });
         let settings_subscription = cx.subscribe_in(
             &settings,
             window,
@@ -350,7 +487,7 @@ impl WorkspaceApp {
                         "工作区正在创建或打开，请完成后再重启"
                     );
                     for (_, view) in &this.workbenches {
-                        view.update(cx, |w, cx| w.prepare_restart(cx))?;
+                        view.update(cx, |w, _| w.flush())?;
                     }
                     {
                         let mut last = this
@@ -386,7 +523,6 @@ impl WorkspaceApp {
             _subscription: subscription,
             _strip_observer: strip_observer,
             settings,
-            _settings_observer: settings_observer,
             _settings_subscription: settings_subscription,
         };
         for (entry, project) in workspaces {
@@ -464,6 +600,9 @@ impl WorkspaceApp {
         if let Some(entry) = self.catalog.workspaces.iter_mut().find(|e| e.id == id) {
             entry.name = self.workbenches[index].1.read(cx).workspace_name().into();
         }
+        self.workbenches[index]
+            .1
+            .update(cx, |w, cx| w.close_environment_window(cx));
         self.workbenches.remove(index);
         drop(self.observers.remove(index));
         if self.active == Some(id) {
@@ -517,8 +656,6 @@ impl WorkspaceApp {
                         this.attach(entry, project, window, cx);
                         this.save_catalog(window, cx);
                         this.strip.update(cx, |s, cx| {
-                            s.new_name
-                                .update(cx, |input, cx| input.set_value("", window, cx));
                             s.manager_open = false;
                             s.notice.clear();
                             cx.notify();
@@ -587,6 +724,7 @@ impl WorkspaceApp {
         }
         self.catalog.opened = self.workbenches.iter().map(|(id, _)| *id).collect();
         self.catalog.active = self.active;
+        self.catalog.layout = self.strip.read(cx).layout;
         self.catalog.clone()
     }
     fn save_catalog(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -653,9 +791,7 @@ impl Render for WorkspaceApp {
                 cx.notify();
             }
         });
-        let settings_open = self.settings.read(cx).open;
-        let content = if !settings_open
-            && !self.strip.read(cx).manager_open
+        let content = if !self.strip.read(cx).manager_open
             && let Some((_, workbench)) = self
                 .workbenches
                 .iter()
@@ -686,11 +822,7 @@ impl Render for WorkspaceApp {
                                 .child(self.strip.clone()),
                         ),
                 )
-                .child(if settings_open {
-                    self.settings.clone().into_any_element()
-                } else {
-                    WorkspacePanel(self.strip.clone()).into_any_element()
-                })
+                .child(WorkspacePanel(self.strip.clone()))
                 .into_any_element()
         };
         div()
